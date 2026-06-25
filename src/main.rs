@@ -5,7 +5,10 @@ use clap::Parser;
 use pgsafe::{lint_sql, Finding};
 
 #[derive(Parser)]
-#[command(name = "pgsafe", about = "Lint PostgreSQL DDL migrations for unsafe operations")]
+#[command(
+    name = "pgsafe",
+    about = "Lint PostgreSQL DDL migrations for unsafe operations"
+)]
 struct Cli {
     /// SQL files to lint; use '-' or omit to read from stdin.
     paths: Vec<String>,

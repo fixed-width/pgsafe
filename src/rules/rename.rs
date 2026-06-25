@@ -8,7 +8,9 @@ pub struct Rename;
 
 impl Rule for Rename {
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
-        let NodeEnum::RenameStmt(stmt) = node else { return };
+        let NodeEnum::RenameStmt(stmt) = node else {
+            return;
+        };
         let kind = if stmt.rename_type == ObjectType::ObjectTable as i32 {
             "table"
         } else if stmt.rename_type == ObjectType::ObjectColumn as i32 {

@@ -8,14 +8,22 @@ pub struct AddFkWithoutNotValid;
 
 impl Rule for AddFkWithoutNotValid {
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
-        let NodeEnum::AlterTableStmt(stmt) = node else { return };
+        let NodeEnum::AlterTableStmt(stmt) = node else {
+            return;
+        };
         for cmd_node in &stmt.cmds {
-            let Some(NodeEnum::AlterTableCmd(cmd)) = cmd_node.node.as_ref() else { continue };
+            let Some(NodeEnum::AlterTableCmd(cmd)) = cmd_node.node.as_ref() else {
+                continue;
+            };
             if cmd.subtype != AlterTableType::AtAddConstraint as i32 {
                 continue;
             }
-            let Some(def) = cmd.def.as_ref() else { continue };
-            let Some(NodeEnum::Constraint(c)) = def.node.as_ref() else { continue };
+            let Some(def) = cmd.def.as_ref() else {
+                continue;
+            };
+            let Some(NodeEnum::Constraint(c)) = def.node.as_ref() else {
+                continue;
+            };
             if c.contype == ConstrType::ConstrForeign as i32 && !c.skip_validation {
                 out.push(RuleHit {
                     rule_id: "add-fk-without-not-valid",
@@ -41,13 +49,17 @@ mod tests {
     fn flags_fk_without_not_valid() {
         let sql = "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id)";
         let findings = lint_sql(sql).unwrap();
-        assert!(findings.iter().any(|f| f.rule_id == "add-fk-without-not-valid"));
+        assert!(findings
+            .iter()
+            .any(|f| f.rule_id == "add-fk-without-not-valid"));
     }
 
     #[test]
     fn ignores_fk_with_not_valid() {
         let sql = "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id) NOT VALID";
         let findings = lint_sql(sql).unwrap();
-        assert!(findings.iter().all(|f| f.rule_id != "add-fk-without-not-valid"));
+        assert!(findings
+            .iter()
+            .all(|f| f.rule_id != "add-fk-without-not-valid"));
     }
 }

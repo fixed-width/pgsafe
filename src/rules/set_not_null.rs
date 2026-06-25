@@ -8,9 +8,13 @@ pub struct SetNotNull;
 
 impl Rule for SetNotNull {
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
-        let NodeEnum::AlterTableStmt(stmt) = node else { return };
+        let NodeEnum::AlterTableStmt(stmt) = node else {
+            return;
+        };
         for cmd_node in &stmt.cmds {
-            let Some(NodeEnum::AlterTableCmd(cmd)) = cmd_node.node.as_ref() else { continue };
+            let Some(NodeEnum::AlterTableCmd(cmd)) = cmd_node.node.as_ref() else {
+                continue;
+            };
             if cmd.subtype == AlterTableType::AtSetNotNull as i32 {
                 out.push(RuleHit {
                     rule_id: "set-not-null",

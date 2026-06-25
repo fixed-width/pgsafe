@@ -74,8 +74,12 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
     let mut findings = Vec::new();
 
     for (i, raw) in parsed.protobuf.stmts.iter().enumerate() {
-        let Some(stmt_box) = raw.stmt.as_ref() else { continue };
-        let Some(node) = stmt_box.node.as_ref() else { continue };
+        let Some(stmt_box) = raw.stmt.as_ref() else {
+            continue;
+        };
+        let Some(node) = stmt_box.node.as_ref() else {
+            continue;
+        };
 
         let mut hits = Vec::new();
         for rule in &rules {
@@ -138,14 +142,26 @@ mod tests {
         assert_eq!(findings.len(), 3, "expected exactly 3 findings");
 
         // --- statement_index is correct and in source order ---
-        assert_eq!(findings[0].statement_index, 0, "stmt 0 finding has wrong index");
-        assert_eq!(findings[1].statement_index, 1, "stmt 1 first finding has wrong index");
-        assert_eq!(findings[2].statement_index, 1, "stmt 1 second finding has wrong index");
+        assert_eq!(
+            findings[0].statement_index, 0,
+            "stmt 0 finding has wrong index"
+        );
+        assert_eq!(
+            findings[1].statement_index, 1,
+            "stmt 1 first finding has wrong index"
+        );
+        assert_eq!(
+            findings[2].statement_index, 1,
+            "stmt 1 second finding has wrong index"
+        );
 
         // --- rule order: source order across statements, registry order within a statement ---
         // non-concurrent-index (stmt 0), then set-not-null before alter-column-type (stmt 1)
         assert_eq!(findings[0].rule_id, "non-concurrent-index");
-        assert_eq!(findings[1].rule_id, "set-not-null", "set-not-null must precede alter-column-type (registry order)");
+        assert_eq!(
+            findings[1].rule_id, "set-not-null",
+            "set-not-null must precede alter-column-type (registry order)"
+        );
         assert_eq!(findings[2].rule_id, "alter-column-type");
 
         // --- snippet is the trimmed source text of each statement ---
@@ -153,7 +169,10 @@ mod tests {
         let expected_stmt1 =
             "ALTER TABLE t ALTER COLUMN a TYPE bigint, ALTER COLUMN a SET NOT NULL";
         assert_eq!(findings[1].snippet, expected_stmt1);
-        assert_eq!(findings[2].snippet, expected_stmt1, "both findings share the same statement");
+        assert_eq!(
+            findings[2].snippet, expected_stmt1,
+            "both findings share the same statement"
+        );
 
         // --- location is the byte offset of the statement in the input ---
         let stmt0_start = 0_i32;

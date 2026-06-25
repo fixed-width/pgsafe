@@ -8,9 +8,13 @@ pub struct AlterColumnType;
 
 impl Rule for AlterColumnType {
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
-        let NodeEnum::AlterTableStmt(stmt) = node else { return };
+        let NodeEnum::AlterTableStmt(stmt) = node else {
+            return;
+        };
         for cmd_node in &stmt.cmds {
-            let Some(NodeEnum::AlterTableCmd(cmd)) = cmd_node.node.as_ref() else { continue };
+            let Some(NodeEnum::AlterTableCmd(cmd)) = cmd_node.node.as_ref() else {
+                continue;
+            };
             if cmd.subtype == AlterTableType::AtAlterColumnType as i32 {
                 out.push(RuleHit {
                     rule_id: "alter-column-type",

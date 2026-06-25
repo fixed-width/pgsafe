@@ -15,10 +15,11 @@ impl Rule for NonConcurrentIndex {
                     message: "CREATE INDEX without CONCURRENTLY takes a lock that blocks writes \
                               to the table for the entire build."
                         .into(),
-                    guidance: "Use CREATE INDEX CONCURRENTLY (outside a transaction block). A failed \
+                    guidance:
+                        "Use CREATE INDEX CONCURRENTLY (outside a transaction block). A failed \
                                CONCURRENTLY build leaves an INVALID index: drop it with DROP INDEX \
                                CONCURRENTLY and retry, or rebuild with REINDEX INDEX CONCURRENTLY."
-                        .into(),
+                            .into(),
                 });
             }
         }
