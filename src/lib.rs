@@ -1,5 +1,7 @@
 //! pgsafe — static safety linter for PostgreSQL DDL migrations.
 
+pub mod rules;
+
 /// Severity of a finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -54,10 +56,50 @@ impl std::fmt::Display for LintError {
 
 impl std::error::Error for LintError {}
 
-/// Lint one or more SQL statements. v0 scaffold: parses only, no rules yet.
+/// Extract the trimmed source text of a single parsed statement.
+fn statement_text(sql: &str, raw: &pg_query::protobuf::RawStmt) -> String {
+    let off = raw.stmt_location.max(0) as usize;
+    let end = if raw.stmt_len == 0 {
+        sql.len()
+    } else {
+        (off + raw.stmt_len as usize).min(sql.len())
+    };
+    sql.get(off..end).unwrap_or("").trim().to_string()
+}
+
+/// Lint one or more SQL statements against all enabled rules.
 pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
-    pg_query::parse(sql).map_err(|e| LintError::Parse(e.to_string()))?;
-    Ok(Vec::new())
+    let parsed = pg_query::parse(sql).map_err(|e| LintError::Parse(e.to_string()))?;
+    let rules = rules::all_rules();
+    let mut findings = Vec::new();
+
+    for (i, raw) in parsed.protobuf.stmts.iter().enumerate() {
+        let Some(stmt_box) = raw.stmt.as_ref() else { continue };
+        let Some(node) = stmt_box.node.as_ref() else { continue };
+
+        let mut hits = Vec::new();
+        for rule in &rules {
+            rule.check(node, &mut hits);
+        }
+        if hits.is_empty() {
+            continue;
+        }
+
+        let snippet = statement_text(sql, raw);
+        for h in hits {
+            findings.push(Finding {
+                rule_id: h.rule_id.to_string(),
+                severity: h.severity,
+                message: h.message,
+                guidance: h.guidance,
+                statement_index: i,
+                location: raw.stmt_location,
+                snippet: snippet.clone(),
+            });
+        }
+    }
+
+    Ok(findings)
 }
 
 #[cfg(test)]
