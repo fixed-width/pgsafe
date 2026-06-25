@@ -162,3 +162,34 @@ fn drop_column() {
     assert!(fires("ALTER TABLE t DROP COLUMN c", "drop-column"));
     assert!(!fires("ALTER TABLE t ADD COLUMN c int", "drop-column"));
 }
+
+// ── truncate ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn truncate() {
+    assert!(fires("TRUNCATE t", "truncate"));
+    assert!(!fires("DELETE FROM t", "truncate"));
+}
+
+// ── vacuum-full-cluster ───────────────────────────────────────────────────────
+
+#[test]
+fn vacuum_full_cluster() {
+    assert!(fires("VACUUM FULL t", "vacuum-full-cluster"));
+    assert!(fires("VACUUM (FULL) t", "vacuum-full-cluster"));
+    assert!(fires("CLUSTER t USING idx", "vacuum-full-cluster"));
+    assert!(!fires("VACUUM t", "vacuum-full-cluster"));
+    assert!(!fires("VACUUM (ANALYZE) t", "vacuum-full-cluster"));
+    assert!(!fires("ANALYZE t", "vacuum-full-cluster"));
+}
+
+// ── reindex-non-concurrent ────────────────────────────────────────────────────
+
+#[test]
+fn reindex_non_concurrent() {
+    assert!(fires("REINDEX INDEX my_idx", "reindex-non-concurrent"));
+    assert!(!fires(
+        "REINDEX INDEX CONCURRENTLY my_idx",
+        "reindex-non-concurrent"
+    ));
+}

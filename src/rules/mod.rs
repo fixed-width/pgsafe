@@ -25,8 +25,11 @@ mod drop_column;
 mod drop_index_non_concurrent;
 mod drop_table;
 mod non_concurrent_index;
+mod reindex_non_concurrent;
 mod rename;
 mod set_not_null;
+mod truncate;
+mod vacuum_full_cluster;
 
 static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
     vec![
@@ -39,6 +42,9 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(drop_index_non_concurrent::DropIndexNonConcurrent),
         Box::new(drop_table::DropTable),
         Box::new(drop_column::DropColumn),
+        Box::new(truncate::Truncate),
+        Box::new(vacuum_full_cluster::VacuumFullOrCluster),
+        Box::new(reindex_non_concurrent::ReindexNonConcurrent),
     ]
 });
 
@@ -97,6 +103,9 @@ mod tests {
                 "drop-index-non-concurrent",
                 "drop-table",
                 "drop-column",
+                "truncate",
+                "vacuum-full-cluster",
+                "reindex-non-concurrent",
             ]
         );
     }
