@@ -1,13 +1,28 @@
-//! pgsafe — static safety linter for PostgreSQL DDL migrations.
+#![deny(missing_docs)]
+#![warn(
+    clippy::missing_errors_doc,
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation
+)]
+//! `pgsafe` is a static safety linter for PostgreSQL DDL migrations.
+//!
+//! It parses SQL using the real PostgreSQL parser and checks every statement
+//! against a set of rules that flag lock-taking or destructive operations,
+//! producing a [`Finding`] for each match together with safe-rewrite guidance.
+//!
+//! The main entry point is [`lint_sql`]. A command-line interface wrapping
+//! the same rules is provided by the `pgsafe` binary.
 
 mod rules;
 
-/// Severity of a finding.
+/// Severity level of a [`Finding`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
+    /// The statement is potentially unsafe but may be acceptable in some contexts.
     Warning,
+    /// The statement is unsafe and should not be run against a live database.
     Error,
 }
 
@@ -16,8 +31,14 @@ pub enum Severity {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct Location {
+    /// 0-based byte offset of the statement's first non-whitespace character
+    /// within the original SQL string.  Saturates to [`u32::MAX`] for inputs
+    /// larger than 4 GiB.
     pub byte: u32,
+    /// 1-based line number of the statement's first non-whitespace character.
     pub line: u32,
+    /// 1-based character column of the statement's first non-whitespace
+    /// character on its line.
     pub column: u32,
 }
 
@@ -37,23 +58,34 @@ pub(crate) struct RuleHit {
     pub guidance: String,
 }
 
-/// A finding reported for a specific statement in the input.
+/// A safety finding reported for a specific SQL statement.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Finding {
+    /// Identifier of the rule that triggered this finding (e.g. `"non-concurrent-index"`).
     pub rule_id: String,
+    /// Severity level of the finding.
     pub severity: Severity,
+    /// Short human-readable description of what is unsafe about the statement.
     pub message: String,
+    /// Guidance on how to rewrite the statement safely.
     pub guidance: String,
+    /// 0-based index of the SQL statement within the input that triggered this
+    /// finding.  The human-readable CLI output renders this as `statement #0`,
+    /// `statement #1`, etc.
     pub statement_index: usize,
+    /// Source location of the statement's first non-whitespace token.
     pub location: Location,
+    /// Trimmed text of the statement that triggered the finding.
     pub snippet: String,
 }
 
-/// Error returned when the input SQL cannot be parsed.
+/// Error returned when `pgsafe` cannot process the provided SQL.
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum LintError {
+    /// The SQL input could not be parsed by the PostgreSQL parser.
+    /// The inner string contains the parser's error message.
     #[error("parse error: {0}")]
     Parse(String),
 }
@@ -66,8 +98,8 @@ struct StatementSpan {
 /// Compute the trimmed snippet AND the corrected location (pointing at the
 /// first non-whitespace byte of the statement, not the leading whitespace).
 fn statement_span(sql: &str, raw: &pg_query::protobuf::RawStmt) -> StatementSpan {
-    let off = raw.stmt_location.max(0) as usize;
-    let len = raw.stmt_len.max(0) as usize;
+    let off = usize::try_from(raw.stmt_location.max(0)).unwrap_or(0);
+    let len = usize::try_from(raw.stmt_len.max(0)).unwrap_or(0);
     let end = if len == 0 {
         sql.len()
     } else {
@@ -77,13 +109,10 @@ fn statement_span(sql: &str, raw: &pg_query::protobuf::RawStmt) -> StatementSpan
     let lead_ws = raw_slice.len() - raw_slice.trim_start().len();
     let start = off + lead_ws;
     let snippet = raw_slice.trim().to_string();
+    let byte = u32::try_from(start).unwrap_or(u32::MAX);
     let (line, column) = line_col(sql, start);
     StatementSpan {
-        location: Location {
-            byte: start as u32,
-            line,
-            column,
-        },
+        location: Location { byte, line, column },
         snippet,
     }
 }
@@ -106,7 +135,20 @@ fn line_col(sql: &str, byte: usize) -> (u32, u32) {
     (line, column)
 }
 
-/// Lint one or more SQL statements against all enabled rules.
+/// Lints one or more SQL statements and returns every safety finding.
+///
+/// The SQL is parsed with the real PostgreSQL parser, so `sql` must be valid
+/// PostgreSQL syntax.  Every statement in the input is checked against all
+/// enabled rules; the returned [`Vec`] preserves source order.
+///
+/// # Errors
+/// Returns [`LintError::Parse`] if `sql` cannot be parsed by the PostgreSQL parser.
+///
+/// # Examples
+/// ```
+/// let findings = pgsafe::lint_sql("CREATE INDEX i ON t (x)").unwrap();
+/// assert!(!findings.is_empty());
+/// ```
 pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
     let parsed = pg_query::parse(sql).map_err(|e| LintError::Parse(e.to_string()))?;
     let rules = rules::all_rules();
