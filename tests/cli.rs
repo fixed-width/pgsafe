@@ -29,3 +29,16 @@ fn invalid_sql_exits_2() {
         .assert()
         .code(2);
 }
+
+#[test]
+fn json_format_emits_rule_id_and_file() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--format", "json"])
+        .write_stdin("CREATE INDEX i ON t (x);")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("\"non-concurrent-index\""))
+        .stdout(predicate::str::contains("\"file\""));
+}

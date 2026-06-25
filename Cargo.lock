@@ -499,6 +499,7 @@ dependencies = [
  "pg_query",
  "predicates",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

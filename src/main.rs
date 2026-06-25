@@ -9,9 +9,20 @@ use pgsafe::{lint_sql, Finding};
 struct Cli {
     /// SQL files to lint; use '-' or omit to read from stdin.
     paths: Vec<String>,
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = Format::Human)]
+    format: Format,
 }
 
+#[derive(Clone, clap::ValueEnum)]
+enum Format {
+    Human,
+    Json,
+}
+
+#[derive(serde::Serialize)]
 struct FileReport {
+    #[serde(rename = "file")]
     name: String,
     findings: Vec<Finding>,
 }
@@ -36,7 +47,10 @@ fn run(cli: &Cli) -> Result<bool, String> {
         reports.push(FileReport { name, findings });
     }
     let any = reports.iter().any(|r| !r.findings.is_empty());
-    print_human(&reports);
+    match cli.format {
+        Format::Human => print_human(&reports),
+        Format::Json => print_json(&reports),
+    }
     Ok(any)
 }
 
@@ -62,6 +76,11 @@ fn read_stdin() -> Result<String, String> {
         .read_to_string(&mut s)
         .map_err(|e| e.to_string())?;
     Ok(s)
+}
+
+fn print_json(reports: &[FileReport]) {
+    let json = serde_json::to_string_pretty(reports).unwrap_or_else(|_| "[]".to_string());
+    println!("{json}");
 }
 
 fn print_human(reports: &[FileReport]) {
