@@ -28,6 +28,9 @@ criterion = "0.8.2"
 name = "lint"
 harness = false
 
+[lints.rust]
+unsafe_code = "forbid"
+
 [lints.clippy]
 missing_errors_doc = "warn"
 cast_sign_loss = "warn"
