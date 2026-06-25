@@ -12,13 +12,7 @@ impl Rule for SetNotNull {
     }
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
-        let NodeEnum::AlterTableStmt(stmt) = node else {
-            return;
-        };
-        for cmd_node in &stmt.cmds {
-            let Some(NodeEnum::AlterTableCmd(cmd)) = cmd_node.node.as_ref() else {
-                continue;
-            };
+        for cmd in super::alter_table_cmds(node) {
             if cmd.subtype == AlterTableType::AtSetNotNull as i32 {
                 out.push(RuleHit {
                     message: "ALTER COLUMN ... SET NOT NULL scans the entire table under an ACCESS \

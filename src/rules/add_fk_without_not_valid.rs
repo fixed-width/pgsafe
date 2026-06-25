@@ -1,4 +1,4 @@
-use pg_query::protobuf::{AlterTableType, ConstrType};
+use pg_query::protobuf::ConstrType;
 use pg_query::NodeEnum;
 
 use super::Rule;
@@ -12,22 +12,7 @@ impl Rule for AddFkWithoutNotValid {
     }
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
-        let NodeEnum::AlterTableStmt(stmt) = node else {
-            return;
-        };
-        for cmd_node in &stmt.cmds {
-            let Some(NodeEnum::AlterTableCmd(cmd)) = cmd_node.node.as_ref() else {
-                continue;
-            };
-            if cmd.subtype != AlterTableType::AtAddConstraint as i32 {
-                continue;
-            }
-            let Some(def) = cmd.def.as_ref() else {
-                continue;
-            };
-            let Some(NodeEnum::Constraint(c)) = def.node.as_ref() else {
-                continue;
-            };
+        for c in super::constraints_being_added(node) {
             if c.contype == ConstrType::ConstrForeign as i32 && !c.skip_validation {
                 out.push(RuleHit {
                     message: "Adding a FOREIGN KEY without NOT VALID validates every existing row \

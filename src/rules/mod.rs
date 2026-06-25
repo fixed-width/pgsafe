@@ -2,6 +2,7 @@
 
 use std::sync::LazyLock;
 
+use pg_query::protobuf::{AlterTableCmd, AlterTableType, Constraint};
 use pg_query::NodeEnum;
 
 use crate::{RuleHit, Severity};
@@ -42,4 +43,30 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
 /// All rules enabled in this build, in stable registration order.
 pub fn all_rules() -> &'static [Box<dyn Rule>] {
     &RULES
+}
+
+/// All `AlterTableCmd`s in an `ALTER TABLE` statement (empty for any other node).
+fn alter_table_cmds(node: &NodeEnum) -> Vec<&AlterTableCmd> {
+    let NodeEnum::AlterTableStmt(stmt) = node else {
+        return Vec::new();
+    };
+    stmt.cmds
+        .iter()
+        .filter_map(|n| match n.node.as_ref()? {
+            NodeEnum::AlterTableCmd(cmd) => Some(cmd.as_ref()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// All constraints added by `ADD CONSTRAINT` commands in an `ALTER TABLE`.
+fn constraints_being_added(node: &NodeEnum) -> Vec<&Constraint> {
+    alter_table_cmds(node)
+        .into_iter()
+        .filter(|cmd| cmd.subtype == AlterTableType::AtAddConstraint as i32)
+        .filter_map(|cmd| match cmd.def.as_ref()?.node.as_ref()? {
+            NodeEnum::Constraint(c) => Some(c.as_ref()),
+            _ => None,
+        })
+        .collect()
 }
