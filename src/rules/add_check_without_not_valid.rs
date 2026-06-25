@@ -13,7 +13,9 @@ impl Rule for AddCheckWithoutNotValid {
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         for c in super::constraints_being_added(node) {
-            if c.contype == ConstrType::ConstrCheck as i32 && !c.skip_validation {
+            if matches!(ConstrType::try_from(c.contype), Ok(ConstrType::ConstrCheck))
+                && !c.skip_validation
+            {
                 out.push(RuleHit {
                     message: "Adding a CHECK constraint without NOT VALID scans the whole table \
                               under an ACCESS EXCLUSIVE lock."

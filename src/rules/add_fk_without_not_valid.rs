@@ -13,7 +13,11 @@ impl Rule for AddFkWithoutNotValid {
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         for c in super::constraints_being_added(node) {
-            if c.contype == ConstrType::ConstrForeign as i32 && !c.skip_validation {
+            if matches!(
+                ConstrType::try_from(c.contype),
+                Ok(ConstrType::ConstrForeign)
+            ) && !c.skip_validation
+            {
                 out.push(RuleHit {
                     message: "Adding a FOREIGN KEY without NOT VALID validates every existing row \
                               while holding locks on both tables."

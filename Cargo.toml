@@ -8,6 +8,8 @@ readme = "README.md"
 keywords = ["postgres", "postgresql", "migrations", "ddl", "linter"]
 categories = ["development-tools", "database"]
 repository = "https://github.com/fixed-width/pgsafe"
+rust-version = "1.80"
+documentation = "https://docs.rs/pgsafe"
 
 [dependencies]
 pg_query = "6.1"
@@ -25,3 +27,11 @@ criterion = "0.8.2"
 [[bench]]
 name = "lint"
 harness = false
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+missing_errors_doc = "warn"
+cast_sign_loss = "warn"
+cast_possible_truncation = "warn"

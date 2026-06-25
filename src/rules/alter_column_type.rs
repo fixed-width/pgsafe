@@ -13,7 +13,10 @@ impl Rule for AlterColumnType {
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         for cmd in super::alter_table_cmds(node) {
-            if cmd.subtype == AlterTableType::AtAlterColumnType as i32 {
+            if matches!(
+                AlterTableType::try_from(cmd.subtype),
+                Ok(AlterTableType::AtAlterColumnType)
+            ) {
                 out.push(RuleHit {
                     message: "ALTER COLUMN ... TYPE usually rewrites the whole table and rebuilds its \
                               indexes under an ACCESS EXCLUSIVE lock."
