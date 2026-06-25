@@ -14,6 +14,7 @@ mod add_check_without_not_valid;
 mod add_fk_without_not_valid;
 mod alter_column_type;
 mod non_concurrent_index;
+mod rename;
 mod set_not_null;
 
 /// All rules enabled in this build, in stable registration order.
@@ -24,5 +25,6 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(add_check_without_not_valid::AddCheckWithoutNotValid),
         Box::new(set_not_null::SetNotNull),
         Box::new(alter_column_type::AlterColumnType),
+        Box::new(rename::Rename),
     ]
 }
