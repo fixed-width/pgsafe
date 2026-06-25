@@ -147,6 +147,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn empty_string_returns_no_findings() {
+        assert_eq!(lint_sql("").unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn comment_only_returns_no_findings() {
+        assert_eq!(lint_sql("-- just a comment\n").unwrap(), Vec::new());
+    }
+
+    #[test]
     fn valid_sql_returns_no_findings() {
         assert_eq!(lint_sql("SELECT 1").unwrap(), Vec::new());
     }

@@ -71,3 +71,24 @@ fn constraints_being_added(node: &NodeEnum) -> Vec<&Constraint> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::all_rules;
+
+    #[test]
+    fn registration_order_is_stable() {
+        let ids: Vec<&str> = all_rules().iter().map(|r| r.id()).collect();
+        assert_eq!(
+            ids,
+            [
+                "non-concurrent-index",
+                "add-fk-without-not-valid",
+                "add-check-without-not-valid",
+                "set-not-null",
+                "alter-column-type",
+                "rename",
+            ]
+        );
+    }
+}
