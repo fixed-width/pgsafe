@@ -12,6 +12,7 @@ pub trait Rule {
 
 mod add_check_without_not_valid;
 mod add_fk_without_not_valid;
+mod alter_column_type;
 mod non_concurrent_index;
 mod set_not_null;
 
@@ -22,5 +23,6 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(add_fk_without_not_valid::AddFkWithoutNotValid),
         Box::new(add_check_without_not_valid::AddCheckWithoutNotValid),
         Box::new(set_not_null::SetNotNull),
+        Box::new(alter_column_type::AlterColumnType),
     ]
 }
