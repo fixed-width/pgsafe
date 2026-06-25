@@ -17,7 +17,7 @@ jobs:
     name: fmt + clippy + test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # pg_query compiles vendored libpg_query (C) via bindgen, which needs libclang.
       - name: Install libclang
