@@ -6,6 +6,7 @@
 //!
 //! The main entry point is [`lint_sql`]. A command-line interface wrapping
 //! the same rules is provided by the `pgsafe` binary.
+#![deny(missing_docs)]
 
 mod rules;
 
