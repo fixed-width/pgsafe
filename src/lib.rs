@@ -1,8 +1,9 @@
 //! pgsafe — static safety linter for PostgreSQL DDL migrations.
 
-pub mod rules;
+mod rules;
 
 /// Severity of a finding.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -10,23 +11,24 @@ pub enum Severity {
     Error,
 }
 
-impl Severity {
-    pub fn as_str(&self) -> &'static str {
+impl std::fmt::Display for Severity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Severity::Warning => "warning",
-            Severity::Error => "error",
+            Severity::Warning => f.write_str("warning"),
+            Severity::Error => f.write_str("error"),
         }
     }
 }
 
 /// What a rule emits when it matches. The engine adds identity and positional context.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuleHit {
+pub(crate) struct RuleHit {
     pub message: String,
     pub guidance: String,
 }
 
 /// A finding reported for a specific statement in the input.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Finding {
     pub rule_id: String,
@@ -39,20 +41,12 @@ pub struct Finding {
 }
 
 /// Error returned when the input SQL cannot be parsed.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
 pub enum LintError {
+    #[error("parse error: {0}")]
     Parse(String),
 }
-
-impl std::fmt::Display for LintError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LintError::Parse(msg) => write!(f, "parse error: {msg}"),
-        }
-    }
-}
-
-impl std::error::Error for LintError {}
 
 /// Extract the trimmed source text of a single parsed statement.
 fn statement_text(sql: &str, raw: &pg_query::protobuf::RawStmt) -> String {

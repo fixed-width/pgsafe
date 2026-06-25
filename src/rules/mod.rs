@@ -8,7 +8,7 @@ use pg_query::NodeEnum;
 use crate::{RuleHit, Severity};
 
 /// A single safety rule.
-pub trait Rule: Send + Sync {
+pub(crate) trait Rule: Send + Sync {
     /// Stable kebab-case id — the public contract key, unique across the registry.
     fn id(&self) -> &'static str;
     /// Severity for every hit this rule emits.
@@ -16,6 +16,7 @@ pub trait Rule: Send + Sync {
         Severity::Warning
     }
     /// Optional documentation URL for this rule.
+    #[allow(dead_code)]
     fn docs_url(&self) -> Option<&'static str> {
         None
     }
@@ -41,7 +42,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
 });
 
 /// All rules enabled in this build, in stable registration order.
-pub fn all_rules() -> &'static [Box<dyn Rule>] {
+pub(crate) fn all_rules() -> &'static [Box<dyn Rule>] {
     &RULES
 }
 
