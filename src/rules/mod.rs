@@ -19,7 +19,10 @@ pub(crate) trait Rule: Send + Sync {
 }
 
 mod add_check_without_not_valid;
+mod add_column_not_null_no_default;
 mod add_fk_without_not_valid;
+mod add_primary_key_without_index;
+mod add_unique_constraint;
 mod alter_column_type;
 mod drop_column;
 mod drop_index_non_concurrent;
@@ -45,6 +48,9 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(truncate::Truncate),
         Box::new(vacuum_full_cluster::VacuumFullOrCluster),
         Box::new(reindex_non_concurrent::ReindexNonConcurrent),
+        Box::new(add_unique_constraint::AddUniqueConstraint),
+        Box::new(add_primary_key_without_index::AddPrimaryKeyWithoutIndex),
+        Box::new(add_column_not_null_no_default::AddColumnNotNullNoDefault),
     ]
 });
 
@@ -106,6 +112,9 @@ mod tests {
                 "truncate",
                 "vacuum-full-cluster",
                 "reindex-non-concurrent",
+                "add-unique-constraint",
+                "add-primary-key-without-index",
+                "add-column-not-null-no-default",
             ]
         );
     }

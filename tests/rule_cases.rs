@@ -193,3 +193,53 @@ fn reindex_non_concurrent() {
         "reindex-non-concurrent"
     ));
 }
+
+// ── add-unique-constraint ─────────────────────────────────────────────────────
+
+#[test]
+fn add_unique_constraint() {
+    assert!(fires(
+        "ALTER TABLE t ADD CONSTRAINT u UNIQUE (a)",
+        "add-unique-constraint"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD CONSTRAINT u UNIQUE USING INDEX existing_idx",
+        "add-unique-constraint"
+    ));
+}
+
+// ── add-primary-key-without-index ─────────────────────────────────────────────
+
+#[test]
+fn add_primary_key_without_index() {
+    assert!(fires(
+        "ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY (id)",
+        "add-primary-key-without-index"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id int PRIMARY KEY",
+        "add-primary-key-without-index"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY USING INDEX existing_idx",
+        "add-primary-key-without-index"
+    ));
+}
+
+// ── add-column-not-null-no-default ────────────────────────────────────────────
+
+#[test]
+fn add_column_not_null_no_default() {
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN c int NOT NULL",
+        "add-column-not-null-no-default"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int",
+        "add-column-not-null-no-default"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int NOT NULL DEFAULT 0",
+        "add-column-not-null-no-default"
+    ));
+}
