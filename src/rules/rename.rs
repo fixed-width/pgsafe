@@ -15,12 +15,16 @@ impl Rule for Rename {
         let NodeEnum::RenameStmt(stmt) = node else {
             return;
         };
-        let kind = if stmt.rename_type == ObjectType::ObjectTable as i32 {
-            "table"
-        } else if stmt.rename_type == ObjectType::ObjectColumn as i32 {
-            "column"
-        } else {
-            return;
+        let kind = match ObjectType::try_from(stmt.rename_type) {
+            Ok(ObjectType::ObjectTable) => "table",
+            Ok(ObjectType::ObjectColumn) => "column",
+            Ok(ObjectType::ObjectIndex) => "index",
+            Ok(ObjectType::ObjectTabconstraint) => "constraint",
+            Ok(ObjectType::ObjectView) => "view",
+            Ok(ObjectType::ObjectMatview) => "materialized view",
+            Ok(ObjectType::ObjectSequence) => "sequence",
+            Ok(ObjectType::ObjectSchema) => "schema",
+            _ => return,
         };
         out.push(RuleHit {
             message: format!(
@@ -48,6 +52,36 @@ mod tests {
     #[test]
     fn flags_column_rename() {
         let findings = lint_sql("ALTER TABLE t RENAME COLUMN a TO b").unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_index_rename() {
+        let findings = lint_sql("ALTER INDEX idx RENAME TO idx2").unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_constraint_rename() {
+        let findings = lint_sql("ALTER TABLE t RENAME CONSTRAINT ck TO ck2").unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_view_rename() {
+        let findings = lint_sql("ALTER VIEW v RENAME TO v2").unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_sequence_rename() {
+        let findings = lint_sql("ALTER SEQUENCE s RENAME TO s2").unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_matview_rename() {
+        let findings = lint_sql("ALTER MATERIALIZED VIEW m RENAME TO m2").unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
     }
 }
