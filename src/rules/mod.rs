@@ -21,6 +21,9 @@ pub(crate) trait Rule: Send + Sync {
 mod add_check_without_not_valid;
 mod add_fk_without_not_valid;
 mod alter_column_type;
+mod drop_column;
+mod drop_index_non_concurrent;
+mod drop_table;
 mod non_concurrent_index;
 mod rename;
 mod set_not_null;
@@ -33,6 +36,9 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(set_not_null::SetNotNull),
         Box::new(alter_column_type::AlterColumnType),
         Box::new(rename::Rename),
+        Box::new(drop_index_non_concurrent::DropIndexNonConcurrent),
+        Box::new(drop_table::DropTable),
+        Box::new(drop_column::DropColumn),
     ]
 });
 
@@ -88,6 +94,9 @@ mod tests {
                 "set-not-null",
                 "alter-column-type",
                 "rename",
+                "drop-index-non-concurrent",
+                "drop-table",
+                "drop-column",
             ]
         );
     }

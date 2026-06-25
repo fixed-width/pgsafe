@@ -135,3 +135,30 @@ fn rename_silent_for_trigger() {
     // ALTER TRIGGER is not in the covered set (falls to `_ => return`).
     assert!(!fires("ALTER TRIGGER trg ON t RENAME TO trg2", "rename"));
 }
+
+// ── drop-index-non-concurrent ───────────────────────────────────────────────
+
+#[test]
+fn drop_index_non_concurrent() {
+    assert!(fires("DROP INDEX my_idx", "drop-index-non-concurrent"));
+    assert!(!fires(
+        "DROP INDEX CONCURRENTLY my_idx",
+        "drop-index-non-concurrent"
+    ));
+}
+
+// ── drop-table ──────────────────────────────────────────────────────────────
+
+#[test]
+fn drop_table() {
+    assert!(fires("DROP TABLE t", "drop-table"));
+    assert!(!fires("DROP INDEX i", "drop-table"));
+}
+
+// ── drop-column ─────────────────────────────────────────────────────────────
+
+#[test]
+fn drop_column() {
+    assert!(fires("ALTER TABLE t DROP COLUMN c", "drop-column"));
+    assert!(!fires("ALTER TABLE t ADD COLUMN c int", "drop-column"));
+}
