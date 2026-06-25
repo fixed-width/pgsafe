@@ -10,6 +10,7 @@ pub trait Rule {
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>);
 }
 
+mod add_check_without_not_valid;
 mod add_fk_without_not_valid;
 mod non_concurrent_index;
 
@@ -18,5 +19,6 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(non_concurrent_index::NonConcurrentIndex),
         Box::new(add_fk_without_not_valid::AddFkWithoutNotValid),
+        Box::new(add_check_without_not_valid::AddCheckWithoutNotValid),
     ]
 }
