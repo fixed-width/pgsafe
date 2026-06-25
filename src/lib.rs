@@ -17,7 +17,7 @@ mod rules;
 
 /// Severity level of a [`Finding`].
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// The statement is potentially unsafe but may be acceptable in some contexts.
@@ -29,7 +29,7 @@ pub enum Severity {
 /// Source position of a finding's statement: byte offset plus 1-based line and
 /// (character) column of the statement's first non-whitespace token.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Location {
     /// 0-based byte offset of the statement's first non-whitespace character
     /// within the original SQL string.  Saturates to [`u32::MAX`] for inputs
@@ -60,7 +60,7 @@ pub(crate) struct RuleHit {
 
 /// A safety finding reported for a specific SQL statement.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
     /// Identifier of the rule that triggered this finding (e.g. `"non-concurrent-index"`).
     pub rule_id: String,
@@ -239,5 +239,13 @@ mod tests {
         assert_eq!(f[2].location.line, 3);
 
         assert!(f[1].snippet.starts_with("ALTER TABLE"));
+    }
+
+    #[test]
+    fn findings_json_round_trip() {
+        let findings = lint_sql("CREATE INDEX i ON t (x)").unwrap();
+        let json = serde_json::to_string(&findings).unwrap();
+        let back: Vec<Finding> = serde_json::from_str(&json).unwrap();
+        assert_eq!(findings, back);
     }
 }
