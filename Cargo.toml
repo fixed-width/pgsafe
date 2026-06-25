@@ -2,6 +2,11 @@
 name = "pgsafe"
 version = "0.0.1"
 edition = "2021"
+description = "Static safety linter for PostgreSQL DDL migrations — catches unsafe schema changes before they lock or break production."
+license = "Apache-2.0"
+readme = "README.md"
+keywords = ["postgres", "postgresql", "migrations", "ddl", "linter"]
+categories = ["development-tools", "database"]
 
 [dependencies]
 pg_query = "6.1"

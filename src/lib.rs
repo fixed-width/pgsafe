@@ -115,4 +115,62 @@ mod tests {
     fn invalid_sql_is_parse_error() {
         assert!(matches!(lint_sql("ALTER TABLE"), Err(LintError::Parse(_))));
     }
+
+    /// Verifies the engine's determinism and positional-enrichment contract across a
+    /// two-statement input:
+    ///
+    /// 1. `statement_index` is 0-based source order, assigned per-statement.
+    /// 2. Within a single statement that triggers multiple rules, findings appear in
+    ///    `all_rules()` registry order — here `set-not-null` (pos 3) before
+    ///    `alter-column-type` (pos 4) even though the TYPE command comes first in the SQL.
+    /// 3. `location` is the statement's byte offset in the original SQL input.
+    /// 4. `snippet` is the trimmed source text of the statement, and `sql[location..]`
+    ///    starts with that snippet (i.e. location indexes into the source).
+    #[test]
+    fn engine_finding_order_and_positional_enrichment() {
+        // Statement 0 (offset 0): non-concurrent index — one finding.
+        // Statement 1 (offset 24): two ALTER TABLE commands — two findings in registry order.
+        let sql = "CREATE INDEX i ON t (x);\
+                   ALTER TABLE t ALTER COLUMN a TYPE bigint, ALTER COLUMN a SET NOT NULL";
+
+        let findings = lint_sql(sql).unwrap();
+
+        assert_eq!(findings.len(), 3, "expected exactly 3 findings");
+
+        // --- statement_index is correct and in source order ---
+        assert_eq!(findings[0].statement_index, 0, "stmt 0 finding has wrong index");
+        assert_eq!(findings[1].statement_index, 1, "stmt 1 first finding has wrong index");
+        assert_eq!(findings[2].statement_index, 1, "stmt 1 second finding has wrong index");
+
+        // --- rule order: source order across statements, registry order within a statement ---
+        // non-concurrent-index (stmt 0), then set-not-null before alter-column-type (stmt 1)
+        assert_eq!(findings[0].rule_id, "non-concurrent-index");
+        assert_eq!(findings[1].rule_id, "set-not-null", "set-not-null must precede alter-column-type (registry order)");
+        assert_eq!(findings[2].rule_id, "alter-column-type");
+
+        // --- snippet is the trimmed source text of each statement ---
+        assert_eq!(findings[0].snippet, "CREATE INDEX i ON t (x)");
+        let expected_stmt1 =
+            "ALTER TABLE t ALTER COLUMN a TYPE bigint, ALTER COLUMN a SET NOT NULL";
+        assert_eq!(findings[1].snippet, expected_stmt1);
+        assert_eq!(findings[2].snippet, expected_stmt1, "both findings share the same statement");
+
+        // --- location is the byte offset of the statement in the input ---
+        let stmt0_start = 0_i32;
+        let stmt1_start = sql.find("ALTER TABLE").unwrap() as i32;
+        assert_eq!(findings[0].location, stmt0_start);
+        assert_eq!(findings[1].location, stmt1_start);
+        assert_eq!(findings[2].location, stmt1_start);
+
+        // --- sql[location..] starts with the snippet (location indexes into the source) ---
+        for f in &findings {
+            let loc = f.location as usize;
+            assert_eq!(
+                &sql[loc..loc + f.snippet.len()],
+                f.snippet.as_str(),
+                "snippet at location does not match source text for rule {}",
+                f.rule_id,
+            );
+        }
+    }
 }
