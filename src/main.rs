@@ -90,8 +90,13 @@ fn print_human(reports: &[FileReport]) {
     for r in reports {
         for f in &r.findings {
             println!(
-                "{}: {} [{}] statement #{} (byte {})",
-                r.name, f.severity, f.rule_id, f.statement_index, f.location
+                "{}: {} [{}] statement #{} (line {}, col {})",
+                r.name,
+                f.severity,
+                f.rule_id,
+                f.statement_index,
+                f.location.line,
+                f.location.column
             );
             println!("  {}", f.message);
             println!("  fix: {}", f.guidance);

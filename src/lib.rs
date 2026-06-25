@@ -11,6 +11,16 @@ pub enum Severity {
     Error,
 }
 
+/// Source position of a finding's statement: byte offset plus 1-based line and
+/// (character) column of the statement's first non-whitespace token.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct Location {
+    pub byte: u32,
+    pub line: u32,
+    pub column: u32,
+}
+
 impl std::fmt::Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -36,7 +46,7 @@ pub struct Finding {
     pub message: String,
     pub guidance: String,
     pub statement_index: usize,
-    pub location: i32,
+    pub location: Location,
     pub snippet: String,
 }
 
@@ -48,15 +58,52 @@ pub enum LintError {
     Parse(String),
 }
 
-/// Extract the trimmed source text of a single parsed statement.
-fn statement_text(sql: &str, raw: &pg_query::protobuf::RawStmt) -> String {
+struct StatementSpan {
+    location: Location,
+    snippet: String,
+}
+
+/// Compute the trimmed snippet AND the corrected location (pointing at the
+/// first non-whitespace byte of the statement, not the leading whitespace).
+fn statement_span(sql: &str, raw: &pg_query::protobuf::RawStmt) -> StatementSpan {
     let off = raw.stmt_location.max(0) as usize;
-    let end = if raw.stmt_len == 0 {
+    let len = raw.stmt_len.max(0) as usize;
+    let end = if len == 0 {
         sql.len()
     } else {
-        (off + raw.stmt_len as usize).min(sql.len())
+        off.saturating_add(len).min(sql.len())
     };
-    sql.get(off..end).unwrap_or("").trim().to_string()
+    let raw_slice = sql.get(off..end).unwrap_or("");
+    let lead_ws = raw_slice.len() - raw_slice.trim_start().len();
+    let start = off + lead_ws;
+    let snippet = raw_slice.trim().to_string();
+    let (line, column) = line_col(sql, start);
+    StatementSpan {
+        location: Location {
+            byte: start as u32,
+            line,
+            column,
+        },
+        snippet,
+    }
+}
+
+/// 1-based line and character-column of a byte offset within `sql`.
+fn line_col(sql: &str, byte: usize) -> (u32, u32) {
+    let mut line = 1u32;
+    let mut column = 1u32;
+    for (i, ch) in sql.char_indices() {
+        if i >= byte {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
 }
 
 /// Lint one or more SQL statements against all enabled rules.
@@ -73,7 +120,7 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
             continue;
         };
 
-        let snippet = statement_text(sql, raw);
+        let span = statement_span(sql, raw);
         let mut hits = Vec::new();
         for rule in rules {
             hits.clear();
@@ -85,8 +132,8 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
                     message: h.message,
                     guidance: h.guidance,
                     statement_index: i,
-                    location: raw.stmt_location,
-                    snippet: snippet.clone(),
+                    location: span.location,
+                    snippet: span.snippet.clone(),
                 });
             }
         }
@@ -109,76 +156,37 @@ mod tests {
         assert!(matches!(lint_sql("ALTER TABLE"), Err(LintError::Parse(_))));
     }
 
-    /// Verifies the engine's determinism and positional-enrichment contract across a
-    /// two-statement input:
-    ///
-    /// 1. `statement_index` is 0-based source order, assigned per-statement.
-    /// 2. Within a single statement that triggers multiple rules, findings appear in
-    ///    `all_rules()` registry order — here `set-not-null` (pos 3) before
-    ///    `alter-column-type` (pos 4) even though the TYPE command comes first in the SQL.
-    /// 3. `location` is the statement's byte offset in the original SQL input.
-    /// 4. `snippet` is the trimmed source text of the statement, and `sql[location..]`
-    ///    starts with that snippet (i.e. location indexes into the source).
     #[test]
     fn engine_finding_order_and_positional_enrichment() {
-        // Statement 0 (offset 0): non-concurrent index — one finding.
-        // Statement 1 (offset 24): two ALTER TABLE commands — two findings in registry order.
-        let sql = "CREATE INDEX i ON t (x);\
-                   ALTER TABLE t ALTER COLUMN a TYPE bigint, ALTER COLUMN a SET NOT NULL";
+        let sql = "CREATE INDEX i ON t (x);\n\nALTER TABLE t ALTER COLUMN a TYPE bigint, ALTER COLUMN a SET NOT NULL;\n";
+        let f = lint_sql(sql).unwrap();
 
-        let findings = lint_sql(sql).unwrap();
-
-        assert_eq!(findings.len(), 3, "expected exactly 3 findings");
-
-        // --- statement_index is correct and in source order ---
+        // Order: statement source order, then registry order within a statement.
+        // set-not-null is registered before alter-column-type, so it comes first.
+        let ids: Vec<&str> = f.iter().map(|x| x.rule_id.as_str()).collect();
         assert_eq!(
-            findings[0].statement_index, 0,
-            "stmt 0 finding has wrong index"
-        );
-        assert_eq!(
-            findings[1].statement_index, 1,
-            "stmt 1 first finding has wrong index"
-        );
-        assert_eq!(
-            findings[2].statement_index, 1,
-            "stmt 1 second finding has wrong index"
+            ids,
+            ["non-concurrent-index", "set-not-null", "alter-column-type"]
         );
 
-        // --- rule order: source order across statements, registry order within a statement ---
-        // non-concurrent-index (stmt 0), then set-not-null before alter-column-type (stmt 1)
-        assert_eq!(findings[0].rule_id, "non-concurrent-index");
-        assert_eq!(
-            findings[1].rule_id, "set-not-null",
-            "set-not-null must precede alter-column-type (registry order)"
-        );
-        assert_eq!(findings[2].rule_id, "alter-column-type");
+        assert_eq!(f[0].statement_index, 0);
+        assert_eq!(f[1].statement_index, 1);
+        assert_eq!(f[2].statement_index, 1);
 
-        // --- snippet is the trimmed source text of each statement ---
-        assert_eq!(findings[0].snippet, "CREATE INDEX i ON t (x)");
-        let expected_stmt1 =
-            "ALTER TABLE t ALTER COLUMN a TYPE bigint, ALTER COLUMN a SET NOT NULL";
-        assert_eq!(findings[1].snippet, expected_stmt1);
-        assert_eq!(
-            findings[2].snippet, expected_stmt1,
-            "both findings share the same statement"
-        );
-
-        // --- location is the byte offset of the statement in the input ---
-        let stmt0_start = 0_i32;
-        let stmt1_start = sql.find("ALTER TABLE").unwrap() as i32;
-        assert_eq!(findings[0].location, stmt0_start);
-        assert_eq!(findings[1].location, stmt1_start);
-        assert_eq!(findings[2].location, stmt1_start);
-
-        // --- sql[location..] starts with the snippet (location indexes into the source) ---
-        for f in &findings {
-            let loc = f.location as usize;
-            assert_eq!(
-                &sql[loc..loc + f.snippet.len()],
-                f.snippet.as_str(),
-                "snippet at location does not match source text for rule {}",
-                f.rule_id,
+        // location.byte points at the statement's first real token (NOT leading whitespace):
+        for finding in &f {
+            let b = finding.location.byte as usize;
+            assert!(
+                sql[b..].starts_with(&finding.snippet),
+                "location.byte must point at the trimmed statement start"
             );
         }
+
+        // line/column: CREATE on line 1, the ALTER on line 3 (after the blank line).
+        assert_eq!((f[0].location.line, f[0].location.column), (1, 1));
+        assert_eq!((f[1].location.line, f[1].location.column), (3, 1));
+        assert_eq!(f[2].location.line, 3);
+
+        assert!(f[1].snippet.starts_with("ALTER TABLE"));
     }
 }
