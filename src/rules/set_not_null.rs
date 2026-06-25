@@ -1,0 +1,46 @@
+use pg_query::protobuf::AlterTableType;
+use pg_query::NodeEnum;
+
+use super::Rule;
+use crate::{RuleHit, Severity};
+
+pub struct SetNotNull;
+
+impl Rule for SetNotNull {
+    fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
+        let NodeEnum::AlterTableStmt(stmt) = node else { return };
+        for cmd_node in &stmt.cmds {
+            let Some(NodeEnum::AlterTableCmd(cmd)) = cmd_node.node.as_ref() else { continue };
+            if cmd.subtype == AlterTableType::AtSetNotNull as i32 {
+                out.push(RuleHit {
+                    rule_id: "set-not-null",
+                    severity: Severity::Warning,
+                    message: "ALTER COLUMN ... SET NOT NULL scans the entire table under an ACCESS \
+                              EXCLUSIVE lock."
+                        .into(),
+                    guidance: "On PG12+, first add `CHECK (col IS NOT NULL) NOT VALID`, run VALIDATE \
+                               CONSTRAINT, then SET NOT NULL (it reuses the validated check and skips \
+                               the scan). Drop the helper CHECK afterward if you like."
+                        .into(),
+                });
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::lint_sql;
+
+    #[test]
+    fn flags_set_not_null() {
+        let findings = lint_sql("ALTER TABLE t ALTER COLUMN a SET NOT NULL").unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "set-not-null"));
+    }
+
+    #[test]
+    fn ignores_drop_not_null() {
+        let findings = lint_sql("ALTER TABLE t ALTER COLUMN a DROP NOT NULL").unwrap();
+        assert!(findings.iter().all(|f| f.rule_id != "set-not-null"));
+    }
+}
