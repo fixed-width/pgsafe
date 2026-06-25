@@ -13,7 +13,10 @@ impl Rule for SetNotNull {
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         for cmd in super::alter_table_cmds(node) {
-            if cmd.subtype == AlterTableType::AtSetNotNull as i32 {
+            if matches!(
+                AlterTableType::try_from(cmd.subtype),
+                Ok(AlterTableType::AtSetNotNull)
+            ) {
                 out.push(RuleHit {
                     message: "ALTER COLUMN ... SET NOT NULL scans the entire table under an ACCESS \
                               EXCLUSIVE lock."

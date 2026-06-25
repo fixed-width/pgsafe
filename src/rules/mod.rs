@@ -15,11 +15,6 @@ pub(crate) trait Rule: Send + Sync {
     fn severity(&self) -> Severity {
         Severity::Warning
     }
-    /// Optional documentation URL for this rule.
-    #[allow(dead_code)]
-    fn docs_url(&self) -> Option<&'static str> {
-        None
-    }
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>);
 }
 
@@ -64,7 +59,12 @@ fn alter_table_cmds(node: &NodeEnum) -> Vec<&AlterTableCmd> {
 fn constraints_being_added(node: &NodeEnum) -> Vec<&Constraint> {
     alter_table_cmds(node)
         .into_iter()
-        .filter(|cmd| cmd.subtype == AlterTableType::AtAddConstraint as i32)
+        .filter(|cmd| {
+            matches!(
+                AlterTableType::try_from(cmd.subtype),
+                Ok(AlterTableType::AtAddConstraint)
+            )
+        })
         .filter_map(|cmd| match cmd.def.as_ref()?.node.as_ref()? {
             NodeEnum::Constraint(c) => Some(c.as_ref()),
             _ => None,

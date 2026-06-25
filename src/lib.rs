@@ -85,9 +85,8 @@ pub struct Finding {
 #[derive(Debug, thiserror::Error)]
 pub enum LintError {
     /// The SQL input could not be parsed by the PostgreSQL parser.
-    /// The inner string contains the parser's error message.
     #[error("parse error: {0}")]
-    Parse(String),
+    Parse(#[source] pg_query::Error),
 }
 
 struct StatementSpan {
@@ -150,9 +149,10 @@ fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 /// assert!(!findings.is_empty());
 /// ```
 pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
-    let parsed = pg_query::parse(sql).map_err(|e| LintError::Parse(e.to_string()))?;
+    let parsed = pg_query::parse(sql).map_err(LintError::Parse)?;
     let rules = rules::all_rules();
     let mut findings = Vec::new();
+    let mut hits = Vec::new();
 
     for (i, raw) in parsed.protobuf.stmts.iter().enumerate() {
         let Some(stmt_box) = raw.stmt.as_ref() else {
@@ -163,7 +163,6 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
         };
 
         let span = statement_span(sql, raw);
-        let mut hits = Vec::new();
         for rule in rules {
             hits.clear();
             rule.check(node, &mut hits);
