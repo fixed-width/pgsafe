@@ -1,9 +1,3 @@
-#![deny(missing_docs)]
-#![warn(
-    clippy::missing_errors_doc,
-    clippy::cast_sign_loss,
-    clippy::cast_possible_truncation
-)]
 //! `pgsafe` is a static safety linter for PostgreSQL DDL migrations.
 //!
 //! It parses SQL using the real PostgreSQL parser and checks every statement
@@ -31,9 +25,7 @@ pub enum Severity {
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Location {
-    /// 0-based byte offset of the statement's first non-whitespace character
-    /// within the original SQL string.  Saturates to [`u32::MAX`] for inputs
-    /// larger than 4 GiB.
+    /// 0-based byte offset of the statement's first non-whitespace token within the input.
     pub byte: u32,
     /// 1-based line number of the statement's first non-whitespace character.
     pub line: u32,
@@ -86,7 +78,7 @@ pub struct Finding {
 pub enum LintError {
     /// The SQL input could not be parsed by the PostgreSQL parser.
     #[error("parse error: {0}")]
-    Parse(#[source] pg_query::Error),
+    Parse(String),
 }
 
 struct StatementSpan {
@@ -149,7 +141,7 @@ fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 /// assert!(!findings.is_empty());
 /// ```
 pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
-    let parsed = pg_query::parse(sql).map_err(LintError::Parse)?;
+    let parsed = pg_query::parse(sql).map_err(|e| LintError::Parse(e.to_string()))?;
     let rules = rules::all_rules();
     let mut findings = Vec::new();
     let mut hits = Vec::new();
@@ -164,7 +156,6 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
 
         let span = statement_span(sql, raw);
         for rule in rules {
-            hits.clear();
             rule.check(node, &mut hits);
             for h in hits.drain(..) {
                 findings.push(Finding {

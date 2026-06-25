@@ -27,3 +27,11 @@ criterion = "0.8.2"
 [[bench]]
 name = "lint"
 harness = false
+
+[lints.rust]
+missing_docs = "deny"
+
+[lints.clippy]
+missing_errors_doc = "warn"
+cast_sign_loss = "warn"
+cast_possible_truncation = "warn"

@@ -1,3 +1,4 @@
+//! `pgsafe` binary — command-line interface to the pgsafe linter.
 use std::io::Read;
 use std::process::ExitCode;
 
