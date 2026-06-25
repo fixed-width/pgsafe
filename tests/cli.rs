@@ -159,6 +159,29 @@ fn json_format_clean_sql_exits_0_with_empty_findings() {
     );
 }
 
+// ── error severity rendering ─────────────────────────────────────────────────
+
+#[test]
+fn error_severity_renders_in_human_and_json() {
+    // human: format is "{name}: {severity} [{rule_id}] statement #…"
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("error [vacuum-full-cluster]"));
+    // json
+    let out = Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--format", "json"])
+        .write_stdin("VACUUM FULL t;")
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(v["files"][0]["findings"][0]["severity"], "error");
+}
+
 // ── old JSON substring test (kept for backwards compat) ──────────────────────
 
 #[test]
