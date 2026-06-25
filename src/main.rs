@@ -28,13 +28,20 @@ struct FileReport {
     #[serde(rename = "file")]
     name: String,
     findings: Vec<Finding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct Report<'a> {
+    schema_version: u32,
+    files: &'a [FileReport],
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(&cli) {
-        Ok(true) => ExitCode::from(1),
-        Ok(false) => ExitCode::SUCCESS,
+        Ok(code) => ExitCode::from(code),
         Err(msg) => {
             eprintln!("error: {msg}");
             ExitCode::from(2)
@@ -42,19 +49,45 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(cli: &Cli) -> Result<bool, String> {
-    let inputs = read_inputs(&cli.paths)?;
+fn run(cli: &Cli) -> Result<u8, String> {
+    let inputs = read_inputs(&cli.paths)?; // input/IO errors (e.g. missing file) still abort -> exit 2
     let mut reports = Vec::new();
+    let mut had_error = false;
+    let mut had_findings = false;
+
     for (name, sql) in inputs {
-        let findings = lint_sql(&sql).map_err(|e| format!("{name}: {e}"))?;
-        reports.push(FileReport { name, findings });
+        match lint_sql(&sql) {
+            Ok(findings) => {
+                had_findings |= !findings.is_empty();
+                reports.push(FileReport {
+                    name,
+                    findings,
+                    error: None,
+                });
+            }
+            Err(e) => {
+                had_error = true;
+                reports.push(FileReport {
+                    name,
+                    findings: Vec::new(),
+                    error: Some(e.to_string()),
+                });
+            }
+        }
     }
-    let any = reports.iter().any(|r| !r.findings.is_empty());
+
     match cli.format {
         Format::Human => print_human(&reports),
-        Format::Json => print_json(&reports),
+        Format::Json => print_json(&reports)?,
     }
-    Ok(any)
+
+    Ok(if had_error {
+        2
+    } else if had_findings {
+        1
+    } else {
+        0
+    })
 }
 
 fn read_inputs(paths: &[String]) -> Result<Vec<(String, String)>, String> {
@@ -81,13 +114,22 @@ fn read_stdin() -> Result<String, String> {
     Ok(s)
 }
 
-fn print_json(reports: &[FileReport]) {
-    let json = serde_json::to_string_pretty(reports).unwrap_or_else(|_| "[]".to_string());
+fn print_json(reports: &[FileReport]) -> Result<(), String> {
+    let report = Report {
+        schema_version: 1,
+        files: reports,
+    };
+    let json = serde_json::to_string_pretty(&report)
+        .map_err(|e| format!("failed to serialize JSON output: {e}"))?;
     println!("{json}");
+    Ok(())
 }
 
 fn print_human(reports: &[FileReport]) {
     for r in reports {
+        if let Some(err) = &r.error {
+            eprintln!("{}: {}", r.name, err);
+        }
         for f in &r.findings {
             println!(
                 "{}: {} [{}] statement #{} (line {}, col {})",

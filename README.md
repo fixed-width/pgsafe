@@ -35,8 +35,28 @@ pgsafe          # no args also reads stdin
 pgsafe --format json migration.sql
 
 # Pipe into jq
-pgsafe --format json migration.sql | jq '.[] | select(.severity == "error")'
+pgsafe --format json migration.sql | jq '.files[].findings[] | select(.severity == "error")'
 ```
+
+### JSON output shape
+
+The `--format json` output is a versioned envelope:
+
+```json
+{
+  "schema_version": 1,
+  "files": [
+    {
+      "file": "migration.sql",
+      "findings": [
+        { "rule_id": "non-concurrent-index", "severity": "error", ... }
+      ]
+    }
+  ]
+}
+```
+
+If a file cannot be parsed, the `"findings"` array is empty and an `"error"` key is added to that file's object. Other files in the same run are still reported normally.
 
 ### Exit codes
 
@@ -44,7 +64,7 @@ pgsafe --format json migration.sql | jq '.[] | select(.severity == "error")'
 |------|---------|
 | 0 | No findings — migration looks safe |
 | 1 | One or more findings (warnings or errors) |
-| 2 | Parse error — SQL could not be parsed |
+| 2 | Any file failed to parse (or an I/O error occurred) |
 
 This makes `pgsafe` straightforward to gate in CI:
 
