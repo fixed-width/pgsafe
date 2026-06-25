@@ -1,17 +1,19 @@
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::{RuleHit, Severity};
+use crate::RuleHit;
 
 pub struct NonConcurrentIndex;
 
 impl Rule for NonConcurrentIndex {
+    fn id(&self) -> &'static str {
+        "non-concurrent-index"
+    }
+
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         if let NodeEnum::IndexStmt(stmt) = node {
             if !stmt.concurrent {
                 out.push(RuleHit {
-                    rule_id: "non-concurrent-index",
-                    severity: Severity::Warning,
                     message: "CREATE INDEX without CONCURRENTLY takes a lock that blocks writes \
                               to the table for the entire build."
                         .into(),

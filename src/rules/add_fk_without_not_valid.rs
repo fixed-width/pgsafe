@@ -2,11 +2,15 @@ use pg_query::protobuf::{AlterTableType, ConstrType};
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::{RuleHit, Severity};
+use crate::RuleHit;
 
 pub struct AddFkWithoutNotValid;
 
 impl Rule for AddFkWithoutNotValid {
+    fn id(&self) -> &'static str {
+        "add-fk-without-not-valid"
+    }
+
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         let NodeEnum::AlterTableStmt(stmt) = node else {
             return;
@@ -26,8 +30,6 @@ impl Rule for AddFkWithoutNotValid {
             };
             if c.contype == ConstrType::ConstrForeign as i32 && !c.skip_validation {
                 out.push(RuleHit {
-                    rule_id: "add-fk-without-not-valid",
-                    severity: Severity::Warning,
                     message: "Adding a FOREIGN KEY without NOT VALID validates every existing row \
                               while holding locks on both tables."
                         .into(),

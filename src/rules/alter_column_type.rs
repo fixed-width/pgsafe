@@ -2,11 +2,15 @@ use pg_query::protobuf::AlterTableType;
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::{RuleHit, Severity};
+use crate::RuleHit;
 
 pub struct AlterColumnType;
 
 impl Rule for AlterColumnType {
+    fn id(&self) -> &'static str {
+        "alter-column-type"
+    }
+
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         let NodeEnum::AlterTableStmt(stmt) = node else {
             return;
@@ -17,8 +21,6 @@ impl Rule for AlterColumnType {
             };
             if cmd.subtype == AlterTableType::AtAlterColumnType as i32 {
                 out.push(RuleHit {
-                    rule_id: "alter-column-type",
-                    severity: Severity::Warning,
                     message: "ALTER COLUMN ... TYPE usually rewrites the whole table and rebuilds its \
                               indexes under an ACCESS EXCLUSIVE lock."
                         .into(),

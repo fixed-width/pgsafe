@@ -2,11 +2,15 @@ use pg_query::protobuf::ObjectType;
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::{RuleHit, Severity};
+use crate::RuleHit;
 
 pub struct Rename;
 
 impl Rule for Rename {
+    fn id(&self) -> &'static str {
+        "rename"
+    }
+
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         let NodeEnum::RenameStmt(stmt) = node else {
             return;
@@ -19,8 +23,6 @@ impl Rule for Rename {
             return;
         };
         out.push(RuleHit {
-            rule_id: "rename",
-            severity: Severity::Warning,
             message: format!(
                 "Renaming a {kind} breaks every application query, view, and function that \
                  references the old name."

@@ -19,11 +19,9 @@ impl Severity {
     }
 }
 
-/// What a rule emits when it matches. The engine adds positional context.
+/// What a rule emits when it matches. The engine adds identity and positional context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleHit {
-    pub rule_id: &'static str,
-    pub severity: Severity,
     pub message: String,
     pub guidance: String,
 }
@@ -81,25 +79,22 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
             continue;
         };
 
-        let mut hits = Vec::new();
-        for rule in &rules {
-            rule.check(node, &mut hits);
-        }
-        if hits.is_empty() {
-            continue;
-        }
-
         let snippet = statement_text(sql, raw);
-        for h in hits {
-            findings.push(Finding {
-                rule_id: h.rule_id.to_string(),
-                severity: h.severity,
-                message: h.message,
-                guidance: h.guidance,
-                statement_index: i,
-                location: raw.stmt_location,
-                snippet: snippet.clone(),
-            });
+        let mut hits = Vec::new();
+        for rule in rules {
+            hits.clear();
+            rule.check(node, &mut hits);
+            for h in hits.drain(..) {
+                findings.push(Finding {
+                    rule_id: rule.id().to_string(),
+                    severity: rule.severity(),
+                    message: h.message,
+                    guidance: h.guidance,
+                    statement_index: i,
+                    location: raw.stmt_location,
+                    snippet: snippet.clone(),
+                });
+            }
         }
     }
 

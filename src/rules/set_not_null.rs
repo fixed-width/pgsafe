@@ -2,11 +2,15 @@ use pg_query::protobuf::AlterTableType;
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::{RuleHit, Severity};
+use crate::RuleHit;
 
 pub struct SetNotNull;
 
 impl Rule for SetNotNull {
+    fn id(&self) -> &'static str {
+        "set-not-null"
+    }
+
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         let NodeEnum::AlterTableStmt(stmt) = node else {
             return;
@@ -17,8 +21,6 @@ impl Rule for SetNotNull {
             };
             if cmd.subtype == AlterTableType::AtSetNotNull as i32 {
                 out.push(RuleHit {
-                    rule_id: "set-not-null",
-                    severity: Severity::Warning,
                     message: "ALTER COLUMN ... SET NOT NULL scans the entire table under an ACCESS \
                               EXCLUSIVE lock."
                         .into(),

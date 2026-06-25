@@ -2,11 +2,15 @@ use pg_query::protobuf::{AlterTableType, ConstrType};
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::{RuleHit, Severity};
+use crate::RuleHit;
 
 pub struct AddCheckWithoutNotValid;
 
 impl Rule for AddCheckWithoutNotValid {
+    fn id(&self) -> &'static str {
+        "add-check-without-not-valid"
+    }
+
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         let NodeEnum::AlterTableStmt(stmt) = node else {
             return;
@@ -26,8 +30,6 @@ impl Rule for AddCheckWithoutNotValid {
             };
             if c.contype == ConstrType::ConstrCheck as i32 && !c.skip_validation {
                 out.push(RuleHit {
-                    rule_id: "add-check-without-not-valid",
-                    severity: Severity::Warning,
                     message: "Adding a CHECK constraint without NOT VALID scans the whole table \
                               under an ACCESS EXCLUSIVE lock."
                         .into(),
