@@ -9,6 +9,7 @@
 #![deny(missing_docs)]
 
 mod rules;
+mod suppression;
 
 /// Severity level of a [`Finding`].
 #[non_exhaustive]
@@ -130,7 +131,7 @@ fn statement_span(sql: &str, raw: &pg_query::protobuf::RawStmt) -> StatementSpan
 }
 
 /// 1-based line and character-column of a byte offset within `sql`.
-fn line_col(sql: &str, byte: usize) -> (u32, u32) {
+pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
     let mut line = 1u32;
     let mut column = 1u32;
     for (i, ch) in sql.char_indices() {
@@ -166,7 +167,6 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
     let rules = rules::all_rules();
     let mut findings = Vec::new();
     let mut hits = Vec::new();
-
     for (i, raw) in parsed.protobuf.stmts.iter().enumerate() {
         let Some(stmt_box) = raw.stmt.as_ref() else {
             continue;
@@ -174,7 +174,6 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
         let Some(node) = stmt_box.node.as_ref() else {
             continue;
         };
-
         let span = statement_span(sql, raw);
         for rule in rules {
             rule.check(node, &mut hits);
@@ -192,8 +191,7 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
             }
         }
     }
-
-    Ok(findings)
+    suppression::resolve(sql, &parsed.protobuf.stmts, findings, &rules::rule_ids())
 }
 
 #[cfg(test)]
