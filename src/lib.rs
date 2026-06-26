@@ -44,6 +44,14 @@ impl std::fmt::Display for Severity {
     }
 }
 
+/// Why a [`Finding`] was suppressed by an inline `-- pgsafe:ignore` directive.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Suppression {
+    /// The reason text supplied in the directive.
+    pub reason: String,
+}
+
 /// What a rule emits when it matches. The engine adds identity and positional context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuleHit {
@@ -71,6 +79,18 @@ pub struct Finding {
     pub location: Location,
     /// Trimmed text of the statement that triggered the finding.
     pub snippet: String,
+    /// `Some` when an inline `-- pgsafe:ignore` directive suppressed this finding.
+    /// A suppressed finding is still reported but does not affect the gate exit code.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub suppression: Option<Suppression>,
+}
+
+impl Finding {
+    /// Whether an inline directive suppressed this finding.
+    #[must_use]
+    pub fn is_suppressed(&self) -> bool {
+        self.suppression.is_some()
+    }
 }
 
 /// Error returned when `pgsafe` cannot process the provided SQL.
@@ -167,6 +187,7 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
                     statement_index: i,
                     location: span.location,
                     snippet: span.snippet.clone(),
+                    suppression: None,
                 });
             }
         }
@@ -239,5 +260,27 @@ mod tests {
         let json = serde_json::to_string(&findings).unwrap();
         let back: Vec<Finding> = serde_json::from_str(&json).unwrap();
         assert_eq!(findings, back);
+    }
+
+    #[test]
+    fn suppression_field_defaults_to_none_and_is_omitted_from_json() {
+        let f = &lint_sql("CREATE INDEX i ON t (x)").unwrap()[0];
+        assert!(!f.is_suppressed());
+        let json = serde_json::to_string(f).unwrap();
+        assert!(
+            !json.contains("suppression"),
+            "None suppression must be omitted"
+        );
+    }
+
+    #[test]
+    fn suppression_round_trips_when_present() {
+        let mut f = lint_sql("CREATE INDEX i ON t (x)").unwrap().remove(0);
+        f.suppression = Some(Suppression {
+            reason: "off-peak deploy".into(),
+        });
+        assert!(f.is_suppressed());
+        let back: Finding = serde_json::from_str(&serde_json::to_string(&f).unwrap()).unwrap();
+        assert_eq!(back.suppression.unwrap().reason, "off-peak deploy");
     }
 }
