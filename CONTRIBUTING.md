@@ -50,3 +50,9 @@ samply record ./target/release/pgsafe big_migration.sql
 ```
 
 samply opens a Firefox Profiler tab in your browser with the captured profile.
+
+## Rule ids are public API
+
+A rule's `id()` is the contract that inline `-- pgsafe:ignore <rule-id>` directives
+target. Renaming an id silently breaks every migration that suppresses it. Treat
+rule ids as stable: add new rules with new ids; do not rename existing ones.
