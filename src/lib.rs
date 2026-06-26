@@ -14,6 +14,9 @@ mod rules;
 mod suppression;
 mod txn;
 
+#[cfg(feature = "cli")]
+pub mod cli;
+
 pub use output::{
     gate, lint_input, render_errors, render_finding_human, render_human, render_json, FailOn,
     FileReport, Format,
