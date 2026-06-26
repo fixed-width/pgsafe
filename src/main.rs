@@ -3,7 +3,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use clap::Parser;
-use pgsafe::{lint_sql, Finding, Severity};
+use pgsafe::{gate, lint_sql, FailOn, Finding};
 
 #[derive(Parser)]
 #[command(
@@ -25,17 +25,6 @@ struct Cli {
 enum Format {
     Human,
     Json,
-}
-
-/// Minimum finding severity that fails the run.
-#[derive(Clone, Copy, clap::ValueEnum)]
-enum FailOn {
-    /// Fail only on error-severity findings.
-    Error,
-    /// Fail on any finding (warning or error). Default.
-    Warning,
-    /// Never fail on findings (report-only).
-    Never,
 }
 
 #[derive(serde::Serialize)]
@@ -70,20 +59,10 @@ fn run(cli: &Cli) -> Result<u8, String> {
     let mut had_error = false;
     let mut had_findings = false;
 
-    let threshold = match cli.fail_on {
-        FailOn::Never => None,
-        FailOn::Warning => Some(Severity::Warning),
-        FailOn::Error => Some(Severity::Error),
-    };
-
     for (name, sql) in inputs {
         match lint_sql(&sql) {
             Ok(findings) => {
-                had_findings |= threshold.is_some_and(|min| {
-                    findings
-                        .iter()
-                        .any(|f| !f.is_suppressed() && f.severity >= min)
-                });
+                had_findings |= gate(&findings, cli.fail_on);
                 reports.push(FileReport {
                     name,
                     findings,

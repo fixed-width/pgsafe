@@ -9,9 +9,12 @@
 #![deny(missing_docs)]
 
 mod newtable;
+mod output;
 mod rules;
 mod suppression;
 mod txn;
+
+pub use output::{gate, FailOn};
 
 /// Severity level of a [`Finding`], ordered by increasing severity
 /// (`Warning` < `Error`).
