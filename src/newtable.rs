@@ -3,7 +3,7 @@
 //! rewrite, or scan an empty, not-yet-visible table. A table that is later
 //! populated (INSERT / COPY ... FROM) is no longer treated as empty.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use pg_query::protobuf::{RangeVar, RawStmt};
 use pg_query::NodeEnum;
@@ -28,11 +28,14 @@ fn created_table_key(node: &NodeEnum) -> Option<String> {
     }
 }
 
-/// Table an `INSERT` or `COPY ... FROM` populates.
+/// Table an `INSERT`, `MERGE INTO`, or `COPY ... FROM` populates.
 fn populated_table_key(node: &NodeEnum) -> Option<String> {
     match node {
         NodeEnum::InsertStmt(i) => i.relation.as_ref().map(rangevar_key),
+        NodeEnum::MergeStmt(m) => m.relation.as_ref().map(rangevar_key),
         NodeEnum::CopyStmt(c) if c.is_from => c.relation.as_ref().map(rangevar_key),
+        // A top-level writable CTE (`WITH x AS (INSERT ...) ...`) that populates a tracked
+        // table is not detected here; rare, accepted as a documented limitation.
         _ => None,
     }
 }
@@ -47,15 +50,19 @@ fn target_table_key(node: &NodeEnum) -> Option<String> {
 }
 
 /// Drop findings on statements that target a table created empty earlier in the
-/// same input and not since populated.
-pub(crate) fn drop_new_table_findings(stmts: &[RawStmt], findings: Vec<Finding>) -> Vec<Finding> {
-    let mut empty: HashSet<String> = HashSet::new();
-    let mut dropped: HashSet<usize> = HashSet::new();
+/// same input and not since populated. Returns the kept findings and the set of
+/// dropped statement indices (so inline-suppression can avoid reporting a now-redundant
+/// directive on such a statement as unused).
+pub(crate) fn drop_new_table_findings(
+    stmts: &[RawStmt],
+    findings: Vec<Finding>,
+) -> (Vec<Finding>, BTreeSet<usize>) {
+    let mut empty: BTreeSet<String> = BTreeSet::new();
+    let mut dropped: BTreeSet<usize> = BTreeSet::new();
     for (i, raw) in stmts.iter().enumerate() {
         let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
             continue;
         };
-        // Evaluate the target against the set BEFORE applying this statement's own effect.
         if let Some(key) = target_table_key(node) {
             if empty.contains(&key) {
                 dropped.insert(i);
@@ -68,12 +75,13 @@ pub(crate) fn drop_new_table_findings(stmts: &[RawStmt], findings: Vec<Finding>)
         }
     }
     if dropped.is_empty() {
-        return findings;
+        return (findings, dropped);
     }
-    findings
+    let kept = findings
         .into_iter()
         .filter(|f| !dropped.contains(&f.statement_index))
-        .collect()
+        .collect();
+    (kept, dropped)
 }
 
 #[cfg(test)]
@@ -124,6 +132,13 @@ mod tests {
         assert_eq!(
             populated_table_key(&first_node("COPY foo TO '/tmp/x'")),
             None
+        );
+        assert_eq!(
+            populated_table_key(&first_node(
+                "MERGE INTO foo USING src ON foo.id = src.id WHEN NOT MATCHED THEN INSERT VALUES (src.id)"
+            ))
+            .as_deref(),
+            Some("foo")
         );
     }
 }

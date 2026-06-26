@@ -227,6 +227,7 @@ pub(crate) fn resolve(
     comments: &[Comment],
     mut findings: Vec<Finding>,
     known_rule_ids: &[&'static str],
+    new_table_dropped: &BTreeSet<usize>,
 ) -> Result<Vec<Finding>, LintError> {
     let comment_lines: BTreeSet<u32> = comments
         .iter()
@@ -286,7 +287,7 @@ pub(crate) fn resolve(
                         Severity::Error,
                         format!("directive for `{rule_id}` must include a reason"),
                     ))
-                } else if !used[di] {
+                } else if !used[di] && !new_table_dropped.contains(&stmt_idx) {
                     Some((
                         "suppression-unused",
                         Severity::Warning,
