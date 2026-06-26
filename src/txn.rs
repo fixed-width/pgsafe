@@ -93,5 +93,12 @@ mod tests {
         assert!(indices("CREATE INDEX CONCURRENTLY i ON t (x);").is_empty());
         assert!(indices("BEGIN; COMMIT; CREATE INDEX CONCURRENTLY i ON t (x);").is_empty());
         assert!(indices("BEGIN; CREATE INDEX i ON t (x); COMMIT;").is_empty());
+        // ROLLBACK exits the transaction
+        assert!(indices("BEGIN; ROLLBACK; CREATE INDEX CONCURRENTLY i ON t (x);").is_empty());
+        // an op before ROLLBACK was still inside the transaction
+        assert_eq!(
+            indices("BEGIN; CREATE INDEX CONCURRENTLY i ON t (x); ROLLBACK;"),
+            vec![1]
+        );
     }
 }
