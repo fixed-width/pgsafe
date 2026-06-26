@@ -182,6 +182,39 @@ fn error_severity_renders_in_human_and_json() {
     assert_eq!(v["files"][0]["findings"][0]["severity"], "error");
 }
 
+// ── suppression ──────────────────────────────────────────────────────────────
+
+#[test]
+fn suppressed_only_run_exits_zero() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .write_stdin("-- pgsafe:ignore drop-table  empty, confirmed\nDROP TABLE x;")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("suppressed"));
+}
+#[test]
+fn hygiene_diagnostic_gates_exit_one() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .write_stdin("-- pgsafe:ignore drop-table\nDROP TABLE x;")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("suppression-missing-reason"));
+}
+#[test]
+fn json_output_includes_suppression_reason() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--format", "json"])
+        .write_stdin("-- pgsafe:ignore drop-table  empty, confirmed\nDROP TABLE x;")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"suppression\""))
+        .stdout(predicate::str::contains("empty, confirmed"));
+}
+
 // ── old JSON substring test (kept for backwards compat) ──────────────────────
 
 #[test]

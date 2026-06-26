@@ -59,7 +59,7 @@ fn run(cli: &Cli) -> Result<u8, String> {
     for (name, sql) in inputs {
         match lint_sql(&sql) {
             Ok(findings) => {
-                had_findings |= !findings.is_empty();
+                had_findings |= findings.iter().any(|f| !f.is_suppressed());
                 reports.push(FileReport {
                     name,
                     findings,
@@ -132,17 +132,24 @@ fn print_human(reports: &[FileReport]) {
             eprintln!("{}: {}", r.name, err);
         }
         for f in &r.findings {
+            let suffix = match &f.suppression {
+                Some(s) => format!("  — suppressed: {}", s.reason),
+                None => String::new(),
+            };
             println!(
-                "{}: {} [{}] statement #{} (line {}, col {})",
+                "{}: {} [{}] statement #{} (line {}, col {}){}",
                 r.name,
                 f.severity,
                 f.rule_id,
                 f.statement_index,
                 f.location.line,
-                f.location.column
+                f.location.column,
+                suffix
             );
             println!("  {}", f.message);
-            println!("  fix: {}", f.guidance);
+            if f.suppression.is_none() {
+                println!("  fix: {}", f.guidance);
+            }
             if !f.snippet.is_empty() {
                 println!("  | {}", f.snippet);
             }
