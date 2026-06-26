@@ -1,6 +1,6 @@
 [package]
 name = "pgsafe"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 description = "Static safety linter for PostgreSQL DDL migrations — catches unsafe schema changes before they lock or break production."
 license = "Apache-2.0"
