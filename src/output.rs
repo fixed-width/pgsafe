@@ -4,9 +4,12 @@
 
 use crate::{Finding, Severity};
 
+/// The version of the JSON output envelope (`schema_version`).
+pub const SCHEMA_VERSION: u32 = 1;
+
 /// Minimum finding severity that fails the run (maps to exit code 1).
 #[non_exhaustive]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum FailOn {
     /// Fail only on error-severity findings.
@@ -19,7 +22,7 @@ pub enum FailOn {
 
 /// Output format for the CLI.
 #[non_exhaustive]
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum Format {
     /// Human-readable text.
@@ -30,7 +33,7 @@ pub enum Format {
 
 /// Lint results for a single named input.
 #[non_exhaustive]
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct FileReport {
     /// The input's name (a file path, or `<stdin>`). Serialized as `"file"`.
     #[serde(rename = "file")]
@@ -137,7 +140,7 @@ pub fn render_errors(reports: &[FileReport]) -> String {
 /// Returns a message if serialization fails.
 pub fn render_json(reports: &[FileReport]) -> Result<String, String> {
     let report = Report {
-        schema_version: 1,
+        schema_version: SCHEMA_VERSION,
         files: reports,
     };
     serde_json::to_string_pretty(&report)

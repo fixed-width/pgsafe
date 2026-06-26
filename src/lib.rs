@@ -19,7 +19,7 @@ pub mod cli;
 
 pub use output::{
     gate, lint_input, render_errors, render_finding_human, render_human, render_json, FailOn,
-    FileReport, Format,
+    FileReport, Format, SCHEMA_VERSION,
 };
 
 /// Severity level of a [`Finding`], ordered by increasing severity

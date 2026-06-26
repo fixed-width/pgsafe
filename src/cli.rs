@@ -11,6 +11,7 @@ use crate::{
 
 /// The flags shared by every pgsafe-style CLI. Flatten this into a larger
 /// `clap` parser to inherit them.
+#[non_exhaustive]
 #[derive(clap::Args)]
 pub struct CommonArgs {
     /// SQL files to lint; use '-' or omit to read from stdin.
@@ -24,6 +25,7 @@ pub struct CommonArgs {
 }
 
 /// The `pgsafe` binary's top-level parser.
+#[non_exhaustive]
 #[derive(clap::Parser)]
 #[command(
     name = "pgsafe",
