@@ -535,3 +535,70 @@ fn add_column_generated_stored_silent() {
         "add-column-generated-stored"
     ));
 }
+
+// ── set-logged-unlogged ───────────────────────────────────────────────────────
+
+#[test]
+fn set_logged_unlogged_fires() {
+    assert!(fires("ALTER TABLE t SET UNLOGGED", "set-logged-unlogged"));
+    assert!(fires("ALTER TABLE t SET LOGGED", "set-logged-unlogged"));
+}
+
+#[test]
+fn set_logged_unlogged_silent() {
+    // a different SET (storage parameter), not LOGGED/UNLOGGED
+    assert!(!fires(
+        "ALTER TABLE t SET (fillfactor = 70)",
+        "set-logged-unlogged"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int",
+        "set-logged-unlogged"
+    ));
+}
+
+// ── refresh-matview-non-concurrent ────────────────────────────────────────────
+
+#[test]
+fn refresh_matview_non_concurrent_fires() {
+    assert!(fires(
+        "REFRESH MATERIALIZED VIEW mv",
+        "refresh-matview-non-concurrent"
+    ));
+}
+
+#[test]
+fn refresh_matview_non_concurrent_silent() {
+    assert!(!fires(
+        "REFRESH MATERIALIZED VIEW CONCURRENTLY mv",
+        "refresh-matview-non-concurrent"
+    ));
+    // WITH NO DATA just empties the matview and is fast
+    assert!(!fires(
+        "REFRESH MATERIALIZED VIEW mv WITH NO DATA",
+        "refresh-matview-non-concurrent"
+    ));
+}
+
+// ── add-exclusion-constraint ──────────────────────────────────────────────────
+
+#[test]
+fn add_exclusion_constraint_fires() {
+    assert!(fires(
+        "ALTER TABLE t ADD CONSTRAINT e EXCLUDE USING gist (c WITH &&)",
+        "add-exclusion-constraint"
+    ));
+}
+
+#[test]
+fn add_exclusion_constraint_silent() {
+    // UNIQUE / CHECK are their own rules, not exclusion
+    assert!(!fires(
+        "ALTER TABLE t ADD CONSTRAINT u UNIQUE (a)",
+        "add-exclusion-constraint"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0)",
+        "add-exclusion-constraint"
+    ));
+}

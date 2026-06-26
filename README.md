@@ -99,6 +99,9 @@ pgsafe migrations/*.sql || exit 1
 | `add-column-serial` | error | Adding a `serial`/`bigserial` column creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
 | `add-column-identity` | error | Adding a `GENERATED … AS IDENTITY` column creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
 | `add-column-generated-stored` | error | Adding a `GENERATED ALWAYS AS (…) STORED` column computes the value for every existing row, rewriting the table under an `ACCESS EXCLUSIVE` lock |
+| `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
+| `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
+| `add-exclusion-constraint` | error | Adding an `EXCLUDE` constraint builds an index under an `ACCESS EXCLUSIVE` lock, scanning the whole table |
 
 ## Severity & gating
 
