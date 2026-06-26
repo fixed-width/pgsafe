@@ -282,6 +282,7 @@ fn fail_on_never_still_exits_2_on_parse_error() {
         .args(["--fail-on", "never"])
         .write_stdin("ALTER TABLE;")
         .assert()
+        .failure()
         .code(2);
 }
 
@@ -292,5 +293,29 @@ fn invalid_fail_on_value_is_a_usage_error() {
         .args(["--fail-on", "bogus"])
         .write_stdin("DROP TABLE x;")
         .assert()
+        .failure()
         .code(2);
+}
+
+// ── --fail-on × suppression-diagnostic gating ───────────────────────────────
+
+#[test]
+fn fail_on_error_gates_on_a_hygiene_error_but_not_on_unused() {
+    // A reasonless directive emits suppression-missing-reason (error) → gates under --fail-on=error.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "error"])
+        .write_stdin("-- pgsafe:ignore drop-table\nDROP TABLE x;")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("suppression-missing-reason"));
+    // A stale directive emits suppression-unused (warning) → does NOT gate under --fail-on=error.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "error"])
+        .write_stdin("-- pgsafe:ignore truncate  stale\nDELETE FROM x;")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("suppression-unused"));
 }
