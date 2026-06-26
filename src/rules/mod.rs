@@ -21,6 +21,7 @@ pub(crate) trait Rule: Send + Sync {
 }
 
 mod add_check_without_not_valid;
+mod add_column_identity;
 mod add_column_not_null_no_default;
 mod add_column_serial;
 mod add_column_volatile_default;
@@ -57,6 +58,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(add_column_not_null_no_default::AddColumnNotNullNoDefault),
         Box::new(add_column_volatile_default::AddColumnVolatileDefault),
         Box::new(add_column_serial::AddColumnSerial),
+        Box::new(add_column_identity::AddColumnIdentity),
     ]
 });
 
@@ -167,6 +169,7 @@ mod tests {
             "add-column-not-null-no-default",
             "add-column-volatile-default",
             "add-column-serial",
+            "add-column-identity",
         ];
         let warnings = ["rename", "drop-table", "drop-column", "truncate"];
         for id in errors {
@@ -205,6 +208,7 @@ mod tests {
                 "add-column-not-null-no-default",
                 "add-column-volatile-default",
                 "add-column-serial",
+                "add-column-identity",
             ]
         );
     }
