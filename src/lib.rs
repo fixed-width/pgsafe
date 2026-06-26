@@ -103,33 +103,6 @@ pub enum LintError {
     Parse(String),
 }
 
-struct StatementSpan {
-    location: Location,
-    snippet: String,
-}
-
-/// Compute the trimmed snippet AND the corrected location (pointing at the
-/// first non-whitespace byte of the statement, not the leading whitespace).
-fn statement_span(sql: &str, raw: &pg_query::protobuf::RawStmt) -> StatementSpan {
-    let off = usize::try_from(raw.stmt_location.max(0)).unwrap_or(0);
-    let len = usize::try_from(raw.stmt_len.max(0)).unwrap_or(0);
-    let end = if len == 0 {
-        sql.len()
-    } else {
-        off.saturating_add(len).min(sql.len())
-    };
-    let raw_slice = sql.get(off..end).unwrap_or("");
-    let lead_ws = raw_slice.len() - raw_slice.trim_start().len();
-    let start = off + lead_ws;
-    let snippet = raw_slice.trim().to_string();
-    let byte = u32::try_from(start).unwrap_or(u32::MAX);
-    let (line, column) = line_col(sql, start);
-    StatementSpan {
-        location: Location { byte, line, column },
-        snippet,
-    }
-}
-
 /// 1-based line and character-column of a byte offset within `sql`.
 pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
     let mut line = 1u32;
@@ -164,17 +137,27 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 /// ```
 pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
     let parsed = pg_query::parse(sql).map_err(|e| LintError::Parse(e.to_string()))?;
+    let stmts = &parsed.protobuf.stmts;
+    let comments = suppression::scan_comments(sql)?;
+    let geoms = suppression::geometry(sql, stmts, &comments);
     let rules = rules::all_rules();
     let mut findings = Vec::new();
     let mut hits = Vec::new();
-    for (i, raw) in parsed.protobuf.stmts.iter().enumerate() {
+    for (i, raw) in stmts.iter().enumerate() {
         let Some(stmt_box) = raw.stmt.as_ref() else {
             continue;
         };
         let Some(node) = stmt_box.node.as_ref() else {
             continue;
         };
-        let span = statement_span(sql, raw);
+        let g = &geoms[i];
+        let (line, column) = line_col(sql, g.start);
+        let location = Location {
+            byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+            line,
+            column,
+        };
+        let snippet = sql.get(g.start..g.end).unwrap_or("").trim().to_string();
         for rule in rules {
             rule.check(node, &mut hits);
             for h in hits.drain(..) {
@@ -184,14 +167,14 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
                     message: h.message,
                     guidance: h.guidance,
                     statement_index: i,
-                    location: span.location,
-                    snippet: span.snippet.clone(),
+                    location,
+                    snippet: snippet.clone(),
                     suppression: None,
                 });
             }
         }
     }
-    suppression::resolve(sql, &parsed.protobuf.stmts, findings, &rules::rule_ids())
+    suppression::resolve(sql, &geoms, &comments, findings, &rules::rule_ids())
 }
 
 #[cfg(test)]

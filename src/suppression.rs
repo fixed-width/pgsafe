@@ -49,8 +49,11 @@ pub(crate) fn parse_directive(token_text: &str) -> Option<DirectiveKind> {
 /// A comment token located in the source.
 #[derive(Debug, Clone)]
 pub(crate) struct Comment {
+    /// Byte offset of the comment's first character within the SQL input.
     pub start: usize,
+    /// 1-based source line the comment starts on.
     pub line: u32,
+    /// Full text of the comment, including delimiters.
     pub text: String,
 }
 
@@ -79,9 +82,13 @@ pub(crate) fn scan_comments(sql: &str) -> Result<Vec<Comment>, LintError> {
 /// A directive discovered in the source, with its location and original text.
 #[derive(Debug, Clone)]
 pub(crate) struct Directive {
+    /// Parsed payload of the directive.
     pub kind: DirectiveKind,
+    /// Source location of the directive comment.
     pub location: Location,
+    /// Trimmed text of the directive comment.
     pub snippet: String,
+    /// Byte offset of the directive comment's first character.
     pub start: usize,
 }
 
@@ -109,12 +116,15 @@ pub(crate) fn directives_from(comments: &[Comment], sql: &str) -> Vec<Directive>
 /// Byte/line extent of one statement (first non-whitespace token to last).
 #[derive(Debug, Clone)]
 pub(crate) struct StatementGeom {
+    /// 0-based index of the statement within the parsed statement list.
     pub index: usize,
-    /// Byte offset of the statement's first real token; used by Task 3's output layer.
-    #[allow(dead_code)]
+    /// Byte offset of the statement's first real token (after skipping leading whitespace and comments).
     pub start: usize,
+    /// Byte offset one past the statement's last non-whitespace character.
     pub end: usize,
+    /// 1-based line number of the statement's first real token.
     pub first_line: u32,
+    /// 1-based line number of the statement's last non-whitespace character.
     pub last_line: u32,
 }
 
@@ -124,11 +134,14 @@ pub(crate) struct StatementGeom {
 /// by comments (the comment is inside the extent), so we additionally skip any
 /// leading SQL/C comments — not just ASCII whitespace — to find the true first
 /// token of the statement.
-pub(crate) fn geometry(sql: &str, stmts: &[pg_query::protobuf::RawStmt]) -> Vec<StatementGeom> {
+pub(crate) fn geometry(
+    sql: &str,
+    stmts: &[pg_query::protobuf::RawStmt],
+    comments: &[Comment],
+) -> Vec<StatementGeom> {
     // Pre-collect comment spans so we can skip them below.
-    let comment_spans: Vec<(usize, usize)> = scan_comments(sql)
-        .unwrap_or_default()
-        .into_iter()
+    let comment_spans: Vec<(usize, usize)> = comments
+        .iter()
         .map(|c| (c.start, c.start + c.text.len()))
         .collect();
 
@@ -210,15 +223,14 @@ pub(crate) fn attach(
 /// Resolve directives against findings: mark suppressions and append hygiene diagnostics.
 pub(crate) fn resolve(
     sql: &str,
-    stmts: &[pg_query::protobuf::RawStmt],
+    geoms: &[StatementGeom],
+    comments: &[Comment],
     mut findings: Vec<Finding>,
     known_rule_ids: &[&'static str],
 ) -> Result<Vec<Finding>, LintError> {
-    let comments = scan_comments(sql)?;
     let comment_lines: BTreeSet<u32> = comments.iter().map(|c| c.line).collect();
-    let directives = directives_from(&comments, sql);
-    let geoms = geometry(sql, stmts);
-    let attachment = attach(&directives, &geoms, &comment_lines);
+    let directives = directives_from(comments, sql);
+    let attachment = attach(&directives, geoms, &comment_lines);
     let is_known = |id: &str| known_rule_ids.contains(&id);
 
     // Pass 1: apply suppressions, recording which directives matched a finding.
@@ -247,7 +259,7 @@ pub(crate) fn resolve(
     // Pass 2: synthesize hygiene diagnostics.
     let mut hygiene: Vec<Finding> = Vec::new();
     for (di, dir) in directives.iter().enumerate() {
-        let stmt_idx = attachment[di].unwrap_or_else(|| fallback_index(&geoms, dir.location.line));
+        let stmt_idx = attachment[di].unwrap_or_else(|| fallback_index(geoms, dir.location.line));
         let diag: Option<(&'static str, Severity, String)> = match &dir.kind {
             DirectiveKind::Malformed { detail } => Some((
                 "suppression-malformed",
@@ -411,11 +423,8 @@ mod tests {
         let comments = scan_comments(sql).unwrap();
         let comment_lines: BTreeSet<u32> = comments.iter().map(|c| c.line).collect();
         let dirs = directives_from(&comments, sql);
-        attach(
-            &dirs,
-            &geometry(sql, &parsed.protobuf.stmts),
-            &comment_lines,
-        )
+        let geoms = geometry(sql, &parsed.protobuf.stmts, &comments);
+        attach(&dirs, &geoms, &comment_lines)
     }
 
     #[test]
@@ -540,6 +549,30 @@ mod tests {
         assert_eq!(
             ids(&fs),
             vec!["drop-table", "drop-table", "suppression-unused"]
+        );
+    }
+
+    #[test]
+    fn suppressed_finding_location_points_at_the_statement_not_the_directive() {
+        let fs =
+            crate::lint_sql("-- pgsafe:ignore drop-table  confirmed empty\nDROP TABLE x;").unwrap();
+        let dt = fs.iter().find(|f| f.rule_id == "drop-table").unwrap();
+        assert!(dt.is_suppressed());
+        assert_eq!(
+            dt.location.line, 2,
+            "location must point at DROP (line 2), not the directive (line 1)"
+        );
+        // pg_query stmt_len excludes the trailing semicolon; the key invariant is that the
+        // directive comment is NOT baked into the snippet.
+        assert!(
+            dt.snippet.starts_with("DROP TABLE"),
+            "snippet must not include the directive comment; got: {:?}",
+            dt.snippet
+        );
+        assert!(
+            !dt.snippet.contains("pgsafe"),
+            "snippet must not contain the directive text; got: {:?}",
+            dt.snippet
         );
     }
 }
