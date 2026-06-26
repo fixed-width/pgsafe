@@ -17,7 +17,8 @@ impl Rule for VacuumFullOrCluster {
             NodeEnum::VacuumStmt(v) => {
                 v.is_vacuumcmd
                     && v.options.iter().any(|opt| {
-                        matches!(opt.node.as_ref(), Some(NodeEnum::DefElem(de)) if de.defname == "full")
+                        matches!(opt.node.as_ref(), Some(NodeEnum::DefElem(de))
+                            if de.defname == "full" && super::defelem_is_true(de))
                     })
             }
             NodeEnum::ClusterStmt(_) => true,

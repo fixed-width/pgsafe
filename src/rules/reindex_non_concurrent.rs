@@ -12,7 +12,8 @@ impl Rule for ReindexNonConcurrent {
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         if let NodeEnum::ReindexStmt(r) = node {
             let concurrent = r.params.iter().any(|p| {
-                matches!(p.node.as_ref(), Some(NodeEnum::DefElem(de)) if de.defname == "concurrently")
+                matches!(p.node.as_ref(), Some(NodeEnum::DefElem(de))
+                    if de.defname == "concurrently" && super::defelem_is_true(de))
             });
             if !concurrent {
                 out.push(RuleHit {

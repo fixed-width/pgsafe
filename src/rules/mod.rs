@@ -2,7 +2,7 @@
 
 use std::sync::LazyLock;
 
-use pg_query::protobuf::{AlterTableCmd, AlterTableType, Constraint};
+use pg_query::protobuf::{AlterTableCmd, AlterTableType, Constraint, DefElem};
 use pg_query::NodeEnum;
 
 use crate::{RuleHit, Severity};
@@ -88,6 +88,23 @@ fn constraints_being_added(node: &NodeEnum) -> Vec<&Constraint> {
             _ => None,
         })
         .collect()
+}
+
+/// Mirrors PostgreSQL's `defGetBoolean`: a `DefElem` with no `arg` (flag present but no
+/// explicit value) defaults to `true`. For explicit args, integer 0 is false, non-zero is
+/// true; strings "false"/"off"/"0"/"f"/"no"/"n" (case-insensitive) are false; all other
+/// strings and boolean-true literals are true.
+pub(super) fn defelem_is_true(de: &DefElem) -> bool {
+    match de.arg.as_deref().and_then(|n| n.node.as_ref()) {
+        None => true,
+        Some(NodeEnum::Boolean(b)) => b.boolval,
+        Some(NodeEnum::Integer(i)) => i.ival != 0,
+        Some(NodeEnum::String(s)) => !matches!(
+            s.sval.to_ascii_lowercase().as_str(),
+            "false" | "off" | "0" | "f" | "no" | "n"
+        ),
+        Some(_) => true,
+    }
 }
 
 #[cfg(test)]

@@ -181,6 +181,12 @@ fn vacuum_full_cluster() {
     assert!(!fires("VACUUM t", "vacuum-full-cluster"));
     assert!(!fires("VACUUM (ANALYZE) t", "vacuum-full-cluster"));
     assert!(!fires("ANALYZE t", "vacuum-full-cluster"));
+    // explicit false/off/0 must NOT fire (false positives fixed)
+    assert!(!fires("VACUUM (FULL false) t", "vacuum-full-cluster"));
+    assert!(!fires("VACUUM (FULL off) t", "vacuum-full-cluster"));
+    assert!(!fires("VACUUM (FULL 0) t", "vacuum-full-cluster"));
+    // explicit true still fires
+    assert!(fires("VACUUM (FULL true) t", "vacuum-full-cluster"));
 }
 
 // ── reindex-non-concurrent ────────────────────────────────────────────────────
@@ -190,6 +196,16 @@ fn reindex_non_concurrent() {
     assert!(fires("REINDEX INDEX my_idx", "reindex-non-concurrent"));
     assert!(!fires(
         "REINDEX INDEX CONCURRENTLY my_idx",
+        "reindex-non-concurrent"
+    ));
+    // explicit false must fire (false negative fixed: CONCURRENTLY false means NOT concurrent)
+    assert!(fires(
+        "REINDEX (CONCURRENTLY false) INDEX my_idx",
+        "reindex-non-concurrent"
+    ));
+    // explicit true must NOT fire
+    assert!(!fires(
+        "REINDEX (CONCURRENTLY true) INDEX my_idx",
         "reindex-non-concurrent"
     ));
 }
