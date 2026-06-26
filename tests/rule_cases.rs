@@ -292,11 +292,29 @@ fn add_column_serial_fires() {
         "ALTER TABLE t ADD COLUMN id serial8",
         "add-column-serial"
     ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id serial2",
+        "add-column-serial"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id serial4",
+        "add-column-serial"
+    ));
     // case-insensitive
     assert!(fires(
         "ALTER TABLE t ADD COLUMN id BIGSERIAL",
         "add-column-serial"
     ));
+}
+
+#[test]
+fn add_column_serial_one_finding_per_column() {
+    let hits = lint_sql("ALTER TABLE t ADD COLUMN a serial, ADD COLUMN b bigserial")
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.rule_id == "add-column-serial")
+        .count();
+    assert_eq!(hits, 2);
 }
 
 #[test]
