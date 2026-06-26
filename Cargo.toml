@@ -1,6 +1,6 @@
 [package]
 name = "pgsafe"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2021"
 description = "Static safety linter for PostgreSQL DDL migrations — catches unsafe schema changes before they lock or break production."
 license = "Apache-2.0"
@@ -15,8 +15,17 @@ documentation = "https://docs.rs/pgsafe"
 pg_query = "6.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive"], optional = true }
 thiserror = "2"
+
+[features]
+default = ["cli"]
+cli = ["dep:clap"]
+
+[[bin]]
+name = "pgsafe"
+path = "src/main.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 assert_cmd = "2.2"

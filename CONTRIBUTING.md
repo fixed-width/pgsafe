@@ -3,9 +3,15 @@
 ## Build & test
 
 ```sh
-cargo test                                          # run all 46 tests
+cargo test                                          # run the full test suite
 cargo clippy --all-targets -- -D warnings           # must be warning-free (compiles benches too)
 cargo fmt                                           # format check
+```
+
+The library core builds without `clap` (the CLI lives behind the default `cli` feature):
+
+```sh
+cargo build --no-default-features   # compiles the embeddable core, no binary
 ```
 
 ## Benchmarks

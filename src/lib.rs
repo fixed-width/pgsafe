@@ -9,9 +9,18 @@
 #![deny(missing_docs)]
 
 mod newtable;
+mod output;
 mod rules;
 mod suppression;
 mod txn;
+
+#[cfg(feature = "cli")]
+pub mod cli;
+
+pub use output::{
+    gate, lint_input, render_errors, render_finding_human, render_human, render_json, FailOn,
+    FileReport, Format, SCHEMA_VERSION,
+};
 
 /// Severity level of a [`Finding`], ordered by increasing severity
 /// (`Warning` < `Error`).
