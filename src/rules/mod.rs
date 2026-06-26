@@ -140,7 +140,7 @@ fn constraints_being_added(node: &NodeEnum) -> Vec<&Constraint> {
 /// explicit value) defaults to `true`. For explicit args, integer 0 is false, non-zero is
 /// true; strings "false"/"off"/"0"/"f"/"no"/"n" (case-insensitive) are false; all other
 /// strings and boolean-true literals are true.
-pub(super) fn defelem_is_true(de: &DefElem) -> bool {
+pub(crate) fn defelem_is_true(de: &DefElem) -> bool {
     match de.arg.as_deref().and_then(|n| n.node.as_ref()) {
         None => true,
         Some(NodeEnum::Boolean(b)) => b.boolval,

@@ -11,6 +11,7 @@
 mod newtable;
 mod rules;
 mod suppression;
+mod txn;
 
 /// Severity level of a [`Finding`], ordered by increasing severity
 /// (`Warning` < `Error`).
@@ -178,13 +179,33 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
             }
         }
     }
-    let (findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);
+    let (mut findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);
+    for i in txn::concurrently_in_transaction_indices(stmts) {
+        let g = &geoms[i];
+        let (line, column) = line_col(sql, g.start);
+        findings.push(Finding {
+            rule_id: txn::ID.to_string(),
+            severity: Severity::Error,
+            message: txn::MESSAGE.to_string(),
+            guidance: txn::GUIDANCE.to_string(),
+            statement_index: i,
+            location: Location {
+                byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                line,
+                column,
+            },
+            snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+            suppression: None,
+        });
+    }
+    let mut known_ids = rules::rule_ids();
+    known_ids.push(txn::ID);
     suppression::resolve(
         sql,
         &geoms,
         &comments,
         findings,
-        &rules::rule_ids(),
+        &known_ids,
         &new_table_dropped,
     )
 }

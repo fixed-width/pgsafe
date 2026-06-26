@@ -102,6 +102,9 @@ pgsafe migrations/*.sql || exit 1
 | `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
 | `add-exclusion-constraint` | error | Adding an `EXCLUDE` constraint builds an index under an `ACCESS EXCLUSIVE` lock, scanning the whole table |
+| `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside an explicit `BEGIN … COMMIT` fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction |
+
+`concurrently-in-transaction` detects only **explicit** `BEGIN … COMMIT` blocks; transaction wrapping done implicitly by a migration tool is not visible in the SQL.
 
 ## Severity & gating
 
