@@ -61,6 +61,11 @@ pub(crate) fn all_rules() -> &'static [Box<dyn Rule>] {
     &RULES
 }
 
+/// The ids of every enabled AST rule, in registration order.
+pub(crate) fn rule_ids() -> Vec<&'static str> {
+    all_rules().iter().map(|r| r.id()).collect()
+}
+
 /// All `AlterTableCmd`s in an `ALTER TABLE` statement (empty for any other node).
 fn alter_table_cmds(node: &NodeEnum) -> Vec<&AlterTableCmd> {
     let NodeEnum::AlterTableStmt(stmt) = node else {

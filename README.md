@@ -82,6 +82,44 @@ pgsafe migrations/*.sql || exit 1
 | `set-not-null` | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
 | `alter-column-type` | `ALTER COLUMN ... TYPE` usually rewrites the whole table and rebuilds indexes under a lock |
 | `rename` | Renaming a table or column breaks existing queries and ORM mappings that reference the old name |
+| `drop-index-non-concurrent` | `DROP INDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on the table, blocking reads and writes while it runs |
+| `drop-table` | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
+| `drop-column` | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |
+| `truncate` | `TRUNCATE` takes an `ACCESS EXCLUSIVE` lock and irreversibly removes all rows; with `CASCADE` the lock propagates to every FK-referencing table |
+| `vacuum-full-cluster` | `VACUUM FULL` and `CLUSTER` rewrite the entire table under an `ACCESS EXCLUSIVE` lock — minutes to hours of blocked reads and writes, plus 2× disk |
+| `reindex-non-concurrent` | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
+| `add-unique-constraint` | Adding a `UNIQUE` constraint inline builds its underlying index while holding `ACCESS EXCLUSIVE` on the table for the whole build |
+| `add-primary-key-without-index` | Adding a `PRIMARY KEY` inline builds its unique index (and may scan for `NOT NULL`) under an `ACCESS EXCLUSIVE` lock |
+| `add-column-not-null-no-default` | `ADD COLUMN ... NOT NULL` with no `DEFAULT` fails immediately on any non-empty table — it cannot fill existing rows |
+
+## Suppressing a finding
+
+When you have consciously accepted a finding — an index built in a maintenance
+window, a small table where a rewrite is fine, a genuine false positive — suppress
+it inline with a directive comment. A suppressed finding is still printed, but no
+longer affects the exit code.
+
+```sql
+-- pgsafe:ignore drop-table  superseded by v2, table confirmed empty
+DROP TABLE legacy_events;
+
+DROP TABLE old_audit;  -- pgsafe:ignore drop-table  one-off cleanup, off-peak
+```
+
+- The directive must sit on the line(s) **immediately above** the statement, or
+  **trailing** on the statement's own line.
+- One rule id per directive; stack two directive lines to suppress two rules.
+- **A reason is required.** It builds an audit trail and shows up in the PR diff.
+
+Malformed or stale directives are reported (and gate CI) rather than silently
+ignored, so a typo can never leave a real hazard un-suppressed:
+
+| Diagnostic | Severity | When |
+|------------|----------|------|
+| `suppression-malformed` | error | unknown verb, or no rule id |
+| `suppression-unknown-rule` | error | the rule id is not a real rule (typo) |
+| `suppression-missing-reason` | error | the directive has no reason |
+| `suppression-unused` | warning | the directive matched no finding (stale) |
 
 ## Scope (v0)
 

@@ -1,0 +1,610 @@
+//! Inline `-- pgsafe:ignore` suppression: parse directives from SQL comments,
+//! attach them to statements, and resolve them against rule findings.
+
+use std::collections::BTreeSet;
+
+use pg_query::protobuf::Token;
+
+use crate::{line_col, Finding, LintError, Location, Severity, Suppression};
+
+/// A parsed `pgsafe:` directive's payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DirectiveKind {
+    /// A well-formed `pgsafe:ignore <rule-id> <reason>`. `reason` may be empty
+    /// here; emptiness becomes `suppression-missing-reason` during resolution.
+    Ignore { rule_id: String, reason: String },
+    /// A `pgsafe:` comment that is not a usable `ignore` directive.
+    Malformed { detail: &'static str },
+}
+
+/// Parse a comment token's raw text into a directive, or `None` if it is not a
+/// `pgsafe:` directive at all.
+pub(crate) fn parse_directive(token_text: &str) -> Option<DirectiveKind> {
+    let inner = token_text.strip_prefix("--").map(str::trim).or_else(|| {
+        token_text
+            .strip_prefix("/*")
+            .and_then(|s| s.strip_suffix("*/"))
+            .map(str::trim)
+    })?;
+    let rest = inner.strip_prefix("pgsafe:")?.trim_start();
+    let mut verb_split = rest.splitn(2, char::is_whitespace);
+    let verb = verb_split.next().unwrap_or("");
+    if verb != "ignore" {
+        return Some(DirectiveKind::Malformed {
+            detail: "unrecognized pgsafe directive (expected `ignore`)",
+        });
+    }
+    let after = verb_split.next().unwrap_or("").trim_start();
+    if after.is_empty() {
+        return Some(DirectiveKind::Malformed {
+            detail: "directive is missing a rule id",
+        });
+    }
+    let mut id_split = after.splitn(2, char::is_whitespace);
+    let rule_id = id_split.next().unwrap_or("").to_string();
+    let reason = id_split.next().unwrap_or("").trim().to_string();
+    Some(DirectiveKind::Ignore { rule_id, reason })
+}
+
+/// A comment token located in the source.
+#[derive(Debug, Clone)]
+pub(crate) struct Comment {
+    /// Byte offset of the comment's first character within the SQL input.
+    pub start: usize,
+    /// 1-based source line the comment starts on.
+    pub line: u32,
+    /// Full text of the comment, including delimiters.
+    pub text: String,
+}
+
+/// Extract every SQL/C comment token from `sql`, with byte offset and line.
+pub(crate) fn scan_comments(sql: &str) -> Result<Vec<Comment>, LintError> {
+    let scan = pg_query::scan(sql).map_err(|e| LintError::Parse(e.to_string()))?;
+    let mut out = Vec::new();
+    for tok in &scan.tokens {
+        if matches!(
+            Token::try_from(tok.token),
+            Ok(Token::SqlComment) | Ok(Token::CComment)
+        ) {
+            let start = usize::try_from(tok.start).unwrap_or(0);
+            let end = usize::try_from(tok.end).unwrap_or(start);
+            let text = sql.get(start..end).unwrap_or("").to_string();
+            out.push(Comment {
+                start,
+                line: line_col(sql, start).0,
+                text,
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// A directive discovered in the source, with its location and original text.
+#[derive(Debug, Clone)]
+pub(crate) struct Directive {
+    /// Parsed payload of the directive.
+    pub kind: DirectiveKind,
+    /// Source location of the directive comment.
+    pub location: Location,
+    /// Trimmed text of the directive comment.
+    pub snippet: String,
+    /// Byte offset of the directive comment's first character.
+    pub start: usize,
+}
+
+/// Parse the `pgsafe:` directives out of a comment list (non-directives dropped).
+pub(crate) fn directives_from(comments: &[Comment], sql: &str) -> Vec<Directive> {
+    comments
+        .iter()
+        .filter_map(|c| {
+            let kind = parse_directive(&c.text)?;
+            let (line, column) = line_col(sql, c.start);
+            Some(Directive {
+                kind,
+                location: Location {
+                    byte: u32::try_from(c.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: c.text.trim().to_string(),
+                start: c.start,
+            })
+        })
+        .collect()
+}
+
+/// Byte/line extent of one statement (first non-whitespace token to last).
+#[derive(Debug, Clone)]
+pub(crate) struct StatementGeom {
+    /// 0-based index of the statement within the parsed statement list.
+    pub index: usize,
+    /// Byte offset of the statement's first real token (after skipping leading whitespace and comments).
+    pub start: usize,
+    /// Byte offset one past the statement's last non-whitespace character.
+    pub end: usize,
+    /// 1-based line number of the statement's first real token.
+    pub first_line: u32,
+    /// 1-based line number of the statement's last non-whitespace character.
+    pub last_line: u32,
+}
+
+/// Compute the trimmed byte/line extent of every statement.
+///
+/// pg_query may set `stmt_location = 0` for a statement that is preceded only
+/// by comments (the comment is inside the extent), so we additionally skip any
+/// leading SQL/C comments — not just ASCII whitespace — to find the true first
+/// token of the statement.
+pub(crate) fn geometry(
+    sql: &str,
+    stmts: &[pg_query::protobuf::RawStmt],
+    comments: &[Comment],
+) -> Vec<StatementGeom> {
+    // Pre-collect comment spans so we can skip them below.
+    let comment_spans: Vec<(usize, usize)> = comments
+        .iter()
+        .map(|c| (c.start, c.start + c.text.len()))
+        .collect();
+
+    let mut out = Vec::with_capacity(stmts.len());
+    for (index, raw) in stmts.iter().enumerate() {
+        let off = usize::try_from(raw.stmt_location.max(0)).unwrap_or(0);
+        let len = usize::try_from(raw.stmt_len.max(0)).unwrap_or(0);
+        let raw_end = if len == 0 {
+            sql.len()
+        } else {
+            off.saturating_add(len).min(sql.len())
+        };
+        let slice = sql.get(off..raw_end).unwrap_or("");
+        let lead = slice.len() - slice.trim_start().len();
+        let trail = slice.len() - slice.trim_end().len();
+        // Start after leading whitespace, then also skip any leading comments.
+        let start = skip_leading_comments(sql, off + lead, &comment_spans);
+        let end = raw_end.saturating_sub(trail).max(start);
+        let first_line = line_col(sql, start).0;
+        let last_line = line_col(sql, end.saturating_sub(1).max(start)).0;
+        out.push(StatementGeom {
+            index,
+            start,
+            end,
+            first_line,
+            last_line,
+        });
+    }
+    out
+}
+
+/// Advance `pos` past any leading SQL/C comments (and whitespace between them).
+fn skip_leading_comments(sql: &str, mut pos: usize, comments: &[(usize, usize)]) -> usize {
+    loop {
+        let maybe = comments.iter().find(|&&(s, _)| s == pos);
+        let Some(&(_, end)) = maybe else { break };
+        pos = end;
+        let after = sql.get(pos..).unwrap_or("");
+        pos += after.len() - after.trim_start().len();
+    }
+    pos
+}
+
+/// Attach each directive to a statement by line geometry (design §3): trailing on
+/// the statement's last line, or in the contiguous comment run immediately above it.
+pub(crate) fn attach(
+    directives: &[Directive],
+    geoms: &[StatementGeom],
+    comment_lines: &BTreeSet<u32>,
+) -> Vec<Option<usize>> {
+    let mut code_lines: BTreeSet<u32> = BTreeSet::new();
+    for g in geoms {
+        for l in g.first_line..=g.last_line {
+            code_lines.insert(l);
+        }
+    }
+    directives
+        .iter()
+        .map(|d| {
+            let dl = d.location.line;
+            if let Some(g) = geoms
+                .iter()
+                .filter(|g| g.last_line == dl && g.end <= d.start)
+                .max_by_key(|g| g.end)
+            {
+                return Some(g.index);
+            }
+            let g = geoms
+                .iter()
+                .filter(|g| g.first_line > dl)
+                .min_by_key(|g| g.first_line)?;
+            let contiguous = ((dl + 1)..g.first_line)
+                .all(|l| comment_lines.contains(&l) && !code_lines.contains(&l));
+            contiguous.then_some(g.index)
+        })
+        .collect()
+}
+
+/// Resolve directives against findings: mark suppressions and append hygiene diagnostics.
+pub(crate) fn resolve(
+    sql: &str,
+    geoms: &[StatementGeom],
+    comments: &[Comment],
+    mut findings: Vec<Finding>,
+    known_rule_ids: &[&'static str],
+) -> Result<Vec<Finding>, LintError> {
+    let comment_lines: BTreeSet<u32> = comments
+        .iter()
+        .flat_map(|c| {
+            let span = u32::try_from(c.text.matches('\n').count()).unwrap_or(0);
+            c.line..=c.line + span
+        })
+        .collect();
+    let directives = directives_from(comments, sql);
+    let attachment = attach(&directives, geoms, &comment_lines);
+    let is_known = |id: &str| known_rule_ids.contains(&id);
+
+    // Pass 1: apply suppressions, recording which directives matched a finding.
+    let mut used = vec![false; directives.len()];
+    for (di, dir) in directives.iter().enumerate() {
+        let Some(stmt_idx) = attachment[di] else {
+            continue;
+        };
+        if let DirectiveKind::Ignore { rule_id, reason } = &dir.kind {
+            if is_known(rule_id) && !reason.is_empty() {
+                let mut matched = false;
+                for f in &mut findings {
+                    if f.statement_index == stmt_idx && f.rule_id == *rule_id {
+                        matched = true;
+                        if f.suppression.is_none() {
+                            f.suppression = Some(Suppression {
+                                reason: reason.clone(),
+                            });
+                        }
+                    }
+                }
+                used[di] = matched;
+            }
+        }
+    }
+
+    // Pass 2: synthesize hygiene diagnostics.
+    let mut hygiene: Vec<Finding> = Vec::new();
+    for (di, dir) in directives.iter().enumerate() {
+        let stmt_idx = attachment[di].unwrap_or_else(|| fallback_index(geoms, dir.location.line));
+        let diag: Option<(&'static str, Severity, String)> = match &dir.kind {
+            DirectiveKind::Malformed { detail } => Some((
+                "suppression-malformed",
+                Severity::Error,
+                (*detail).to_string(),
+            )),
+            DirectiveKind::Ignore { rule_id, reason } => {
+                if !is_known(rule_id) {
+                    Some((
+                        "suppression-unknown-rule",
+                        Severity::Error,
+                        format!("directive targets unknown rule `{rule_id}`"),
+                    ))
+                } else if reason.is_empty() {
+                    Some((
+                        "suppression-missing-reason",
+                        Severity::Error,
+                        format!("directive for `{rule_id}` must include a reason"),
+                    ))
+                } else if !used[di] {
+                    Some((
+                        "suppression-unused",
+                        Severity::Warning,
+                        format!("directive for `{rule_id}` matched no finding"),
+                    ))
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some((id, severity, message)) = diag {
+            hygiene.push(Finding {
+                rule_id: id.to_string(),
+                severity,
+                message,
+                guidance: hygiene_guidance(id),
+                statement_index: stmt_idx,
+                location: dir.location,
+                snippet: dir.snippet.clone(),
+                suppression: None,
+            });
+        }
+    }
+
+    // Merge: statement source order; within a statement, findings (registry order)
+    // precede hygiene (directive order). A stable sort preserves both because every
+    // finding precedes every hygiene diagnostic in the pre-sort vec.
+    findings.extend(hygiene);
+    findings.sort_by_key(|f| f.statement_index);
+    Ok(findings)
+}
+
+/// Statement index for a directive that attached to no statement: the nearest
+/// following statement, else the last statement, else 0.
+fn fallback_index(geoms: &[StatementGeom], line: u32) -> usize {
+    geoms
+        .iter()
+        .find(|g| g.first_line >= line)
+        .or_else(|| geoms.last())
+        .map_or(0, |g| g.index)
+}
+
+/// Fix-it guidance for each hygiene diagnostic id.
+fn hygiene_guidance(id: &str) -> String {
+    match id {
+        "suppression-malformed" => {
+            "Use `-- pgsafe:ignore <rule-id> <reason>`; the only supported verb is `ignore`."
+        }
+        "suppression-unknown-rule" => {
+            "Check the rule id against the documented rules; ids must match exactly."
+        }
+        "suppression-missing-reason" => {
+            "Add a reason after the rule id so the override is auditable."
+        }
+        "suppression-unused" => {
+            "Remove the directive — it no longer suppresses anything (the finding is gone)."
+        }
+        _ => "",
+    }
+    .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::*;
+
+    #[test]
+    fn parses_valid_line_directive() {
+        assert_eq!(
+            parse_directive("-- pgsafe:ignore drop-table  superseded by v2"),
+            Some(DirectiveKind::Ignore {
+                rule_id: "drop-table".into(),
+                reason: "superseded by v2".into()
+            })
+        );
+    }
+    #[test]
+    fn parses_block_comment_directive() {
+        assert_eq!(
+            parse_directive("/* pgsafe:ignore truncate  one-off */"),
+            Some(DirectiveKind::Ignore {
+                rule_id: "truncate".into(),
+                reason: "one-off".into()
+            })
+        );
+    }
+    #[test]
+    fn rule_id_without_reason_is_ignore_with_empty_reason() {
+        assert_eq!(
+            parse_directive("-- pgsafe:ignore drop-table"),
+            Some(DirectiveKind::Ignore {
+                rule_id: "drop-table".into(),
+                reason: String::new()
+            })
+        );
+    }
+    #[test]
+    fn no_rule_id_token_is_malformed() {
+        assert!(matches!(
+            parse_directive("-- pgsafe:ignore"),
+            Some(DirectiveKind::Malformed { .. })
+        ));
+    }
+    #[test]
+    fn unknown_verb_is_malformed() {
+        assert!(matches!(
+            parse_directive("-- pgsafe:disable drop-table"),
+            Some(DirectiveKind::Malformed { .. })
+        ));
+    }
+    #[test]
+    fn non_pgsafe_comment_is_not_a_directive() {
+        assert_eq!(parse_directive("-- just a note"), None);
+        assert_eq!(parse_directive("-- PGSAFE:IGNORE drop-table x"), None); // case-sensitive marker
+    }
+
+    #[test]
+    fn scan_excludes_directive_text_inside_a_string_literal() {
+        let sql = "SELECT '-- pgsafe:ignore drop-table x'; DROP TABLE y;";
+        let comments = scan_comments(sql).unwrap();
+        assert!(
+            directives_from(&comments, sql).is_empty(),
+            "string-literal content is not a directive"
+        );
+    }
+    #[test]
+    fn extracts_directive_with_position() {
+        let sql = "-- pgsafe:ignore drop-table  reason here\nDROP TABLE x;";
+        let dirs = directives_from(&scan_comments(sql).unwrap(), sql);
+        assert_eq!(dirs.len(), 1);
+        assert_eq!(dirs[0].location.line, 1);
+        assert!(
+            matches!(&dirs[0].kind, DirectiveKind::Ignore { rule_id, .. } if rule_id == "drop-table")
+        );
+    }
+
+    fn attach_map(sql: &str) -> Vec<Option<usize>> {
+        let parsed = pg_query::parse(sql).unwrap();
+        let comments = scan_comments(sql).unwrap();
+        let comment_lines: BTreeSet<u32> = comments.iter().map(|c| c.line).collect();
+        let dirs = directives_from(&comments, sql);
+        let geoms = geometry(sql, &parsed.protobuf.stmts, &comments);
+        attach(&dirs, &geoms, &comment_lines)
+    }
+
+    #[test]
+    fn preceding_directive_attaches_to_next_statement() {
+        assert_eq!(
+            attach_map("-- pgsafe:ignore drop-table  r\nDROP TABLE x;"),
+            vec![Some(0)]
+        );
+    }
+    #[test]
+    fn preceding_through_a_plain_comment_still_attaches() {
+        assert_eq!(
+            attach_map("-- pgsafe:ignore drop-table  r\n-- a note\nDROP TABLE x;"),
+            vec![Some(0)]
+        );
+    }
+    #[test]
+    fn blank_line_breaks_preceding_attachment() {
+        assert_eq!(
+            attach_map("-- pgsafe:ignore drop-table  r\n\nDROP TABLE x;"),
+            vec![None]
+        );
+    }
+    #[test]
+    fn trailing_directive_attaches_to_its_statement() {
+        assert_eq!(
+            attach_map("DROP TABLE x;  -- pgsafe:ignore drop-table  r"),
+            vec![Some(0)]
+        );
+    }
+    #[test]
+    fn directive_routes_to_correct_statement_in_multi_statement_file() {
+        assert_eq!(
+            attach_map("DROP TABLE a;\n-- pgsafe:ignore drop-table  r\nDROP TABLE b;"),
+            vec![Some(1)]
+        );
+    }
+    #[test]
+    fn stacked_directives_all_attach_to_following_statement() {
+        let sql =
+            "-- pgsafe:ignore drop-column  r1\n-- pgsafe:ignore drop-table  r2\nDROP TABLE x;";
+        assert_eq!(attach_map(sql), vec![Some(0), Some(0)]);
+    }
+
+    fn resolved(sql: &str) -> Vec<Finding> {
+        crate::lint_sql(sql).unwrap()
+    }
+    fn ids(fs: &[Finding]) -> Vec<&str> {
+        fs.iter().map(|f| f.rule_id.as_str()).collect()
+    }
+
+    #[test]
+    fn valid_directive_suppresses_the_finding() {
+        let fs = resolved("-- pgsafe:ignore drop-table  empty, confirmed\nDROP TABLE x;");
+        let dt = fs.iter().find(|f| f.rule_id == "drop-table").unwrap();
+        assert!(dt.is_suppressed());
+        assert_eq!(dt.suppression.as_ref().unwrap().reason, "empty, confirmed");
+        assert!(!ids(&fs).contains(&"suppression-unused"));
+    }
+    #[test]
+    fn missing_reason_does_not_suppress_and_emits_diagnostic() {
+        let fs = resolved("-- pgsafe:ignore drop-table\nDROP TABLE x;");
+        assert!(!fs
+            .iter()
+            .find(|f| f.rule_id == "drop-table")
+            .unwrap()
+            .is_suppressed());
+        assert!(ids(&fs).contains(&"suppression-missing-reason"));
+    }
+    #[test]
+    fn unknown_rule_does_not_suppress_and_emits_diagnostic() {
+        let fs = resolved("-- pgsafe:ignore drop-tabel  typo\nDROP TABLE x;");
+        assert!(!fs
+            .iter()
+            .find(|f| f.rule_id == "drop-table")
+            .unwrap()
+            .is_suppressed());
+        assert!(ids(&fs).contains(&"suppression-unknown-rule"));
+    }
+    #[test]
+    fn unused_directive_emits_warning() {
+        let fs = resolved("-- pgsafe:ignore truncate  stale\nDELETE FROM x;");
+        let unused = fs
+            .iter()
+            .find(|f| f.rule_id == "suppression-unused")
+            .unwrap();
+        assert_eq!(unused.severity, Severity::Warning);
+    }
+    #[test]
+    fn malformed_directive_emits_error_and_does_not_suppress() {
+        let fs = resolved("-- pgsafe:disable drop-table\nDROP TABLE x;");
+        let m = fs
+            .iter()
+            .find(|f| f.rule_id == "suppression-malformed")
+            .unwrap();
+        assert_eq!(m.severity, Severity::Error);
+        assert!(!fs
+            .iter()
+            .find(|f| f.rule_id == "drop-table")
+            .unwrap()
+            .is_suppressed());
+    }
+    #[test]
+    fn one_directive_suppresses_only_its_rule_on_a_multi_finding_statement() {
+        let sql = "-- pgsafe:ignore drop-column  c retired\n\
+                   ALTER TABLE t DROP COLUMN c, ADD COLUMN d int UNIQUE;";
+        let fs = resolved(sql);
+        assert!(fs
+            .iter()
+            .find(|f| f.rule_id == "drop-column")
+            .unwrap()
+            .is_suppressed());
+        assert!(!fs
+            .iter()
+            .find(|f| f.rule_id == "add-unique-constraint")
+            .unwrap()
+            .is_suppressed());
+    }
+    #[test]
+    fn returned_order_is_statement_then_hygiene() {
+        let fs = resolved("DROP TABLE a;\n-- pgsafe:ignore truncate  stale\nDROP TABLE b;");
+        assert_eq!(
+            ids(&fs),
+            vec!["drop-table", "drop-table", "suppression-unused"]
+        );
+    }
+
+    #[test]
+    fn duplicate_directive_for_same_rule_is_not_unused() {
+        let fs = crate::lint_sql(
+            "-- pgsafe:ignore drop-table  reason one\nDROP TABLE x;  -- pgsafe:ignore drop-table  reason two",
+        )
+        .unwrap();
+        assert!(fs
+            .iter()
+            .find(|f| f.rule_id == "drop-table")
+            .unwrap()
+            .is_suppressed());
+        assert!(!fs.iter().any(|f| f.rule_id == "suppression-unused"));
+    }
+    #[test]
+    fn multiline_block_comment_directive_attaches() {
+        let fs =
+            crate::lint_sql("/* pgsafe:ignore drop-table\n   confirmed empty */\nDROP TABLE x;")
+                .unwrap();
+        assert!(fs
+            .iter()
+            .find(|f| f.rule_id == "drop-table")
+            .unwrap()
+            .is_suppressed());
+    }
+
+    #[test]
+    fn suppressed_finding_location_points_at_the_statement_not_the_directive() {
+        let fs =
+            crate::lint_sql("-- pgsafe:ignore drop-table  confirmed empty\nDROP TABLE x;").unwrap();
+        let dt = fs.iter().find(|f| f.rule_id == "drop-table").unwrap();
+        assert!(dt.is_suppressed());
+        assert_eq!(
+            dt.location.line, 2,
+            "location must point at DROP (line 2), not the directive (line 1)"
+        );
+        // pg_query stmt_len excludes the trailing semicolon; the key invariant is that the
+        // directive comment is NOT baked into the snippet.
+        assert!(
+            dt.snippet.starts_with("DROP TABLE"),
+            "snippet must not include the directive comment; got: {:?}",
+            dt.snippet
+        );
+        assert!(
+            !dt.snippet.contains("pgsafe"),
+            "snippet must not contain the directive text; got: {:?}",
+            dt.snippet
+        );
+    }
+}
