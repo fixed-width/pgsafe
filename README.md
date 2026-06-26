@@ -92,6 +92,16 @@ what the SQL statement will do in the general case on a live production database
 Deeper checks — constraint validation state, column nullability, sequence ownership,
 index concurrency on replicas — are planned for future versions.
 
+## Known limitations
+
+Because `pgsafe` analyzes one statement at a time (v0), rules like
+`add-unique-constraint`, `add-primary-key-without-index`, and
+`add-column-not-null-no-default` will flag operations on a table that was
+**created earlier in the same migration file**. In practice those operations
+are safe — the table is empty and not yet visible to other sessions — but the
+linter cannot tell. Cross-statement awareness (new-table suppression) is
+planned for a future version.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

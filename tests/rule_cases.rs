@@ -135,3 +135,139 @@ fn rename_silent_for_trigger() {
     // ALTER TRIGGER is not in the covered set (falls to `_ => return`).
     assert!(!fires("ALTER TRIGGER trg ON t RENAME TO trg2", "rename"));
 }
+
+// ── drop-index-non-concurrent ───────────────────────────────────────────────
+
+#[test]
+fn drop_index_non_concurrent() {
+    assert!(fires("DROP INDEX my_idx", "drop-index-non-concurrent"));
+    assert!(!fires(
+        "DROP INDEX CONCURRENTLY my_idx",
+        "drop-index-non-concurrent"
+    ));
+}
+
+// ── drop-table ──────────────────────────────────────────────────────────────
+
+#[test]
+fn drop_table() {
+    assert!(fires("DROP TABLE t", "drop-table"));
+    assert!(!fires("DROP INDEX i", "drop-table"));
+}
+
+// ── drop-column ─────────────────────────────────────────────────────────────
+
+#[test]
+fn drop_column() {
+    assert!(fires("ALTER TABLE t DROP COLUMN c", "drop-column"));
+    assert!(!fires("ALTER TABLE t ADD COLUMN c int", "drop-column"));
+}
+
+// ── truncate ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn truncate() {
+    assert!(fires("TRUNCATE t", "truncate"));
+    assert!(!fires("DELETE FROM t", "truncate"));
+}
+
+// ── vacuum-full-cluster ───────────────────────────────────────────────────────
+
+#[test]
+fn vacuum_full_cluster() {
+    assert!(fires("VACUUM FULL t", "vacuum-full-cluster"));
+    assert!(fires("VACUUM (FULL) t", "vacuum-full-cluster"));
+    assert!(fires("CLUSTER t USING idx", "vacuum-full-cluster"));
+    assert!(!fires("VACUUM t", "vacuum-full-cluster"));
+    assert!(!fires("VACUUM (ANALYZE) t", "vacuum-full-cluster"));
+    assert!(!fires("ANALYZE t", "vacuum-full-cluster"));
+    // explicit false/off/0 must NOT fire (false positives fixed)
+    assert!(!fires("VACUUM (FULL false) t", "vacuum-full-cluster"));
+    assert!(!fires("VACUUM (FULL off) t", "vacuum-full-cluster"));
+    assert!(!fires("VACUUM (FULL 0) t", "vacuum-full-cluster"));
+    // explicit true still fires
+    assert!(fires("VACUUM (FULL true) t", "vacuum-full-cluster"));
+}
+
+// ── reindex-non-concurrent ────────────────────────────────────────────────────
+
+#[test]
+fn reindex_non_concurrent() {
+    assert!(fires("REINDEX INDEX my_idx", "reindex-non-concurrent"));
+    assert!(!fires(
+        "REINDEX INDEX CONCURRENTLY my_idx",
+        "reindex-non-concurrent"
+    ));
+    // explicit false must fire (false negative fixed: CONCURRENTLY false means NOT concurrent)
+    assert!(fires(
+        "REINDEX (CONCURRENTLY false) INDEX my_idx",
+        "reindex-non-concurrent"
+    ));
+    // explicit true must NOT fire
+    assert!(!fires(
+        "REINDEX (CONCURRENTLY true) INDEX my_idx",
+        "reindex-non-concurrent"
+    ));
+}
+
+// ── add-unique-constraint ─────────────────────────────────────────────────────
+
+#[test]
+fn add_unique_constraint() {
+    // Table-level ADD CONSTRAINT UNIQUE fires
+    assert!(fires(
+        "ALTER TABLE t ADD CONSTRAINT u UNIQUE (a)",
+        "add-unique-constraint"
+    ));
+    // Attaching a pre-built index is safe
+    assert!(!fires(
+        "ALTER TABLE t ADD CONSTRAINT u UNIQUE USING INDEX existing_idx",
+        "add-unique-constraint"
+    ));
+    // Column-level inline UNIQUE also fires (builds the index under ACCESS EXCLUSIVE)
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN c int UNIQUE",
+        "add-unique-constraint"
+    ));
+    // Column without UNIQUE constraint is safe
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int",
+        "add-unique-constraint"
+    ));
+}
+
+// ── add-primary-key-without-index ─────────────────────────────────────────────
+
+#[test]
+fn add_primary_key_without_index() {
+    assert!(fires(
+        "ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY (id)",
+        "add-primary-key-without-index"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id int PRIMARY KEY",
+        "add-primary-key-without-index"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY USING INDEX existing_idx",
+        "add-primary-key-without-index"
+    ));
+}
+
+// ── add-column-not-null-no-default ────────────────────────────────────────────
+
+#[test]
+fn add_column_not_null_no_default() {
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN c int NOT NULL",
+        "add-column-not-null-no-default"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int",
+        "add-column-not-null-no-default"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int NOT NULL DEFAULT 0",
+        "add-column-not-null-no-default"
+    ));
+}
