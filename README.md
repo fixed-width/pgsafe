@@ -82,6 +82,15 @@ pgsafe migrations/*.sql || exit 1
 | `set-not-null` | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
 | `alter-column-type` | `ALTER COLUMN ... TYPE` usually rewrites the whole table and rebuilds indexes under a lock |
 | `rename` | Renaming a table or column breaks existing queries and ORM mappings that reference the old name |
+| `drop-index-non-concurrent` | `DROP INDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on the table, blocking reads and writes while it runs |
+| `drop-table` | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
+| `drop-column` | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |
+| `truncate` | `TRUNCATE` takes an `ACCESS EXCLUSIVE` lock and irreversibly removes all rows; with `CASCADE` the lock propagates to every FK-referencing table |
+| `vacuum-full-cluster` | `VACUUM FULL` and `CLUSTER` rewrite the entire table under an `ACCESS EXCLUSIVE` lock — minutes to hours of blocked reads and writes, plus 2× disk |
+| `reindex-non-concurrent` | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
+| `add-unique-constraint` | Adding a `UNIQUE` constraint inline builds its underlying index while holding `ACCESS EXCLUSIVE` on the table for the whole build |
+| `add-primary-key-without-index` | Adding a `PRIMARY KEY` inline builds its unique index (and may scan for `NOT NULL`) under an `ACCESS EXCLUSIVE` lock |
+| `add-column-not-null-no-default` | `ADD COLUMN ... NOT NULL` with no `DEFAULT` fails immediately on any non-empty table — it cannot fill existing rows |
 
 ## Suppressing a finding
 

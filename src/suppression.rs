@@ -228,7 +228,13 @@ pub(crate) fn resolve(
     mut findings: Vec<Finding>,
     known_rule_ids: &[&'static str],
 ) -> Result<Vec<Finding>, LintError> {
-    let comment_lines: BTreeSet<u32> = comments.iter().map(|c| c.line).collect();
+    let comment_lines: BTreeSet<u32> = comments
+        .iter()
+        .flat_map(|c| {
+            let span = u32::try_from(c.text.matches('\n').count()).unwrap_or(0);
+            c.line..=c.line + span
+        })
+        .collect();
     let directives = directives_from(comments, sql);
     let attachment = attach(&directives, geoms, &comment_lines);
     let is_known = |id: &str| known_rule_ids.contains(&id);
@@ -241,17 +247,18 @@ pub(crate) fn resolve(
         };
         if let DirectiveKind::Ignore { rule_id, reason } = &dir.kind {
             if is_known(rule_id) && !reason.is_empty() {
+                let mut matched = false;
                 for f in &mut findings {
-                    if f.statement_index == stmt_idx
-                        && f.rule_id == *rule_id
-                        && f.suppression.is_none()
-                    {
-                        f.suppression = Some(Suppression {
-                            reason: reason.clone(),
-                        });
-                        used[di] = true;
+                    if f.statement_index == stmt_idx && f.rule_id == *rule_id {
+                        matched = true;
+                        if f.suppression.is_none() {
+                            f.suppression = Some(Suppression {
+                                reason: reason.clone(),
+                            });
+                        }
                     }
                 }
+                used[di] = matched;
             }
         }
     }
@@ -550,6 +557,31 @@ mod tests {
             ids(&fs),
             vec!["drop-table", "drop-table", "suppression-unused"]
         );
+    }
+
+    #[test]
+    fn duplicate_directive_for_same_rule_is_not_unused() {
+        let fs = crate::lint_sql(
+            "-- pgsafe:ignore drop-table  reason one\nDROP TABLE x;  -- pgsafe:ignore drop-table  reason two",
+        )
+        .unwrap();
+        assert!(fs
+            .iter()
+            .find(|f| f.rule_id == "drop-table")
+            .unwrap()
+            .is_suppressed());
+        assert!(!fs.iter().any(|f| f.rule_id == "suppression-unused"));
+    }
+    #[test]
+    fn multiline_block_comment_directive_attaches() {
+        let fs =
+            crate::lint_sql("/* pgsafe:ignore drop-table\n   confirmed empty */\nDROP TABLE x;")
+                .unwrap();
+        assert!(fs
+            .iter()
+            .find(|f| f.rule_id == "drop-table")
+            .unwrap()
+            .is_suppressed());
     }
 
     #[test]
