@@ -83,6 +83,8 @@ fn expr_contains_volatile(node: &NodeEnum) -> bool {
             w.expr.as_deref().is_some_and(node_contains_volatile)
                 || w.result.as_deref().is_some_and(node_contains_volatile)
         }
+        NodeEnum::MinMaxExpr(e) => e.args.iter().any(node_contains_volatile),
+        NodeEnum::AArrayExpr(e) => e.elements.iter().any(node_contains_volatile),
         _ => false,
     }
 }
@@ -96,9 +98,9 @@ fn node_contains_volatile(n: &Node) -> bool {
 /// the volatile denylist, matched case-insensitively.
 fn is_volatile_funcname(funcname: &[Node]) -> bool {
     match funcname.last().and_then(|n| n.node.as_ref()) {
-        Some(NodeEnum::String(s)) => {
-            VOLATILE_FUNCTIONS.contains(&s.sval.to_ascii_lowercase().as_str())
-        }
+        Some(NodeEnum::String(s)) => VOLATILE_FUNCTIONS
+            .iter()
+            .any(|f| f.eq_ignore_ascii_case(&s.sval)),
         _ => false,
     }
 }

@@ -306,6 +306,36 @@ fn add_column_volatile_default_fires() {
         "ALTER TABLE t ADD COLUMN s text DEFAULT gen_random_uuid()::text",
         "add-column-volatile-default"
     ));
+    // GREATEST/LEAST (MinMaxExpr)
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN k double precision DEFAULT greatest(random(), 0.1)",
+        "add-column-volatile-default"
+    ));
+    // ARRAY[...] (AArrayExpr)
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN a uuid[] DEFAULT ARRAY[gen_random_uuid()]",
+        "add-column-volatile-default"
+    ));
+    // COALESCE (CoalesceExpr)
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN n bigint DEFAULT coalesce(nextval('s'), 0)",
+        "add-column-volatile-default"
+    ));
+    // CASE (CaseExpr/CaseWhen)
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN k double precision DEFAULT (CASE WHEN true THEN random() ELSE 0 END)",
+        "add-column-volatile-default"
+    ));
+    // boolean op (BoolExpr)
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN b boolean DEFAULT (random() > 0.5 OR false)",
+        "add-column-volatile-default"
+    ));
+    // schema-qualified name (last-element match)
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN r double precision DEFAULT pg_catalog.random()",
+        "add-column-volatile-default"
+    ));
 }
 
 #[test]
