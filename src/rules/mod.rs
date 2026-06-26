@@ -26,6 +26,7 @@ mod add_column_identity;
 mod add_column_not_null_no_default;
 mod add_column_serial;
 mod add_column_volatile_default;
+mod add_exclusion_constraint;
 mod add_fk_without_not_valid;
 mod add_index_non_concurrent;
 mod add_primary_key_without_index;
@@ -34,8 +35,10 @@ mod alter_column_type;
 mod drop_column;
 mod drop_index_non_concurrent;
 mod drop_table;
+mod refresh_matview_non_concurrent;
 mod reindex_non_concurrent;
 mod rename;
+mod set_logged_unlogged;
 mod set_not_null;
 mod truncate;
 mod vacuum_full_cluster;
@@ -61,6 +64,9 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(add_column_serial::AddColumnSerial),
         Box::new(add_column_identity::AddColumnIdentity),
         Box::new(add_column_generated_stored::AddColumnGeneratedStored),
+        Box::new(set_logged_unlogged::SetLoggedUnlogged),
+        Box::new(refresh_matview_non_concurrent::RefreshMatviewNonConcurrent),
+        Box::new(add_exclusion_constraint::AddExclusionConstraint),
     ]
 });
 
@@ -173,6 +179,9 @@ mod tests {
             "add-column-serial",
             "add-column-identity",
             "add-column-generated-stored",
+            "set-logged-unlogged",
+            "refresh-matview-non-concurrent",
+            "add-exclusion-constraint",
         ];
         let warnings = ["rename", "drop-table", "drop-column", "truncate"];
         for id in errors {
@@ -213,6 +222,9 @@ mod tests {
                 "add-column-serial",
                 "add-column-identity",
                 "add-column-generated-stored",
+                "set-logged-unlogged",
+                "refresh-matview-non-concurrent",
+                "add-exclusion-constraint",
             ]
         );
     }
