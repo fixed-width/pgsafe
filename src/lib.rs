@@ -8,6 +8,7 @@
 //! the same rules is provided by the `pgsafe` binary.
 #![deny(missing_docs)]
 
+mod newtable;
 mod rules;
 mod suppression;
 
@@ -177,7 +178,15 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
             }
         }
     }
-    suppression::resolve(sql, &geoms, &comments, findings, &rules::rule_ids())
+    let (findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);
+    suppression::resolve(
+        sql,
+        &geoms,
+        &comments,
+        findings,
+        &rules::rule_ids(),
+        &new_table_dropped,
+    )
 }
 
 #[cfg(test)]

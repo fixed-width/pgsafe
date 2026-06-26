@@ -157,13 +157,12 @@ index concurrency on replicas — are planned for future versions.
 
 ## Known limitations
 
-Because `pgsafe` analyzes one statement at a time (v0), rules like
-`add-unique-constraint`, `add-primary-key-without-index`, and
-`add-column-not-null-no-default` will flag operations on a table that was
-**created earlier in the same migration file**. In practice those operations
-are safe — the table is empty and not yet visible to other sessions — but the
-linter cannot tell. Cross-statement awareness (new-table suppression) is
-planned for a future version.
+`pgsafe` recognizes a table `CREATE`d earlier in the same input and does not flag safe operations
+on it **while it is still empty** — e.g. `CREATE TABLE foo (…); ALTER TABLE foo ADD CONSTRAINT … UNIQUE (…)`
+is not flagged. Two deliberate caveats: matching is by exact name, so a schema-qualified mismatch
+(`CREATE TABLE public.foo; ALTER TABLE foo …`) is still flagged conservatively; and once the table is
+populated (`INSERT` / `COPY … FROM`) it is treated as an existing table and operations on it are
+flagged again.
 
 ## License
 
