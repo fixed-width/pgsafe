@@ -14,7 +14,10 @@ mod rules;
 mod suppression;
 mod txn;
 
-pub use output::{gate, lint_input, FailOn, FileReport, Format};
+pub use output::{
+    gate, lint_input, render_errors, render_finding_human, render_human, render_json, FailOn,
+    FileReport, Format,
+};
 
 /// Severity level of a [`Finding`], ordered by increasing severity
 /// (`Warning` < `Error`).

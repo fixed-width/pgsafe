@@ -76,6 +76,74 @@ pub fn gate(findings: &[Finding], fail_on: FailOn) -> bool {
         .any(|f| !f.is_suppressed() && f.severity >= min)
 }
 
+#[derive(serde::Serialize)]
+struct Report<'a> {
+    schema_version: u32,
+    files: &'a [FileReport],
+}
+
+/// Render one finding as the human block (1–4 newline-terminated lines):
+/// the headline, the message, a `fix:` line (unless suppressed), and the
+/// snippet (when present).
+#[must_use]
+pub fn render_finding_human(file: &str, f: &Finding) -> String {
+    let suffix = match &f.suppression {
+        Some(s) => format!("  — suppressed: {}", s.reason),
+        None => String::new(),
+    };
+    let mut out = format!(
+        "{}: {} [{}] statement #{} (line {}, col {}){}\n",
+        file, f.severity, f.rule_id, f.statement_index, f.location.line, f.location.column, suffix
+    );
+    out.push_str(&format!("  {}\n", f.message));
+    if f.suppression.is_none() {
+        out.push_str(&format!("  fix: {}\n", f.guidance));
+    }
+    if !f.snippet.is_empty() {
+        out.push_str(&format!("  | {}\n", f.snippet));
+    }
+    out
+}
+
+/// Render every finding across `reports` to the human stdout block. Parse
+/// errors are not included here — see [`render_errors`].
+#[must_use]
+pub fn render_human(reports: &[FileReport]) -> String {
+    let mut out = String::new();
+    for r in reports {
+        for f in &r.findings {
+            out.push_str(&render_finding_human(&r.name, f));
+        }
+    }
+    out
+}
+
+/// Render the stderr block: one `"{name}: {error}"` line for each report that
+/// failed to parse.
+#[must_use]
+pub fn render_errors(reports: &[FileReport]) -> String {
+    let mut out = String::new();
+    for r in reports {
+        if let Some(err) = &r.error {
+            out.push_str(&format!("{}: {}\n", r.name, err));
+        }
+    }
+    out
+}
+
+/// Render `reports` as the versioned JSON envelope (`schema_version` 1).
+///
+/// # Errors
+/// Returns a message if serialization fails.
+pub fn render_json(reports: &[FileReport]) -> Result<String, String> {
+    let report = Report {
+        schema_version: 1,
+        files: reports,
+    };
+    serde_json::to_string_pretty(&report)
+        .map_err(|e| format!("failed to serialize JSON output: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,5 +193,37 @@ mod tests {
             &findings("CREATE INDEX CONCURRENTLY i ON t (x);"),
             FailOn::Warning
         ));
+    }
+
+    #[test]
+    fn render_finding_human_has_id_severity_and_fix() {
+        let f = &lint_input("m.sql", "VACUUM FULL t;").findings[0];
+        let s = render_finding_human("m.sql", f);
+        assert!(s.contains("error [vacuum-full-cluster]"));
+        assert!(s.contains("  fix: "));
+    }
+
+    #[test]
+    fn render_json_is_the_versioned_envelope() {
+        let reports = vec![lint_input("<stdin>", "CREATE INDEX i ON t (x);")];
+        let s = render_json(&reports).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["schema_version"], 1);
+        assert_eq!(v["files"][0]["file"], "<stdin>");
+        assert_eq!(
+            v["files"][0]["findings"][0]["rule_id"],
+            "add-index-non-concurrent"
+        );
+    }
+
+    #[test]
+    fn render_errors_lists_parse_failures_only() {
+        let reports = vec![
+            lint_input("ok.sql", "CREATE INDEX CONCURRENTLY i ON t (x);"),
+            lint_input("bad.sql", "ALTER TABLE;"),
+        ];
+        let s = render_errors(&reports);
+        assert!(s.contains("bad.sql: parse error"));
+        assert!(!s.contains("ok.sql"));
     }
 }

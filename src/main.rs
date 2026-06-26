@@ -3,7 +3,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use clap::Parser;
-use pgsafe::{gate, lint_input, FailOn, FileReport, Format};
+use pgsafe::{gate, lint_input, render_errors, render_human, render_json, FailOn, Format};
 
 #[derive(Parser)]
 #[command(
@@ -19,12 +19,6 @@ struct Cli {
     /// Minimum finding severity that fails the run (exit code 1).
     #[arg(long, value_enum, default_value_t = FailOn::Warning)]
     fail_on: FailOn,
-}
-
-#[derive(serde::Serialize)]
-struct Report<'a> {
-    schema_version: u32,
-    files: &'a [FileReport],
 }
 
 fn main() -> ExitCode {
@@ -52,8 +46,11 @@ fn run(cli: &Cli) -> Result<u8, String> {
     }
 
     match cli.format {
-        Format::Human => print_human(&reports),
-        Format::Json => print_json(&reports)?,
+        Format::Human => {
+            eprint!("{}", render_errors(&reports));
+            print!("{}", render_human(&reports));
+        }
+        Format::Json => println!("{}", render_json(&reports)?),
         _ => unreachable!("unknown format variant"),
     }
 
@@ -88,46 +85,4 @@ fn read_stdin() -> Result<String, String> {
         .read_to_string(&mut s)
         .map_err(|e| e.to_string())?;
     Ok(s)
-}
-
-fn print_json(reports: &[FileReport]) -> Result<(), String> {
-    let report = Report {
-        schema_version: 1,
-        files: reports,
-    };
-    let json = serde_json::to_string_pretty(&report)
-        .map_err(|e| format!("failed to serialize JSON output: {e}"))?;
-    println!("{json}");
-    Ok(())
-}
-
-fn print_human(reports: &[FileReport]) {
-    for r in reports {
-        if let Some(err) = &r.error {
-            eprintln!("{}: {}", r.name, err);
-        }
-        for f in &r.findings {
-            let suffix = match &f.suppression {
-                Some(s) => format!("  — suppressed: {}", s.reason),
-                None => String::new(),
-            };
-            println!(
-                "{}: {} [{}] statement #{} (line {}, col {}){}",
-                r.name,
-                f.severity,
-                f.rule_id,
-                f.statement_index,
-                f.location.line,
-                f.location.column,
-                suffix
-            );
-            println!("  {}", f.message);
-            if f.suppression.is_none() {
-                println!("  fix: {}", f.guidance);
-            }
-            if !f.snippet.is_empty() {
-                println!("  | {}", f.snippet);
-            }
-        }
-    }
 }
