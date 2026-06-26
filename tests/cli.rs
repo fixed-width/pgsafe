@@ -229,3 +229,68 @@ fn json_format_emits_rule_id_and_file() {
         .stdout(predicate::str::contains("\"add-index-non-concurrent\""))
         .stdout(predicate::str::contains("\"file\""));
 }
+
+// ── --fail-on gating ─────────────────────────────────────────────────────────
+
+#[test]
+fn fail_on_default_gates_on_a_warning() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .write_stdin("DROP TABLE x;")
+        .assert()
+        .failure()
+        .code(1);
+}
+
+#[test]
+fn fail_on_error_does_not_gate_on_a_warning() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "error"])
+        .write_stdin("DROP TABLE x;")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("drop-table")); // still printed, just not gating
+}
+
+#[test]
+fn fail_on_error_gates_on_an_error() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "error"])
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .failure()
+        .code(1);
+}
+
+#[test]
+fn fail_on_never_gates_on_nothing() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "never"])
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("vacuum-full-cluster"));
+}
+
+#[test]
+fn fail_on_never_still_exits_2_on_parse_error() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "never"])
+        .write_stdin("ALTER TABLE;")
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn invalid_fail_on_value_is_a_usage_error() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "bogus"])
+        .write_stdin("DROP TABLE x;")
+        .assert()
+        .code(2);
+}

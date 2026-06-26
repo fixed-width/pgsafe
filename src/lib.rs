@@ -11,9 +11,12 @@
 mod rules;
 mod suppression;
 
-/// Severity level of a [`Finding`].
+/// Severity level of a [`Finding`], ordered by increasing severity
+/// (`Warning` < `Error`).
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// The statement is potentially unsafe but may be acceptable in some contexts.
@@ -180,6 +183,11 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn severity_is_ordered_warning_below_error() {
+        assert!(Severity::Warning < Severity::Error);
+    }
 
     #[test]
     fn empty_string_returns_no_findings() {
