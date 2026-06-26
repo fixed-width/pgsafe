@@ -96,6 +96,7 @@ pgsafe migrations/*.sql || exit 1
 | `add-primary-key-without-index` | error | Adding a `PRIMARY KEY` inline builds its unique index (and may scan for `NOT NULL`) under an `ACCESS EXCLUSIVE` lock |
 | `add-column-not-null-no-default` | error | `ADD COLUMN ... NOT NULL` with no `DEFAULT` fails immediately on any non-empty table — it cannot fill existing rows |
 | `add-column-volatile-default` | error | Adding a column with a volatile `DEFAULT` (e.g. `random()`, `gen_random_uuid()`) rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
+| `add-column-serial` | error | Adding a `serial`/`bigserial` column creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
 
 ## Severity & gating
 

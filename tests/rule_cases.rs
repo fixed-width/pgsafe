@@ -272,6 +272,74 @@ fn add_column_not_null_no_default() {
     ));
 }
 
+// ── add-column-serial ─────────────────────────────────────────────────────────
+
+#[test]
+fn add_column_serial_fires() {
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id serial",
+        "add-column-serial"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id bigserial",
+        "add-column-serial"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id smallserial",
+        "add-column-serial"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id serial8",
+        "add-column-serial"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id serial2",
+        "add-column-serial"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id serial4",
+        "add-column-serial"
+    ));
+    // case-insensitive
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id BIGSERIAL",
+        "add-column-serial"
+    ));
+}
+
+#[test]
+fn add_column_serial_one_finding_per_column() {
+    let hits = lint_sql("ALTER TABLE t ADD COLUMN a serial, ADD COLUMN b bigserial")
+        .unwrap()
+        .into_iter()
+        .filter(|f| f.rule_id == "add-column-serial")
+        .count();
+    assert_eq!(hits, 2);
+}
+
+#[test]
+fn add_column_serial_silent() {
+    // plain integer types are fine
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN id bigint",
+        "add-column-serial"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN id int",
+        "add-column-serial"
+    ));
+    // identity is a separate rule, not a serial type
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN id int GENERATED ALWAYS AS IDENTITY",
+        "add-column-serial"
+    ));
+    // CREATE TABLE is a new/empty table — out of scope
+    assert!(!fires(
+        "CREATE TABLE t (id bigserial PRIMARY KEY)",
+        "add-column-serial"
+    ));
+}
+
 // ── add-column-volatile-default ───────────────────────────────────────────────
 
 #[test]
