@@ -271,3 +271,72 @@ fn add_column_not_null_no_default() {
         "add-column-not-null-no-default"
     ));
 }
+
+// ── add-column-volatile-default ───────────────────────────────────────────────
+
+#[test]
+fn add_column_volatile_default_fires() {
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id uuid DEFAULT gen_random_uuid()",
+        "add-column-volatile-default"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN r double precision DEFAULT random()",
+        "add-column-volatile-default"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN ts timestamptz DEFAULT clock_timestamp()",
+        "add-column-volatile-default"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN n bigint DEFAULT nextval('s')",
+        "add-column-volatile-default"
+    ));
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN id uuid DEFAULT uuid_generate_v4()",
+        "add-column-volatile-default"
+    ));
+    // nested inside an expression
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN k int DEFAULT floor(random() * 100)",
+        "add-column-volatile-default"
+    ));
+    // wrapped in a cast
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN s text DEFAULT gen_random_uuid()::text",
+        "add-column-volatile-default"
+    ));
+}
+
+#[test]
+fn add_column_volatile_default_silent() {
+    // stable functions are safe (evaluated once, no rewrite)
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN ts timestamptz DEFAULT now()",
+        "add-column-volatile-default"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN ts timestamptz DEFAULT current_timestamp",
+        "add-column-volatile-default"
+    ));
+    // constant default is safe
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int DEFAULT 0",
+        "add-column-volatile-default"
+    ));
+    // no default at all
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int",
+        "add-column-volatile-default"
+    ));
+    // SET DEFAULT is metadata-only (not ADD COLUMN) — out of scope
+    assert!(!fires(
+        "ALTER TABLE t ALTER COLUMN c SET DEFAULT random()",
+        "add-column-volatile-default"
+    ));
+    // CREATE TABLE is empty — out of scope (the common UUID-PK pattern)
+    assert!(!fires(
+        "CREATE TABLE t (id uuid DEFAULT gen_random_uuid())",
+        "add-column-volatile-default"
+    ));
+}
