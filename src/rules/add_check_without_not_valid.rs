@@ -2,13 +2,16 @@ use pg_query::protobuf::ConstrType;
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::RuleHit;
+use crate::{RuleHit, Severity};
 
 pub struct AddCheckWithoutNotValid;
 
 impl Rule for AddCheckWithoutNotValid {
     fn id(&self) -> &'static str {
         "add-check-without-not-valid"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Error
     }
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {

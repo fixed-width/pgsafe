@@ -126,7 +126,7 @@ fn json_format_structure_is_correct() {
 
     let fnd = &v["files"][0]["findings"][0];
     assert_eq!(fnd["rule_id"], "add-index-non-concurrent");
-    assert_eq!(fnd["severity"], "warning");
+    assert_eq!(fnd["severity"], "error");
     assert!(fnd["location"]["line"].is_number(), "line must be a number");
     assert!(
         fnd["location"]["column"].is_number(),

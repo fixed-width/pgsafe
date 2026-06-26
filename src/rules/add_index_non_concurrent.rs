@@ -1,13 +1,16 @@
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::RuleHit;
+use crate::{RuleHit, Severity};
 
 pub struct AddIndexNonConcurrent;
 
 impl Rule for AddIndexNonConcurrent {
     fn id(&self) -> &'static str {
         "add-index-non-concurrent"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Error
     }
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {

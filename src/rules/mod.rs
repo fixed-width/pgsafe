@@ -144,6 +144,39 @@ mod tests {
     use super::all_rules;
 
     #[test]
+    fn severity_classification_is_locked() {
+        use crate::Severity;
+        use std::collections::HashMap;
+        let sev: HashMap<&str, Severity> =
+            all_rules().iter().map(|r| (r.id(), r.severity())).collect();
+        let errors = [
+            "add-index-non-concurrent",
+            "reindex-non-concurrent",
+            "drop-index-non-concurrent",
+            "alter-column-type",
+            "set-not-null",
+            "add-fk-without-not-valid",
+            "add-check-without-not-valid",
+            "vacuum-full-cluster",
+            "add-unique-constraint",
+            "add-primary-key-without-index",
+            "add-column-not-null-no-default",
+        ];
+        let warnings = ["rename", "drop-table", "drop-column", "truncate"];
+        for id in errors {
+            assert_eq!(sev[id], Severity::Error, "{id} should be error");
+        }
+        for id in warnings {
+            assert_eq!(sev[id], Severity::Warning, "{id} should be warning");
+        }
+        assert_eq!(
+            errors.len() + warnings.len(),
+            sev.len(),
+            "every rule must be classified"
+        );
+    }
+
+    #[test]
     fn registration_order_is_stable() {
         let ids: Vec<&str> = all_rules().iter().map(|r| r.id()).collect();
         assert_eq!(

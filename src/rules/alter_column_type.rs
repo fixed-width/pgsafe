@@ -2,13 +2,16 @@ use pg_query::protobuf::AlterTableType;
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::RuleHit;
+use crate::{RuleHit, Severity};
 
 pub struct AlterColumnType;
 
 impl Rule for AlterColumnType {
     fn id(&self) -> &'static str {
         "alter-column-type"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Error
     }
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
