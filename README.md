@@ -98,6 +98,7 @@ pgsafe migrations/*.sql || exit 1
 | `add-column-volatile-default` | error | Adding a column with a volatile `DEFAULT` (e.g. `random()`, `gen_random_uuid()`) rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
 | `add-column-serial` | error | Adding a `serial`/`bigserial` column creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
 | `add-column-identity` | error | Adding a `GENERATED … AS IDENTITY` column creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
+| `add-column-generated-stored` | error | Adding a `GENERATED ALWAYS AS (…) STORED` column computes the value for every existing row, rewriting the table under an `ACCESS EXCLUSIVE` lock |
 
 ## Severity & gating
 
