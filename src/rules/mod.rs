@@ -23,13 +23,13 @@ pub(crate) trait Rule: Send + Sync {
 mod add_check_without_not_valid;
 mod add_column_not_null_no_default;
 mod add_fk_without_not_valid;
+mod add_index_non_concurrent;
 mod add_primary_key_without_index;
 mod add_unique_constraint;
 mod alter_column_type;
 mod drop_column;
 mod drop_index_non_concurrent;
 mod drop_table;
-mod non_concurrent_index;
 mod reindex_non_concurrent;
 mod rename;
 mod set_not_null;
@@ -38,7 +38,7 @@ mod vacuum_full_cluster;
 
 static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
     vec![
-        Box::new(non_concurrent_index::NonConcurrentIndex),
+        Box::new(add_index_non_concurrent::AddIndexNonConcurrent),
         Box::new(add_fk_without_not_valid::AddFkWithoutNotValid),
         Box::new(add_check_without_not_valid::AddCheckWithoutNotValid),
         Box::new(set_not_null::SetNotNull),
@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(
             ids,
             [
-                "non-concurrent-index",
+                "add-index-non-concurrent",
                 "add-fk-without-not-valid",
                 "add-check-without-not-valid",
                 "set-not-null",

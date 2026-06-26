@@ -64,7 +64,7 @@ pub(crate) struct RuleHit {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
-    /// Identifier of the rule that triggered this finding (e.g. `"non-concurrent-index"`).
+    /// Identifier of the rule that triggered this finding (e.g. `"add-index-non-concurrent"`).
     pub rule_id: String,
     /// Severity level of the finding.
     pub severity: Severity,
@@ -211,7 +211,11 @@ mod tests {
         let ids: Vec<&str> = f.iter().map(|x| x.rule_id.as_str()).collect();
         assert_eq!(
             ids,
-            ["non-concurrent-index", "set-not-null", "alter-column-type"]
+            [
+                "add-index-non-concurrent",
+                "set-not-null",
+                "alter-column-type"
+            ]
         );
 
         assert_eq!(f[0].statement_index, 0);

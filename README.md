@@ -49,7 +49,7 @@ The `--format json` output is a versioned envelope:
     {
       "file": "migration.sql",
       "findings": [
-        { "rule_id": "non-concurrent-index", "severity": "error", ... }
+        { "rule_id": "add-index-non-concurrent", "severity": "error", ... }
       ]
     }
   ]
@@ -76,7 +76,7 @@ pgsafe migrations/*.sql || exit 1
 
 | Rule ID | Description |
 |---------|-------------|
-| `non-concurrent-index` | `CREATE INDEX` without `CONCURRENTLY` blocks all writes for the duration of the build |
+| `add-index-non-concurrent` | `CREATE INDEX` without `CONCURRENTLY` blocks all writes for the duration of the build |
 | `add-fk-without-not-valid` | Adding a foreign key without `NOT VALID` scans and locks both tables |
 | `add-check-without-not-valid` | Adding a `CHECK` constraint without `NOT VALID` scans the whole table under a lock |
 | `set-not-null` | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |

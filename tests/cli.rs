@@ -4,14 +4,14 @@ use predicates::prelude::*;
 // ── existing tests ───────────────────────────────────────────────────────────
 
 #[test]
-fn flags_non_concurrent_index_from_stdin() {
+fn flags_add_index_non_concurrent_from_stdin() {
     Command::cargo_bin("pgsafe")
         .unwrap()
         .write_stdin("CREATE INDEX i ON t (x);")
         .assert()
         .failure()
         .code(1)
-        .stdout(predicate::str::contains("non-concurrent-index"));
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn file_input_flags_findings_and_prints_path() {
         .assert()
         .failure()
         .code(1)
-        .stdout(predicate::str::contains("non-concurrent-index"))
+        .stdout(predicate::str::contains("add-index-non-concurrent"))
         .stdout(predicate::str::contains(path.to_str().unwrap()));
 }
 
@@ -101,7 +101,7 @@ fn multiple_findings_all_appear_in_output() {
         .clone();
 
     let stdout = String::from_utf8(output).unwrap();
-    let count = stdout.matches("non-concurrent-index").count();
+    let count = stdout.matches("add-index-non-concurrent").count();
     assert_eq!(count, 2, "expected two findings, got {count} in:\n{stdout}");
 }
 
@@ -125,7 +125,7 @@ fn json_format_structure_is_correct() {
     assert_eq!(v["files"][0]["file"], "<stdin>");
 
     let fnd = &v["files"][0]["findings"][0];
-    assert_eq!(fnd["rule_id"], "non-concurrent-index");
+    assert_eq!(fnd["rule_id"], "add-index-non-concurrent");
     assert_eq!(fnd["severity"], "warning");
     assert!(fnd["location"]["line"].is_number(), "line must be a number");
     assert!(
@@ -226,6 +226,6 @@ fn json_format_emits_rule_id_and_file() {
         .assert()
         .failure()
         .code(1)
-        .stdout(predicate::str::contains("\"non-concurrent-index\""))
+        .stdout(predicate::str::contains("\"add-index-non-concurrent\""))
         .stdout(predicate::str::contains("\"file\""));
 }
