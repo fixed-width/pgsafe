@@ -36,6 +36,10 @@ pgsafe --format json migration.sql
 
 # Pipe into jq
 pgsafe --format json migration.sql | jq '.files[].findings[] | select(.severity == "error")'
+
+# Gate strictness (default: any finding fails the run)
+pgsafe --fail-on=error migration.sql   # only error-severity findings fail (exit 1)
+pgsafe --fail-on=never migration.sql   # report-only, never fails on findings
 ```
 
 ### JSON output shape
@@ -49,7 +53,7 @@ The `--format json` output is a versioned envelope:
     {
       "file": "migration.sql",
       "findings": [
-        { "rule_id": "non-concurrent-index", "severity": "error", ... }
+        { "rule_id": "add-index-non-concurrent", "severity": "error", ... }
       ]
     }
   ]
@@ -63,7 +67,7 @@ If a file cannot be parsed, the `"findings"` array is empty and an `"error"` key
 | Code | Meaning |
 |------|---------|
 | 0 | No findings — migration looks safe |
-| 1 | One or more findings (warnings or errors) |
+| 1 | One or more findings at or above `--fail-on` (default `warning`, i.e. any finding) |
 | 2 | Any file failed to parse (or an I/O error occurred) |
 
 This makes `pgsafe` straightforward to gate in CI:
@@ -74,23 +78,37 @@ pgsafe migrations/*.sql || exit 1
 
 ## Rules
 
-| Rule ID | Description |
-|---------|-------------|
-| `non-concurrent-index` | `CREATE INDEX` without `CONCURRENTLY` blocks all writes for the duration of the build |
-| `add-fk-without-not-valid` | Adding a foreign key without `NOT VALID` scans and locks both tables |
-| `add-check-without-not-valid` | Adding a `CHECK` constraint without `NOT VALID` scans the whole table under a lock |
-| `set-not-null` | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
-| `alter-column-type` | `ALTER COLUMN ... TYPE` usually rewrites the whole table and rebuilds indexes under a lock |
-| `rename` | Renaming a table or column breaks existing queries and ORM mappings that reference the old name |
-| `drop-index-non-concurrent` | `DROP INDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on the table, blocking reads and writes while it runs |
-| `drop-table` | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
-| `drop-column` | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |
-| `truncate` | `TRUNCATE` takes an `ACCESS EXCLUSIVE` lock and irreversibly removes all rows; with `CASCADE` the lock propagates to every FK-referencing table |
-| `vacuum-full-cluster` | `VACUUM FULL` and `CLUSTER` rewrite the entire table under an `ACCESS EXCLUSIVE` lock — minutes to hours of blocked reads and writes, plus 2× disk |
-| `reindex-non-concurrent` | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
-| `add-unique-constraint` | Adding a `UNIQUE` constraint inline builds its underlying index while holding `ACCESS EXCLUSIVE` on the table for the whole build |
-| `add-primary-key-without-index` | Adding a `PRIMARY KEY` inline builds its unique index (and may scan for `NOT NULL`) under an `ACCESS EXCLUSIVE` lock |
-| `add-column-not-null-no-default` | `ADD COLUMN ... NOT NULL` with no `DEFAULT` fails immediately on any non-empty table — it cannot fill existing rows |
+| Rule ID | Severity | Description |
+|---------|----------|-------------|
+| `add-index-non-concurrent` | error | `CREATE INDEX` without `CONCURRENTLY` blocks all writes for the duration of the build |
+| `add-fk-without-not-valid` | error | Adding a foreign key without `NOT VALID` scans and locks both tables |
+| `add-check-without-not-valid` | error | Adding a `CHECK` constraint without `NOT VALID` scans the whole table under a lock |
+| `set-not-null` | error | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
+| `alter-column-type` | error | `ALTER COLUMN ... TYPE` usually rewrites the whole table and rebuilds indexes under a lock |
+| `rename` | warning | Renaming a table or column breaks existing queries and ORM mappings that reference the old name |
+| `drop-index-non-concurrent` | error | `DROP INDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on the table, blocking reads and writes while it runs |
+| `drop-table` | warning | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
+| `drop-column` | warning | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |
+| `truncate` | warning | `TRUNCATE` takes an `ACCESS EXCLUSIVE` lock and irreversibly removes all rows; with `CASCADE` the lock propagates to every FK-referencing table |
+| `vacuum-full-cluster` | error | `VACUUM FULL` and `CLUSTER` rewrite the entire table under an `ACCESS EXCLUSIVE` lock — minutes to hours of blocked reads and writes, plus 2× disk |
+| `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
+| `add-unique-constraint` | error | Adding a `UNIQUE` constraint inline builds its underlying index while holding `ACCESS EXCLUSIVE` on the table for the whole build |
+| `add-primary-key-without-index` | error | Adding a `PRIMARY KEY` inline builds its unique index (and may scan for `NOT NULL`) under an `ACCESS EXCLUSIVE` lock |
+| `add-column-not-null-no-default` | error | `ADD COLUMN ... NOT NULL` with no `DEFAULT` fails immediately on any non-empty table — it cannot fill existing rows |
+
+## Severity & gating
+
+Each rule is `error` or `warning`:
+
+- **`error`** — the statement takes a lock that blocks concurrent access, rewrites/validates the
+  table, or fails outright, **and a standard rewrite avoids it** (`CONCURRENTLY`, `NOT VALID` →
+  `VALIDATE`, `USING INDEX`, a two-step). These are the avoidable outages.
+- **`warning`** — an intentional destructive op (`DROP TABLE` / `DROP COLUMN` / `TRUNCATE`) or an
+  app-compatibility heads-up (`RENAME`), where no lock-avoiding rewrite applies.
+
+`--fail-on` controls which severities fail the run: `warning` (default — any finding fails),
+`error` (only errors fail; warnings are printed but exit `0`), or `never` (report-only). Parse
+and I/O errors always exit `2`, regardless of `--fail-on`.
 
 ## Suppressing a finding
 

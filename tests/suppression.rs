@@ -83,3 +83,43 @@ fn trailing_directive_with_two_statements_on_a_line_attaches_to_the_rightmost() 
         "the rightmost statement (the one the comment trails) is suppressed"
     );
 }
+#[test]
+fn hygiene_diagnostic_severities_are_locked() {
+    use pgsafe::Severity;
+    let sev = |sql: &str, id: &str| -> Severity {
+        lint_sql(sql)
+            .unwrap()
+            .into_iter()
+            .find(|f| f.rule_id == id)
+            .unwrap_or_else(|| panic!("expected a {id} finding"))
+            .severity
+    };
+    assert_eq!(
+        sev(
+            "-- pgsafe:disable drop-table\nDROP TABLE x;",
+            "suppression-malformed"
+        ),
+        Severity::Error
+    );
+    assert_eq!(
+        sev(
+            "-- pgsafe:ignore drop-tabel typo\nDROP TABLE x;",
+            "suppression-unknown-rule"
+        ),
+        Severity::Error
+    );
+    assert_eq!(
+        sev(
+            "-- pgsafe:ignore drop-table\nDROP TABLE x;",
+            "suppression-missing-reason"
+        ),
+        Severity::Error
+    );
+    assert_eq!(
+        sev(
+            "-- pgsafe:ignore truncate  stale\nDELETE FROM x;",
+            "suppression-unused"
+        ),
+        Severity::Warning
+    );
+}

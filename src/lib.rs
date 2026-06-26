@@ -11,9 +11,12 @@
 mod rules;
 mod suppression;
 
-/// Severity level of a [`Finding`].
+/// Severity level of a [`Finding`], ordered by increasing severity
+/// (`Warning` < `Error`).
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// The statement is potentially unsafe but may be acceptable in some contexts.
@@ -64,7 +67,7 @@ pub(crate) struct RuleHit {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Finding {
-    /// Identifier of the rule that triggered this finding (e.g. `"non-concurrent-index"`).
+    /// Identifier of the rule that triggered this finding (e.g. `"add-index-non-concurrent"`).
     pub rule_id: String,
     /// Severity level of the finding.
     pub severity: Severity,
@@ -182,6 +185,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn severity_is_ordered_warning_below_error() {
+        assert!(Severity::Warning < Severity::Error);
+    }
+
+    #[test]
     fn empty_string_returns_no_findings() {
         assert_eq!(lint_sql("").unwrap(), Vec::new());
     }
@@ -211,7 +219,11 @@ mod tests {
         let ids: Vec<&str> = f.iter().map(|x| x.rule_id.as_str()).collect();
         assert_eq!(
             ids,
-            ["non-concurrent-index", "set-not-null", "alter-column-type"]
+            [
+                "add-index-non-concurrent",
+                "set-not-null",
+                "alter-column-type"
+            ]
         );
 
         assert_eq!(f[0].statement_index, 0);

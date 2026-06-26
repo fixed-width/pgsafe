@@ -1,13 +1,16 @@
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::RuleHit;
+use crate::{RuleHit, Severity};
 
-pub struct NonConcurrentIndex;
+pub struct AddIndexNonConcurrent;
 
-impl Rule for NonConcurrentIndex {
+impl Rule for AddIndexNonConcurrent {
     fn id(&self) -> &'static str {
-        "non-concurrent-index"
+        "add-index-non-concurrent"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Error
     }
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
@@ -35,12 +38,16 @@ mod tests {
     #[test]
     fn flags_plain_create_index() {
         let findings = lint_sql("CREATE INDEX idx ON t (col)").unwrap();
-        assert!(findings.iter().any(|f| f.rule_id == "non-concurrent-index"));
+        assert!(findings
+            .iter()
+            .any(|f| f.rule_id == "add-index-non-concurrent"));
     }
 
     #[test]
     fn ignores_concurrent_create_index() {
         let findings = lint_sql("CREATE INDEX CONCURRENTLY idx ON t (col)").unwrap();
-        assert!(findings.iter().all(|f| f.rule_id != "non-concurrent-index"));
+        assert!(findings
+            .iter()
+            .all(|f| f.rule_id != "add-index-non-concurrent"));
     }
 }

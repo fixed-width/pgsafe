@@ -4,14 +4,14 @@ use predicates::prelude::*;
 // ── existing tests ───────────────────────────────────────────────────────────
 
 #[test]
-fn flags_non_concurrent_index_from_stdin() {
+fn flags_add_index_non_concurrent_from_stdin() {
     Command::cargo_bin("pgsafe")
         .unwrap()
         .write_stdin("CREATE INDEX i ON t (x);")
         .assert()
         .failure()
         .code(1)
-        .stdout(predicate::str::contains("non-concurrent-index"));
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn file_input_flags_findings_and_prints_path() {
         .assert()
         .failure()
         .code(1)
-        .stdout(predicate::str::contains("non-concurrent-index"))
+        .stdout(predicate::str::contains("add-index-non-concurrent"))
         .stdout(predicate::str::contains(path.to_str().unwrap()));
 }
 
@@ -101,7 +101,7 @@ fn multiple_findings_all_appear_in_output() {
         .clone();
 
     let stdout = String::from_utf8(output).unwrap();
-    let count = stdout.matches("non-concurrent-index").count();
+    let count = stdout.matches("add-index-non-concurrent").count();
     assert_eq!(count, 2, "expected two findings, got {count} in:\n{stdout}");
 }
 
@@ -125,8 +125,8 @@ fn json_format_structure_is_correct() {
     assert_eq!(v["files"][0]["file"], "<stdin>");
 
     let fnd = &v["files"][0]["findings"][0];
-    assert_eq!(fnd["rule_id"], "non-concurrent-index");
-    assert_eq!(fnd["severity"], "warning");
+    assert_eq!(fnd["rule_id"], "add-index-non-concurrent");
+    assert_eq!(fnd["severity"], "error");
     assert!(fnd["location"]["line"].is_number(), "line must be a number");
     assert!(
         fnd["location"]["column"].is_number(),
@@ -226,6 +226,96 @@ fn json_format_emits_rule_id_and_file() {
         .assert()
         .failure()
         .code(1)
-        .stdout(predicate::str::contains("\"non-concurrent-index\""))
+        .stdout(predicate::str::contains("\"add-index-non-concurrent\""))
         .stdout(predicate::str::contains("\"file\""));
+}
+
+// ── --fail-on gating ─────────────────────────────────────────────────────────
+
+#[test]
+fn fail_on_default_gates_on_a_warning() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .write_stdin("DROP TABLE x;")
+        .assert()
+        .failure()
+        .code(1);
+}
+
+#[test]
+fn fail_on_error_does_not_gate_on_a_warning() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "error"])
+        .write_stdin("DROP TABLE x;")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("drop-table")); // still printed, just not gating
+}
+
+#[test]
+fn fail_on_error_gates_on_an_error() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "error"])
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .failure()
+        .code(1);
+}
+
+#[test]
+fn fail_on_never_gates_on_nothing() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "never"])
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("vacuum-full-cluster"));
+}
+
+#[test]
+fn fail_on_never_still_exits_2_on_parse_error() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "never"])
+        .write_stdin("ALTER TABLE;")
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn invalid_fail_on_value_is_a_usage_error() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "bogus"])
+        .write_stdin("DROP TABLE x;")
+        .assert()
+        .failure()
+        .code(2);
+}
+
+// ── --fail-on × suppression-diagnostic gating ───────────────────────────────
+
+#[test]
+fn fail_on_error_gates_on_a_hygiene_error_but_not_on_unused() {
+    // A reasonless directive emits suppression-missing-reason (error) → gates under --fail-on=error.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "error"])
+        .write_stdin("-- pgsafe:ignore drop-table\nDROP TABLE x;")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("suppression-missing-reason"));
+    // A stale directive emits suppression-unused (warning) → does NOT gate under --fail-on=error.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--fail-on", "error"])
+        .write_stdin("-- pgsafe:ignore truncate  stale\nDELETE FROM x;")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("suppression-unused"));
 }

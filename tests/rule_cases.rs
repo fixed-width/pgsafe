@@ -7,26 +7,26 @@ fn fires(sql: &str, rule_id: &str) -> bool {
     lint_sql(sql).unwrap().iter().any(|f| f.rule_id == rule_id)
 }
 
-// ── non-concurrent-index ────────────────────────────────────────────────────
+// ── add-index-non-concurrent ────────────────────────────────────────────────
 
 #[test]
-fn non_concurrent_index_fires() {
-    assert!(fires("CREATE INDEX i ON t (x)", "non-concurrent-index"));
+fn add_index_non_concurrent_fires() {
+    assert!(fires("CREATE INDEX i ON t (x)", "add-index-non-concurrent"));
     assert!(fires(
         "CREATE UNIQUE INDEX i ON t (x)",
-        "non-concurrent-index"
+        "add-index-non-concurrent"
     ));
 }
 
 #[test]
-fn non_concurrent_index_silent() {
+fn add_index_non_concurrent_silent() {
     assert!(!fires(
         "CREATE INDEX CONCURRENTLY i ON t (x)",
-        "non-concurrent-index"
+        "add-index-non-concurrent"
     ));
     assert!(!fires(
         "CREATE UNIQUE INDEX CONCURRENTLY i ON t (x)",
-        "non-concurrent-index"
+        "add-index-non-concurrent"
     ));
 }
 

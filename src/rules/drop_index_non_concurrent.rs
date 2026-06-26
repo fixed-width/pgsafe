@@ -2,13 +2,16 @@ use pg_query::protobuf::ObjectType;
 use pg_query::NodeEnum;
 
 use super::Rule;
-use crate::RuleHit;
+use crate::{RuleHit, Severity};
 
 pub struct DropIndexNonConcurrent;
 
 impl Rule for DropIndexNonConcurrent {
     fn id(&self) -> &'static str {
         "drop-index-non-concurrent"
+    }
+    fn severity(&self) -> Severity {
+        Severity::Error
     }
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
         if let NodeEnum::DropStmt(d) = node {
