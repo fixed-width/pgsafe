@@ -214,12 +214,24 @@ fn reindex_non_concurrent() {
 
 #[test]
 fn add_unique_constraint() {
+    // Table-level ADD CONSTRAINT UNIQUE fires
     assert!(fires(
         "ALTER TABLE t ADD CONSTRAINT u UNIQUE (a)",
         "add-unique-constraint"
     ));
+    // Attaching a pre-built index is safe
     assert!(!fires(
         "ALTER TABLE t ADD CONSTRAINT u UNIQUE USING INDEX existing_idx",
+        "add-unique-constraint"
+    ));
+    // Column-level inline UNIQUE also fires (builds the index under ACCESS EXCLUSIVE)
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN c int UNIQUE",
+        "add-unique-constraint"
+    ));
+    // Column without UNIQUE constraint is safe
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int",
         "add-unique-constraint"
     ));
 }

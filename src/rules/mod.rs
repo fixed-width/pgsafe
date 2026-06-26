@@ -2,7 +2,9 @@
 
 use std::sync::LazyLock;
 
-use pg_query::protobuf::{AlterTableCmd, AlterTableType, Constraint, DefElem};
+use pg_query::protobuf::{
+    AlterTableCmd, AlterTableType, ColumnDef, ConstrType, Constraint, DefElem,
+};
 use pg_query::NodeEnum;
 
 use crate::{RuleHit, Severity};
@@ -71,6 +73,31 @@ fn alter_table_cmds(node: &NodeEnum) -> Vec<&AlterTableCmd> {
             _ => None,
         })
         .collect()
+}
+
+/// All `ColumnDef`s being added by `ADD COLUMN` commands in an `ALTER TABLE`.
+fn columns_being_added(node: &NodeEnum) -> Vec<&ColumnDef> {
+    alter_table_cmds(node)
+        .into_iter()
+        .filter(|cmd| {
+            matches!(
+                AlterTableType::try_from(cmd.subtype),
+                Ok(AlterTableType::AtAddColumn)
+            )
+        })
+        .filter_map(|cmd| match cmd.def.as_ref()?.node.as_ref()? {
+            NodeEnum::ColumnDef(c) => Some(c.as_ref()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether a column definition carries an inline constraint of the given type.
+fn column_has_constraint(col: &ColumnDef, contype: ConstrType) -> bool {
+    col.constraints.iter().any(|cn| {
+        matches!(cn.node.as_ref(), Some(NodeEnum::Constraint(con))
+            if ConstrType::try_from(con.contype) == Ok(contype))
+    })
 }
 
 /// All constraints added by `ADD CONSTRAINT` commands in an `ALTER TABLE`.
