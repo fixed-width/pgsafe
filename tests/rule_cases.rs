@@ -454,6 +454,18 @@ fn add_column_identity_fires() {
 }
 
 #[test]
+fn add_column_identity_one_finding_per_column() {
+    // Only the identity column fires; the plain column does not, and there is no double-count.
+    let hits =
+        lint_sql("ALTER TABLE t ADD COLUMN a int, ADD COLUMN b int GENERATED ALWAYS AS IDENTITY")
+            .unwrap()
+            .into_iter()
+            .filter(|f| f.rule_id == "add-column-identity")
+            .count();
+    assert_eq!(hits, 1);
+}
+
+#[test]
 fn add_column_identity_silent() {
     // generated-stored is a different constraint (ConstrGenerated) — separate rule
     assert!(!fires(
