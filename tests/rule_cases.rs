@@ -488,3 +488,50 @@ fn add_column_identity_silent() {
         "add-column-identity"
     ));
 }
+
+// ── add-column-generated-stored ───────────────────────────────────────────────
+
+#[test]
+fn add_column_generated_stored_fires() {
+    assert!(fires(
+        "ALTER TABLE t ADD COLUMN c int GENERATED ALWAYS AS (a + b) STORED",
+        "add-column-generated-stored"
+    ));
+}
+
+#[test]
+fn add_column_generated_stored_one_finding_per_column() {
+    // Only the generated column fires; the plain column does not, and there is no double-count.
+    let hits = lint_sql(
+        "ALTER TABLE t ADD COLUMN x int, ADD COLUMN c int GENERATED ALWAYS AS (a + b) STORED",
+    )
+    .unwrap()
+    .into_iter()
+    .filter(|f| f.rule_id == "add-column-generated-stored")
+    .count();
+    assert_eq!(hits, 1);
+}
+
+#[test]
+fn add_column_generated_stored_silent() {
+    // identity is a different constraint (ConstrIdentity) — separate rule
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN id int GENERATED ALWAYS AS IDENTITY",
+        "add-column-generated-stored"
+    ));
+    // serial is a separate rule
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN id bigserial",
+        "add-column-generated-stored"
+    ));
+    // plain type
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int",
+        "add-column-generated-stored"
+    ));
+    // CREATE TABLE is a new/empty table — out of scope
+    assert!(!fires(
+        "CREATE TABLE t (c int GENERATED ALWAYS AS (a + b) STORED)",
+        "add-column-generated-stored"
+    ));
+}
