@@ -3,7 +3,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use clap::Parser;
-use pgsafe::{gate, lint_sql, FailOn, Finding};
+use pgsafe::{gate, lint_input, FailOn, FileReport, Format};
 
 #[derive(Parser)]
 #[command(
@@ -19,21 +19,6 @@ struct Cli {
     /// Minimum finding severity that fails the run (exit code 1).
     #[arg(long, value_enum, default_value_t = FailOn::Warning)]
     fail_on: FailOn,
-}
-
-#[derive(Clone, clap::ValueEnum)]
-enum Format {
-    Human,
-    Json,
-}
-
-#[derive(serde::Serialize)]
-struct FileReport {
-    #[serde(rename = "file")]
-    name: String,
-    findings: Vec<Finding>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -60,29 +45,16 @@ fn run(cli: &Cli) -> Result<u8, String> {
     let mut had_findings = false;
 
     for (name, sql) in inputs {
-        match lint_sql(&sql) {
-            Ok(findings) => {
-                had_findings |= gate(&findings, cli.fail_on);
-                reports.push(FileReport {
-                    name,
-                    findings,
-                    error: None,
-                });
-            }
-            Err(e) => {
-                had_error = true;
-                reports.push(FileReport {
-                    name,
-                    findings: Vec::new(),
-                    error: Some(e.to_string()),
-                });
-            }
-        }
+        let report = lint_input(name, &sql);
+        had_error |= report.error.is_some();
+        had_findings |= gate(&report.findings, cli.fail_on);
+        reports.push(report);
     }
 
     match cli.format {
         Format::Human => print_human(&reports),
         Format::Json => print_json(&reports)?,
+        _ => unreachable!("unknown format variant"),
     }
 
     Ok(if had_error {

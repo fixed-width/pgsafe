@@ -14,7 +14,7 @@ mod rules;
 mod suppression;
 mod txn;
 
-pub use output::{gate, FailOn};
+pub use output::{gate, lint_input, FailOn, FileReport, Format};
 
 /// Severity level of a [`Finding`], ordered by increasing severity
 /// (`Warning` < `Error`).

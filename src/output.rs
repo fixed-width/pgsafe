@@ -17,6 +17,48 @@ pub enum FailOn {
     Never,
 }
 
+/// Output format for the CLI.
+#[non_exhaustive]
+#[derive(Clone)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum Format {
+    /// Human-readable text.
+    Human,
+    /// Machine-readable JSON envelope.
+    Json,
+}
+
+/// Lint results for a single named input.
+#[non_exhaustive]
+#[derive(serde::Serialize)]
+pub struct FileReport {
+    /// The input's name (a file path, or `<stdin>`). Serialized as `"file"`.
+    #[serde(rename = "file")]
+    pub name: String,
+    /// Findings for this input, in source order.
+    pub findings: Vec<Finding>,
+    /// `Some` when the input could not be parsed; `findings` is then empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Lint one named input into a [`FileReport`], turning a parse failure into the
+/// report's `error` field instead of returning an error.
+pub fn lint_input(name: impl Into<String>, sql: &str) -> FileReport {
+    match crate::lint_sql(sql) {
+        Ok(findings) => FileReport {
+            name: name.into(),
+            findings,
+            error: None,
+        },
+        Err(e) => FileReport {
+            name: name.into(),
+            findings: Vec::new(),
+            error: Some(e.to_string()),
+        },
+    }
+}
+
 /// Whether `findings` should fail the run under `fail_on`.
 ///
 /// Suppressed findings never gate. This is the single definition of the
@@ -40,6 +82,24 @@ mod tests {
 
     fn findings(sql: &str) -> Vec<Finding> {
         crate::lint_sql(sql).unwrap()
+    }
+
+    #[test]
+    fn lint_input_reports_findings_for_valid_sql() {
+        let r = lint_input("m.sql", "CREATE INDEX i ON t (x);");
+        assert_eq!(r.name, "m.sql");
+        assert!(r.error.is_none());
+        assert!(r
+            .findings
+            .iter()
+            .any(|f| f.rule_id == "add-index-non-concurrent"));
+    }
+
+    #[test]
+    fn lint_input_captures_parse_errors() {
+        let r = lint_input("bad.sql", "ALTER TABLE;");
+        assert!(r.findings.is_empty());
+        assert!(r.error.as_deref().unwrap().contains("parse error"));
     }
 
     #[test]
