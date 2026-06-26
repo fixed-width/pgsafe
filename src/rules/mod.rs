@@ -22,6 +22,7 @@ pub(crate) trait Rule: Send + Sync {
 
 mod add_check_without_not_valid;
 mod add_column_not_null_no_default;
+mod add_column_volatile_default;
 mod add_fk_without_not_valid;
 mod add_index_non_concurrent;
 mod add_primary_key_without_index;
@@ -53,6 +54,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(add_unique_constraint::AddUniqueConstraint),
         Box::new(add_primary_key_without_index::AddPrimaryKeyWithoutIndex),
         Box::new(add_column_not_null_no_default::AddColumnNotNullNoDefault),
+        Box::new(add_column_volatile_default::AddColumnVolatileDefault),
     ]
 });
 
@@ -161,6 +163,7 @@ mod tests {
             "add-unique-constraint",
             "add-primary-key-without-index",
             "add-column-not-null-no-default",
+            "add-column-volatile-default",
         ];
         let warnings = ["rename", "drop-table", "drop-column", "truncate"];
         for id in errors {
@@ -197,6 +200,7 @@ mod tests {
                 "add-unique-constraint",
                 "add-primary-key-without-index",
                 "add-column-not-null-no-default",
+                "add-column-volatile-default",
             ]
         );
     }
