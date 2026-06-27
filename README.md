@@ -41,8 +41,8 @@ pgsafe --format json migration.sql | jq '.files[].findings[] | select(.severity 
 pgsafe --fail-on=error migration.sql   # only error-severity findings fail (exit 1)
 pgsafe --fail-on=never migration.sql   # report-only, never fails on findings
 
-# Treat each migration as running inside a transaction (Rails, Flyway, and most
-# migration tools wrap each migration implicitly), so CONCURRENTLY index ops are
+# Treat each migration as running inside a transaction (Rails, Flyway, and similar
+# tools wrap each migration implicitly), so CONCURRENTLY index ops are
 # flagged without an explicit BEGIN
 pgsafe --in-transaction migration.sql
 ```
