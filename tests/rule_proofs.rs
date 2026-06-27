@@ -73,10 +73,12 @@ use std::ops::RangeInclusive;
 
 use postgres::{Client, NoTls};
 
-/// One empirical proof. `setup` creates and seeds the objects (committed); `table` is the root
-/// object dropped for cleanup (CASCADE removes its dependents); `watch` is the relation whose lock
-/// + relfilenode are observed (often `table`, but e.g. the index for REINDEX or the matview for
-///   REFRESH). `pg` is the inclusive major-version range the case applies to.
+/// One empirical proof. `setup` creates and seeds the objects (committed); `table` is the object(s)
+/// dropped for cleanup — a comma-separated list when a case owns more than one (e.g. an FK's parent
+/// and child) — with `DROP TABLE IF EXISTS … CASCADE` removing dependents; `watch` is the relation
+/// whose lock + relfilenode are observed (often `table`, but e.g. the index for REINDEX or the matview
+/// for REFRESH); `also_watch` asserts a lock on a second relation. `pg` is the inclusive major-version
+/// range the case applies to.
 struct ProofCase {
     rule: &'static str,
     table: &'static str,
