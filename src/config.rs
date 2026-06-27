@@ -77,6 +77,7 @@ struct RawConfig {
     fail_on: Option<FailOn>,
     in_transaction: Option<bool>,
     format: Option<Format>,
+    since: Option<String>,
     #[serde(default)]
     rules: BTreeMap<String, RuleSetting>,
     #[serde(default)]
@@ -89,6 +90,8 @@ pub(crate) struct Config {
     pub fail_on: Option<FailOn>,
     pub in_transaction: Option<bool>,
     pub format: Option<Format>,
+    /// Cutoff path for `--since`-style filtering: lint only files whose path sorts after this.
+    pub since: Option<String>,
     disabled: BTreeSet<String>,            // global `[rules] = false`
     overrides: BTreeMap<String, Severity>, // global `[rules] = "sev"`
     ignores: Vec<(globset::GlobMatcher, BTreeSet<String>)>, // compiled glob -> ids ("*" expanded)
@@ -185,6 +188,7 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         fail_on: raw.fail_on,
         in_transaction: raw.in_transaction,
         format: raw.format,
+        since: raw.since,
         disabled,
         overrides,
         ignores,
@@ -246,6 +250,12 @@ mod tests {
             cfg.overrides().get("add-index-non-concurrent"),
             Some(&Severity::Warning)
         );
+    }
+
+    #[test]
+    fn parses_the_since_cutoff() {
+        let cfg = from_toml_str("since = \"db/migrate/0042.sql\"\n", KNOWN).unwrap();
+        assert_eq!(cfg.since.as_deref(), Some("db/migrate/0042.sql"));
     }
 
     #[test]

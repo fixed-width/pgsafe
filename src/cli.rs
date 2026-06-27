@@ -32,6 +32,14 @@ pub struct CommonArgs {
     /// Ignore any `.pgsafe.toml`; use built-in defaults + CLI flags only.
     #[arg(long)]
     pub no_config: bool,
+    /// Lint only the `.sql` files added/modified versus this git ref (e.g. `origin/main`).
+    /// Positional paths become a git pathspec scope (relative to the repo root); with no paths, the whole repository.
+    #[arg(long, value_name = "REF")]
+    pub git_diff: Option<String>,
+    /// Lint only migration files whose path sorts after this cutoff (the last legacy migration).
+    /// Also settable as `since = "..."` in `.pgsafe.toml`; this flag overrides it.
+    #[arg(long, value_name = "CUTOFF", conflicts_with = "git_diff")]
+    pub since: Option<String>,
 }
 
 /// The `pgsafe` binary's top-level parser.
@@ -59,11 +67,48 @@ pub fn run(args: CommonArgs) -> ExitCode {
         }
     };
 
-    let inputs = match read_inputs(&args.paths) {
-        Ok(i) => i,
-        Err(msg) => {
-            eprintln!("error: {msg}");
-            return ExitCode::from(2);
+    let inputs = match &args.git_diff {
+        Some(reference) => {
+            if args.paths.iter().any(|p| p == "-") {
+                eprintln!("error: `-` (stdin) cannot be combined with --git-diff");
+                return ExitCode::from(2);
+            }
+            let files = match crate::gitdiff::changed_sql_files(reference, &args.paths) {
+                Ok(f) => f,
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    return ExitCode::from(2);
+                }
+            };
+            match read_files(&files) {
+                Ok(i) => i,
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        None => {
+            // `--since` (CLI) or a config `since` filters the explicit file paths by full-path
+            // ordering, before reading. With no paths (stdin) `since` does not apply.
+            let effective_since = args.since.clone().or(config.since.clone());
+            let result = match effective_since {
+                Some(cutoff) if !args.paths.is_empty() => {
+                    let kept: Vec<PathBuf> = filter_since(&args.paths, &cutoff)
+                        .iter()
+                        .map(PathBuf::from)
+                        .collect();
+                    read_files(&kept)
+                }
+                _ => read_inputs(&args.paths),
+            };
+            match result {
+                Ok(i) => i,
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    return ExitCode::from(2);
+                }
+            }
         }
     };
 
@@ -182,10 +227,55 @@ fn read_inputs(paths: &[String]) -> Result<Vec<(String, String)>, String> {
     Ok(out)
 }
 
+/// Keep only paths that sort strictly after `cutoff` (lexicographic full-path comparison),
+/// so `--since` lints the new migrations and never the legacy ones (path <= cutoff).
+fn filter_since(paths: &[String], cutoff: &str) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|p| p.as_str() > cutoff)
+        .cloned()
+        .collect()
+}
+
+/// Read each path into a `(display-name, contents)` pair. Unlike `read_inputs`, an empty
+/// list yields no inputs — it never falls back to stdin, so `--git-diff` with no changed
+/// files lints nothing rather than blocking on stdin.
+fn read_files(paths: &[PathBuf]) -> Result<Vec<(String, String)>, String> {
+    let mut out = Vec::new();
+    for p in paths {
+        let sql = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+        out.push((p.display().to_string(), sql));
+    }
+    Ok(out)
+}
+
 fn read_stdin() -> Result<String, String> {
     let mut s = String::new();
     std::io::stdin()
         .read_to_string(&mut s)
         .map_err(|e| e.to_string())?;
     Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::filter_since;
+
+    #[test]
+    fn filter_since_keeps_paths_strictly_after_cutoff() {
+        let paths = vec![
+            "db/migrate/0001.sql".to_string(),
+            "db/migrate/0042_cut.sql".to_string(),
+            "db/migrate/0043.sql".to_string(),
+            "db/migrate/0100.sql".to_string(),
+        ];
+        let kept = filter_since(&paths, "db/migrate/0042_cut.sql");
+        assert_eq!(
+            kept,
+            vec![
+                "db/migrate/0043.sql".to_string(),
+                "db/migrate/0100.sql".to_string(),
+            ]
+        );
+    }
 }

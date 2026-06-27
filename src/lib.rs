@@ -23,6 +23,9 @@ pub mod cli;
 #[cfg(feature = "cli")]
 mod config;
 
+#[cfg(feature = "cli")]
+mod gitdiff;
+
 pub use output::{
     gate, lint_input, render_errors, render_finding_human, render_human, render_json, FailOn,
     FileReport, Format, SCHEMA_VERSION,
