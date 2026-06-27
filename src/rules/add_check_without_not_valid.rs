@@ -35,11 +35,15 @@ impl Rule for AddCheckWithoutNotValid {
 
 #[cfg(test)]
 mod tests {
-    use crate::lint_sql;
+    use crate::{lint_sql, LintOptions};
 
     #[test]
     fn flags_check_without_not_valid() {
-        let findings = lint_sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0)").unwrap();
+        let findings = lint_sql(
+            "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0)",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings
             .iter()
             .any(|f| f.rule_id == "add-check-without-not-valid"));
@@ -47,7 +51,11 @@ mod tests {
 
     #[test]
     fn ignores_check_with_not_valid() {
-        let findings = lint_sql("ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0) NOT VALID").unwrap();
+        let findings = lint_sql(
+            "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0) NOT VALID",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings
             .iter()
             .all(|f| f.rule_id != "add-check-without-not-valid"));

@@ -37,12 +37,12 @@ impl Rule for AddFkWithoutNotValid {
 
 #[cfg(test)]
 mod tests {
-    use crate::lint_sql;
+    use crate::{lint_sql, LintOptions};
 
     #[test]
     fn flags_fk_without_not_valid() {
         let sql = "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id)";
-        let findings = lint_sql(sql).unwrap();
+        let findings = lint_sql(sql, &LintOptions::default()).unwrap();
         assert!(findings
             .iter()
             .any(|f| f.rule_id == "add-fk-without-not-valid"));
@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn ignores_fk_with_not_valid() {
         let sql = "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id) NOT VALID";
-        let findings = lint_sql(sql).unwrap();
+        let findings = lint_sql(sql, &LintOptions::default()).unwrap();
         assert!(findings
             .iter()
             .all(|f| f.rule_id != "add-fk-without-not-valid"));

@@ -1,15 +1,15 @@
 //! Cross-statement transaction tracking: flag a CONCURRENTLY index operation
-//! inside an explicit `BEGIN ... COMMIT` block — PostgreSQL rejects `CONCURRENTLY`
+//! inside a transaction block — PostgreSQL rejects `CONCURRENTLY`
 //! in a transaction, so it fails at runtime. This is an engine-synthesized
-//! finding, not a registered `Rule`. Detection covers explicit transactions only.
+//! finding, not a registered `Rule`.
 
 use pg_query::protobuf::{ObjectType, RawStmt, ReindexStmt, TransactionStmtKind};
 use pg_query::NodeEnum;
 
 pub(crate) const ID: &str = "concurrently-in-transaction";
-pub(crate) const MESSAGE: &str = "CREATE/DROP INDEX CONCURRENTLY and REINDEX CONCURRENTLY cannot run \
-    inside a transaction block; this statement is inside an explicit BEGIN ... COMMIT and will fail \
-    at runtime.";
+pub(crate) const MESSAGE: &str =
+    "CREATE/DROP INDEX CONCURRENTLY and REINDEX CONCURRENTLY cannot run \
+    inside a transaction block; this statement runs inside a transaction and will fail at runtime.";
 pub(crate) const GUIDANCE: &str = "Run the CONCURRENTLY statement outside the transaction — put it in \
     its own migration, or move it before BEGIN / after COMMIT. (Note: many migration tools also wrap \
     each migration in an implicit transaction; disable that for this migration.)";
@@ -38,10 +38,13 @@ fn is_concurrently_index_op(node: &NodeEnum) -> bool {
     }
 }
 
-/// Statement indices that are a CONCURRENTLY index operation inside an explicit
-/// transaction block.
-pub(crate) fn concurrently_in_transaction_indices(stmts: &[RawStmt]) -> Vec<usize> {
-    let mut in_txn = false;
+/// Statement indices that are a CONCURRENTLY index operation inside a transaction block.
+/// `assume_in_transaction` seeds the initial state (for tools that wrap each migration implicitly).
+pub(crate) fn concurrently_in_transaction_indices(
+    stmts: &[RawStmt],
+    assume_in_transaction: bool,
+) -> Vec<usize> {
+    let mut in_txn = assume_in_transaction;
     let mut out = Vec::new();
     for (i, raw) in stmts.iter().enumerate() {
         let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
@@ -73,7 +76,10 @@ mod tests {
     use super::*;
 
     fn indices(sql: &str) -> Vec<usize> {
-        concurrently_in_transaction_indices(&pg_query::parse(sql).unwrap().protobuf.stmts)
+        concurrently_in_transaction_indices(&pg_query::parse(sql).unwrap().protobuf.stmts, false)
+    }
+    fn indices_assumed(sql: &str) -> Vec<usize> {
+        concurrently_in_transaction_indices(&pg_query::parse(sql).unwrap().protobuf.stmts, true)
     }
 
     #[test]
@@ -100,5 +106,23 @@ mod tests {
             indices("BEGIN; CREATE INDEX CONCURRENTLY i ON t (x); ROLLBACK;"),
             vec![1]
         );
+    }
+
+    #[test]
+    fn assume_in_transaction_flags_top_level_concurrently() {
+        // Top-level CONCURRENTLY is flagged when we assume a wrapping transaction…
+        assert_eq!(
+            indices_assumed("CREATE INDEX CONCURRENTLY i ON t (x);"),
+            vec![0]
+        );
+        // …but an explicit COMMIT exits the assumed transaction.
+        assert!(indices_assumed("COMMIT; CREATE INDEX CONCURRENTLY i ON t (x);").is_empty());
+        // An explicit BEGIN … COMMIT is still flagged with the flag on.
+        assert_eq!(
+            indices_assumed("BEGIN; CREATE INDEX CONCURRENTLY i ON t (x); COMMIT;"),
+            vec![1]
+        );
+        // Default (off) is unchanged: top-level is not flagged.
+        assert!(indices("CREATE INDEX CONCURRENTLY i ON t (x);").is_empty());
     }
 }

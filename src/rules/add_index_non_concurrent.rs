@@ -33,11 +33,11 @@ impl Rule for AddIndexNonConcurrent {
 
 #[cfg(test)]
 mod tests {
-    use crate::lint_sql;
+    use crate::{lint_sql, LintOptions};
 
     #[test]
     fn flags_plain_create_index() {
-        let findings = lint_sql("CREATE INDEX idx ON t (col)").unwrap();
+        let findings = lint_sql("CREATE INDEX idx ON t (col)", &LintOptions::default()).unwrap();
         assert!(findings
             .iter()
             .any(|f| f.rule_id == "add-index-non-concurrent"));
@@ -45,7 +45,11 @@ mod tests {
 
     #[test]
     fn ignores_concurrent_create_index() {
-        let findings = lint_sql("CREATE INDEX CONCURRENTLY idx ON t (col)").unwrap();
+        let findings = lint_sql(
+            "CREATE INDEX CONCURRENTLY idx ON t (col)",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings
             .iter()
             .all(|f| f.rule_id != "add-index-non-concurrent"));

@@ -41,47 +41,59 @@ impl Rule for Rename {
 
 #[cfg(test)]
 mod tests {
-    use crate::lint_sql;
+    use crate::{lint_sql, LintOptions};
 
     #[test]
     fn flags_table_rename() {
-        let findings = lint_sql("ALTER TABLE t RENAME TO t2").unwrap();
+        let findings = lint_sql("ALTER TABLE t RENAME TO t2", &LintOptions::default()).unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
     }
 
     #[test]
     fn flags_column_rename() {
-        let findings = lint_sql("ALTER TABLE t RENAME COLUMN a TO b").unwrap();
+        let findings = lint_sql(
+            "ALTER TABLE t RENAME COLUMN a TO b",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
     }
 
     #[test]
     fn flags_index_rename() {
-        let findings = lint_sql("ALTER INDEX idx RENAME TO idx2").unwrap();
+        let findings = lint_sql("ALTER INDEX idx RENAME TO idx2", &LintOptions::default()).unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
     }
 
     #[test]
     fn flags_constraint_rename() {
-        let findings = lint_sql("ALTER TABLE t RENAME CONSTRAINT ck TO ck2").unwrap();
+        let findings = lint_sql(
+            "ALTER TABLE t RENAME CONSTRAINT ck TO ck2",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
     }
 
     #[test]
     fn flags_view_rename() {
-        let findings = lint_sql("ALTER VIEW v RENAME TO v2").unwrap();
+        let findings = lint_sql("ALTER VIEW v RENAME TO v2", &LintOptions::default()).unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
     }
 
     #[test]
     fn flags_sequence_rename() {
-        let findings = lint_sql("ALTER SEQUENCE s RENAME TO s2").unwrap();
+        let findings = lint_sql("ALTER SEQUENCE s RENAME TO s2", &LintOptions::default()).unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
     }
 
     #[test]
     fn flags_matview_rename() {
-        let findings = lint_sql("ALTER MATERIALIZED VIEW m RENAME TO m2").unwrap();
+        let findings = lint_sql(
+            "ALTER MATERIALIZED VIEW m RENAME TO m2",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
     }
 }

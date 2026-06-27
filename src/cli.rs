@@ -51,7 +51,7 @@ pub fn run(args: CommonArgs) -> ExitCode {
 
     let reports: Vec<FileReport> = inputs
         .into_iter()
-        .map(|(name, sql)| lint_input(name, &sql))
+        .map(|(name, sql)| lint_input(name, &sql, &crate::LintOptions::default()))
         .collect();
 
     let had_error = reports.iter().any(|r| r.error.is_some());

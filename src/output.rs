@@ -47,8 +47,8 @@ pub struct FileReport {
 
 /// Lint one named input into a [`FileReport`], turning a parse failure into the
 /// report's `error` field instead of returning an error.
-pub fn lint_input(name: impl Into<String>, sql: &str) -> FileReport {
-    match crate::lint_sql(sql) {
+pub fn lint_input(name: impl Into<String>, sql: &str, options: &crate::LintOptions) -> FileReport {
+    match crate::lint_sql(sql, options) {
         Ok(findings) => FileReport {
             name: name.into(),
             findings,
@@ -152,12 +152,16 @@ mod tests {
     use super::*;
 
     fn findings(sql: &str) -> Vec<Finding> {
-        crate::lint_sql(sql).unwrap()
+        crate::lint_sql(sql, &crate::LintOptions::default()).unwrap()
     }
 
     #[test]
     fn lint_input_reports_findings_for_valid_sql() {
-        let r = lint_input("m.sql", "CREATE INDEX i ON t (x);");
+        let r = lint_input(
+            "m.sql",
+            "CREATE INDEX i ON t (x);",
+            &crate::LintOptions::default(),
+        );
         assert_eq!(r.name, "m.sql");
         assert!(r.error.is_none());
         assert!(r
@@ -168,7 +172,7 @@ mod tests {
 
     #[test]
     fn lint_input_captures_parse_errors() {
-        let r = lint_input("bad.sql", "ALTER TABLE;");
+        let r = lint_input("bad.sql", "ALTER TABLE;", &crate::LintOptions::default());
         assert!(r.findings.is_empty());
         assert!(r.error.as_deref().unwrap().contains("parse error"));
     }
@@ -200,7 +204,7 @@ mod tests {
 
     #[test]
     fn render_finding_human_has_id_severity_and_fix() {
-        let f = &lint_input("m.sql", "VACUUM FULL t;").findings[0];
+        let f = &lint_input("m.sql", "VACUUM FULL t;", &crate::LintOptions::default()).findings[0];
         let s = render_finding_human("m.sql", f);
         assert!(s.contains("error [vacuum-full-cluster]"));
         assert!(s.contains("  fix: "));
@@ -208,7 +212,11 @@ mod tests {
 
     #[test]
     fn render_json_is_the_versioned_envelope() {
-        let reports = vec![lint_input("<stdin>", "CREATE INDEX i ON t (x);")];
+        let reports = vec![lint_input(
+            "<stdin>",
+            "CREATE INDEX i ON t (x);",
+            &crate::LintOptions::default(),
+        )];
         let s = render_json(&reports).unwrap();
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
         assert_eq!(v["schema_version"], 1);
@@ -222,8 +230,12 @@ mod tests {
     #[test]
     fn render_errors_lists_parse_failures_only() {
         let reports = vec![
-            lint_input("ok.sql", "CREATE INDEX CONCURRENTLY i ON t (x);"),
-            lint_input("bad.sql", "ALTER TABLE;"),
+            lint_input(
+                "ok.sql",
+                "CREATE INDEX CONCURRENTLY i ON t (x);",
+                &crate::LintOptions::default(),
+            ),
+            lint_input("bad.sql", "ALTER TABLE;", &crate::LintOptions::default()),
         ];
         let s = render_errors(&reports);
         assert!(s.contains("bad.sql: parse error"));

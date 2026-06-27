@@ -1,7 +1,10 @@
-use pgsafe::lint_sql;
+use pgsafe::{lint_sql, LintOptions};
 
 fn fires(sql: &str, rule_id: &str) -> bool {
-    lint_sql(sql).unwrap().iter().any(|f| f.rule_id == rule_id)
+    lint_sql(sql, &LintOptions::default())
+        .unwrap()
+        .iter()
+        .any(|f| f.rule_id == rule_id)
 }
 
 #[test]
@@ -44,6 +47,7 @@ fn concurrently_in_txn_is_exempt_from_new_table_dropping() {
     // foo is new+empty, but a CONCURRENTLY op in a txn fails regardless → still fires.
     let fs = lint_sql(
         "BEGIN; CREATE TABLE foo (id int); CREATE INDEX CONCURRENTLY i ON foo (id); COMMIT;",
+        &LintOptions::default(),
     )
     .unwrap();
     assert!(fs
@@ -57,6 +61,7 @@ fn concurrently_in_txn_is_exempt_from_new_table_dropping() {
 fn concurrently_in_transaction_is_suppressible() {
     let fs = lint_sql(
         "BEGIN;\n-- pgsafe:ignore concurrently-in-transaction  tool runs outside a txn\nCREATE INDEX CONCURRENTLY i ON t (x);\nCOMMIT;",
+        &LintOptions::default(),
     )
     .unwrap();
     let f = fs

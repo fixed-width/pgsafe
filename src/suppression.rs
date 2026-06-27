@@ -478,7 +478,7 @@ mod tests {
     }
 
     fn resolved(sql: &str) -> Vec<Finding> {
-        crate::lint_sql(sql).unwrap()
+        crate::lint_sql(sql, &crate::LintOptions::default()).unwrap()
     }
     fn ids(fs: &[Finding]) -> Vec<&str> {
         fs.iter().map(|f| f.rule_id.as_str()).collect()
@@ -564,6 +564,7 @@ mod tests {
     fn duplicate_directive_for_same_rule_is_not_unused() {
         let fs = crate::lint_sql(
             "-- pgsafe:ignore drop-table  reason one\nDROP TABLE x;  -- pgsafe:ignore drop-table  reason two",
+            &crate::LintOptions::default(),
         )
         .unwrap();
         assert!(fs
@@ -575,9 +576,11 @@ mod tests {
     }
     #[test]
     fn multiline_block_comment_directive_attaches() {
-        let fs =
-            crate::lint_sql("/* pgsafe:ignore drop-table\n   confirmed empty */\nDROP TABLE x;")
-                .unwrap();
+        let fs = crate::lint_sql(
+            "/* pgsafe:ignore drop-table\n   confirmed empty */\nDROP TABLE x;",
+            &crate::LintOptions::default(),
+        )
+        .unwrap();
         assert!(fs
             .iter()
             .find(|f| f.rule_id == "drop-table")
@@ -587,8 +590,11 @@ mod tests {
 
     #[test]
     fn suppressed_finding_location_points_at_the_statement_not_the_directive() {
-        let fs =
-            crate::lint_sql("-- pgsafe:ignore drop-table  confirmed empty\nDROP TABLE x;").unwrap();
+        let fs = crate::lint_sql(
+            "-- pgsafe:ignore drop-table  confirmed empty\nDROP TABLE x;",
+            &crate::LintOptions::default(),
+        )
+        .unwrap();
         let dt = fs.iter().find(|f| f.rule_id == "drop-table").unwrap();
         assert!(dt.is_suppressed());
         assert_eq!(

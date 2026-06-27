@@ -108,6 +108,16 @@ impl Finding {
     }
 }
 
+/// Options that adjust linting beyond the default static analysis.
+#[non_exhaustive]
+#[derive(Debug, Clone, Default)]
+pub struct LintOptions {
+    /// Treat the input as already running inside a transaction (e.g. a migration tool that wraps
+    /// each migration implicitly), so `CONCURRENTLY` index operations are flagged even without an
+    /// explicit `BEGIN`. Default `false`.
+    pub assume_in_transaction: bool,
+}
+
 /// Error returned when `pgsafe` cannot process the provided SQL.
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
@@ -135,7 +145,7 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
     (line, column)
 }
 
-/// Lints one or more SQL statements and returns every safety finding.
+/// Lint `sql` under `options`, returning findings in source order.
 ///
 /// The SQL is parsed with the real PostgreSQL parser, so `sql` must be valid
 /// PostgreSQL syntax.  Every statement in the input is checked against all
@@ -146,10 +156,13 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 ///
 /// # Examples
 /// ```
-/// let findings = pgsafe::lint_sql("CREATE INDEX i ON t (x)").unwrap();
+/// let findings = pgsafe::lint_sql(
+///     "CREATE INDEX i ON t (x)",
+///     &pgsafe::LintOptions::default(),
+/// ).unwrap();
 /// assert!(!findings.is_empty());
 /// ```
-pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
+pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintError> {
     let parsed = pg_query::parse(sql).map_err(|e| LintError::Parse(e.to_string()))?;
     let stmts = &parsed.protobuf.stmts;
     let comments = suppression::scan_comments(sql)?;
@@ -189,7 +202,7 @@ pub fn lint_sql(sql: &str) -> Result<Vec<Finding>, LintError> {
         }
     }
     let (mut findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);
-    for i in txn::concurrently_in_transaction_indices(stmts) {
+    for i in txn::concurrently_in_transaction_indices(stmts, options.assume_in_transaction) {
         let g = &geoms[i];
         let (line, column) = line_col(sql, g.start);
         findings.push(Finding {
@@ -230,28 +243,37 @@ mod tests {
 
     #[test]
     fn empty_string_returns_no_findings() {
-        assert_eq!(lint_sql("").unwrap(), Vec::new());
+        assert_eq!(lint_sql("", &LintOptions::default()).unwrap(), Vec::new());
     }
 
     #[test]
     fn comment_only_returns_no_findings() {
-        assert_eq!(lint_sql("-- just a comment\n").unwrap(), Vec::new());
+        assert_eq!(
+            lint_sql("-- just a comment\n", &LintOptions::default()).unwrap(),
+            Vec::new()
+        );
     }
 
     #[test]
     fn valid_sql_returns_no_findings() {
-        assert_eq!(lint_sql("SELECT 1").unwrap(), Vec::new());
+        assert_eq!(
+            lint_sql("SELECT 1", &LintOptions::default()).unwrap(),
+            Vec::new()
+        );
     }
 
     #[test]
     fn invalid_sql_is_parse_error() {
-        assert!(matches!(lint_sql("ALTER TABLE"), Err(LintError::Parse(_))));
+        assert!(matches!(
+            lint_sql("ALTER TABLE", &LintOptions::default()),
+            Err(LintError::Parse(_))
+        ));
     }
 
     #[test]
     fn engine_finding_order_and_positional_enrichment() {
         let sql = "CREATE INDEX i ON t (x);\n\nALTER TABLE t ALTER COLUMN a TYPE bigint, ALTER COLUMN a SET NOT NULL;\n";
-        let f = lint_sql(sql).unwrap();
+        let f = lint_sql(sql, &LintOptions::default()).unwrap();
 
         // Order: statement source order, then registry order within a statement.
         // set-not-null is registered before alter-column-type, so it comes first.
@@ -288,7 +310,7 @@ mod tests {
 
     #[test]
     fn findings_json_round_trip() {
-        let findings = lint_sql("CREATE INDEX i ON t (x)").unwrap();
+        let findings = lint_sql("CREATE INDEX i ON t (x)", &LintOptions::default()).unwrap();
         let json = serde_json::to_string(&findings).unwrap();
         let back: Vec<Finding> = serde_json::from_str(&json).unwrap();
         assert_eq!(findings, back);
@@ -296,7 +318,7 @@ mod tests {
 
     #[test]
     fn suppression_field_defaults_to_none_and_is_omitted_from_json() {
-        let f = &lint_sql("CREATE INDEX i ON t (x)").unwrap()[0];
+        let f = &lint_sql("CREATE INDEX i ON t (x)", &LintOptions::default()).unwrap()[0];
         assert!(!f.is_suppressed());
         let json = serde_json::to_string(f).unwrap();
         assert!(
@@ -307,12 +329,33 @@ mod tests {
 
     #[test]
     fn suppression_round_trips_when_present() {
-        let mut f = lint_sql("CREATE INDEX i ON t (x)").unwrap().remove(0);
+        let mut f = lint_sql("CREATE INDEX i ON t (x)", &LintOptions::default())
+            .unwrap()
+            .remove(0);
         f.suppression = Some(Suppression {
             reason: "off-peak deploy".into(),
         });
         assert!(f.is_suppressed());
         let back: Finding = serde_json::from_str(&serde_json::to_string(&f).unwrap()).unwrap();
         assert_eq!(back.suppression.unwrap().reason, "off-peak deploy");
+    }
+
+    #[test]
+    fn assume_in_transaction_flags_top_level_concurrently() {
+        let sql = "CREATE INDEX CONCURRENTLY i ON t (x)";
+        let on = lint_sql(
+            sql,
+            &LintOptions {
+                assume_in_transaction: true,
+            },
+        )
+        .unwrap();
+        assert!(on
+            .iter()
+            .any(|f| f.rule_id == "concurrently-in-transaction"));
+        let off = lint_sql(sql, &LintOptions::default()).unwrap();
+        assert!(!off
+            .iter()
+            .any(|f| f.rule_id == "concurrently-in-transaction"));
     }
 }
