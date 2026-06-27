@@ -122,8 +122,9 @@ Each rule is `error` or `warning`:
 - **`error`** — the statement takes a lock that blocks concurrent access, rewrites/validates the
   table, or fails outright, **and a standard rewrite avoids it** (`CONCURRENTLY`, `NOT VALID` →
   `VALIDATE`, `USING INDEX`, a two-step). These are the avoidable outages.
-- **`warning`** — an intentional destructive op (`DROP TABLE` / `DROP COLUMN` / `TRUNCATE`) or an
-  app-compatibility heads-up (`RENAME`), where no lock-avoiding rewrite applies.
+- **`warning`** — an intentional destructive op (`DROP TABLE` / `DROP COLUMN` / `TRUNCATE`), an
+  app-compatibility heads-up (`RENAME`), or a schema-design issue (a `json` column, a small-int
+  primary key) — cases where no lock-avoiding rewrite applies.
 
 `--fail-on` controls which severities fail the run: `warning` (default — any finding fails),
 `error` (only errors fail; warnings are printed but exit `0`), or `never` (report-only). Parse

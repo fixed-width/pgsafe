@@ -40,16 +40,26 @@ impl Rule for PreferBigintPrimaryKey {
                 pk_names.insert(col.colname.clone()); // column-level `... PRIMARY KEY`
             }
         }
-        if let NodeEnum::CreateStmt(c) = node {
-            // table-level `PRIMARY KEY (a, b)` constraint among the table elements
-            for elt in &c.table_elts {
-                if let Some(NodeEnum::Constraint(con)) = elt.node.as_ref() {
-                    if ConstrType::try_from(con.contype) == Ok(ConstrType::ConstrPrimary) {
-                        for key in &con.keys {
-                            if let Some(NodeEnum::String(s)) = key.node.as_ref() {
-                                pk_names.insert(s.sval.clone());
-                            }
-                        }
+        // Table-level `PRIMARY KEY (a, b)` — among CREATE TABLE elements, or an ALTER TABLE
+        // ADD CONSTRAINT command (so `ADD COLUMN id int, ADD PRIMARY KEY (id)` in one statement,
+        // where the column's type IS visible, is also caught).
+        let table_level_constraints = match node {
+            NodeEnum::CreateStmt(c) => c
+                .table_elts
+                .iter()
+                .filter_map(|elt| match elt.node.as_ref()? {
+                    NodeEnum::Constraint(con) => Some(con.as_ref()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            NodeEnum::AlterTableStmt(_) => super::constraints_being_added(node),
+            _ => Vec::new(),
+        };
+        for con in table_level_constraints {
+            if ConstrType::try_from(con.contype) == Ok(ConstrType::ConstrPrimary) {
+                for key in &con.keys {
+                    if let Some(NodeEnum::String(s)) = key.node.as_ref() {
+                        pk_names.insert(s.sval.clone());
                     }
                 }
             }
@@ -60,8 +70,9 @@ impl Rule for PreferBigintPrimaryKey {
                 if let Some(ty) = super::column_base_type(col) {
                     if SMALL_INT_TYPES.contains(&ty.as_str()) {
                         out.push(RuleHit {
-                            message: "An int4 PRIMARY KEY overflows at ~2.1 billion rows (int2 at \
-                                      ~32 thousand) — a hard outage once ids run out, with no online fix."
+                            message: "A small-integer PRIMARY KEY overflows its id space (int4 at \
+                                      ~2.1 billion rows, int2 at ~32 thousand) — a hard outage once \
+                                      ids run out, with no online fix."
                                 .into(),
                             guidance: "Use `bigint`/`bigserial`, or `GENERATED ALWAYS AS IDENTITY`. \
                                        Migrating a live int primary key to bigint later is a major, \
@@ -103,6 +114,13 @@ mod tests {
     #[test]
     fn flags_add_column_serial_pk() {
         assert!(fires("ALTER TABLE t ADD COLUMN id serial PRIMARY KEY"));
+    }
+    #[test]
+    fn flags_compound_add_column_with_table_level_pk() {
+        // The column is added and made a PK in the same statement — its type IS visible.
+        assert!(fires(
+            "ALTER TABLE t ADD COLUMN id int, ADD PRIMARY KEY (id)"
+        ));
     }
     #[test]
     fn ignores_bigint_and_bigserial_pk() {
