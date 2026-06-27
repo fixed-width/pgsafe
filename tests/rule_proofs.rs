@@ -503,3 +503,85 @@ fn rules_hold_against_real_postgres() {
         failures.join("\n")
     );
 }
+
+/// A statement the linter flags because it fails outright on a populated table.
+struct FailureCase {
+    rule: &'static str,
+    table: &'static str,
+    setup: &'static str,
+    ddl: &'static str,
+    sqlstate: &'static str,
+    pg: RangeInclusive<u32>,
+}
+
+fn failure_cases() -> Vec<FailureCase> {
+    vec![FailureCase {
+        rule: "add-column-not-null-no-default",
+        table: "proof_nn_fail",
+        setup: "CREATE TABLE proof_nn_fail (id int); \
+                INSERT INTO proof_nn_fail SELECT g FROM generate_series(1, 3) g;",
+        ddl: "ALTER TABLE proof_nn_fail ADD COLUMN x int NOT NULL",
+        sqlstate: "23502",
+        pg: 14..=18,
+    }]
+}
+
+#[test]
+#[ignore = "requires DATABASE_URL pointing at a throwaway Postgres (run with --ignored)"]
+fn statements_fail_as_claimed() {
+    let mut client = connect();
+    let major = server_major(
+        client
+            .query_one("SELECT current_setting('server_version_num')::int", &[])
+            .expect("read server_version_num")
+            .get::<_, i32>(0),
+    );
+
+    let mut ran = 0;
+    let mut failures = Vec::new();
+    println!("\n=== pgsafe failure proofs (PostgreSQL {major}) ===");
+    for case in failure_cases() {
+        if !case.pg.contains(&major) {
+            println!("  SKIP {:<34} (out of pg range)", case.rule);
+            continue;
+        }
+        ran += 1;
+        let t = case.table;
+        client
+            .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+            .expect("drop pre-existing");
+        client.batch_execute(case.setup).expect("setup");
+
+        // Run the flagged DDL in autocommit; it must fail with the claimed SQLSTATE.
+        let got = match client.batch_execute(case.ddl) {
+            Ok(()) => "(succeeded)".to_string(),
+            Err(e) => e
+                .code()
+                .map(|c| c.code().to_string())
+                .unwrap_or_else(|| "(no sqlstate)".to_string()),
+        };
+        let ok = got == case.sqlstate;
+        println!(
+            "  {} {:<34} sqlstate={}",
+            if ok { "OK  " } else { "FAIL" },
+            case.rule,
+            got
+        );
+        if !ok {
+            failures.push(format!(
+                "{}: expected failure SQLSTATE {}, got {}",
+                case.rule, case.sqlstate, got
+            ));
+        }
+
+        client
+            .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+            .expect("drop");
+    }
+    assert!(ran > 0, "no failure cases applied to PostgreSQL {major}");
+    assert!(
+        failures.is_empty(),
+        "failure proofs failed on PostgreSQL {major}:\n{}",
+        failures.join("\n")
+    );
+}
