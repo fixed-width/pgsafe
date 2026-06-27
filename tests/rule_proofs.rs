@@ -21,9 +21,10 @@ fn lock_strength(mode: &str) -> u8 {
 }
 
 /// The major version from `server_version_num` (PG10+: `MMmmpp`, e.g. 160003 -> 16).
-#[allow(clippy::cast_sign_loss)]
 fn server_major(version_num: i32) -> u32 {
-    (version_num / 10_000) as u32
+    // try_from avoids a sign-losing `as` cast; server_version_num is always non-negative,
+    // so the impossible negative case falls back to 0.
+    u32::try_from(version_num / 10_000).unwrap_or(0)
 }
 
 #[test]
