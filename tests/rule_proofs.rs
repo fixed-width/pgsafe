@@ -27,6 +27,27 @@ fn server_major(version_num: i32) -> u32 {
     u32::try_from(version_num / 10_000).unwrap_or(0)
 }
 
+/// The effect of a DDL on the watched relation's storage, derived from its `relfilenode`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RewriteOutcome {
+    /// Same relfilenode — no table rewrite (e.g. a metadata-only change).
+    Unchanged,
+    /// New relfilenode — the relation was rewritten/rebuilt.
+    Changed,
+    /// The relation no longer exists (e.g. DROP TABLE).
+    Gone,
+}
+
+/// Classify the rewrite from the watched relation's relfilenode before the DDL and after it
+/// (`after` is `None` when the relation no longer exists).
+fn classify_rewrite(before: u32, after: Option<u32>) -> RewriteOutcome {
+    match after {
+        None => RewriteOutcome::Gone,
+        Some(a) if a != before => RewriteOutcome::Changed,
+        Some(_) => RewriteOutcome::Unchanged,
+    }
+}
+
 #[test]
 fn lock_strength_orders_modes() {
     assert!(lock_strength("AccessExclusiveLock") > lock_strength("ShareLock"));
@@ -41,65 +62,78 @@ fn server_major_extracts_major_version() {
     assert_eq!(server_major(180000), 18);
 }
 
+#[test]
+fn classify_rewrite_distinguishes_outcomes() {
+    assert_eq!(classify_rewrite(100, Some(100)), RewriteOutcome::Unchanged);
+    assert_eq!(classify_rewrite(100, Some(200)), RewriteOutcome::Changed);
+    assert_eq!(classify_rewrite(100, None), RewriteOutcome::Gone);
+}
+
 use std::ops::RangeInclusive;
 
 use postgres::{Client, NoTls};
 
-/// One empirical proof: run `ddl` against a freshly-seeded `table` and assert the observed
-/// lock mode and rewrite match. `setup` creates and seeds `table` (committed). `pg` is the
-/// inclusive major-version range the case applies to.
+/// One empirical proof. `setup` creates and seeds the objects (committed); `table` is the root
+/// object dropped for cleanup (CASCADE removes its dependents); `watch` is the relation whose lock
+/// + relfilenode are observed (often `table`, but e.g. the index for REINDEX or the matview for
+///   REFRESH). `pg` is the inclusive major-version range the case applies to.
 struct ProofCase {
     rule: &'static str,
     table: &'static str,
+    watch: &'static str,
     setup: &'static str,
     ddl: &'static str,
     expect_lock: &'static str,
-    expect_rewrite: bool,
+    expect_rewrite: RewriteOutcome,
     pg: RangeInclusive<u32>,
 }
 
 /// The v0 proof cases. The final entry is a *control*: a strong-lock statement that does NOT
-/// rewrite, proving the rewrite detector discriminates (it must observe `rewrite = false`).
+/// rewrite, proving the rewrite detector discriminates (it must observe `rewrite = Unchanged`).
 fn cases() -> Vec<ProofCase> {
     vec![
         ProofCase {
             rule: "add-index-non-concurrent",
             table: "proof_add_index",
+            watch: "proof_add_index",
             setup: "CREATE TABLE proof_add_index (c int); \
                     INSERT INTO proof_add_index SELECT g FROM generate_series(1, 3) g;",
             ddl: "CREATE INDEX proof_add_index_ix ON proof_add_index (c)",
             expect_lock: "ShareLock",
-            expect_rewrite: false,
+            expect_rewrite: RewriteOutcome::Unchanged,
             pg: 14..=18,
         },
         ProofCase {
             rule: "alter-column-type",
             table: "proof_alter_type",
+            watch: "proof_alter_type",
             setup: "CREATE TABLE proof_alter_type (c int); \
                     INSERT INTO proof_alter_type SELECT g FROM generate_series(1, 3) g;",
             ddl: "ALTER TABLE proof_alter_type ALTER COLUMN c TYPE bigint",
             expect_lock: "AccessExclusiveLock",
-            expect_rewrite: true,
+            expect_rewrite: RewriteOutcome::Changed,
             pg: 14..=18,
         },
         ProofCase {
             rule: "add-column-volatile-default",
             table: "proof_vol_default",
+            watch: "proof_vol_default",
             setup: "CREATE TABLE proof_vol_default (id int); \
                     INSERT INTO proof_vol_default SELECT g FROM generate_series(1, 3) g;",
             ddl: "ALTER TABLE proof_vol_default ADD COLUMN u uuid DEFAULT gen_random_uuid()",
             expect_lock: "AccessExclusiveLock",
-            expect_rewrite: true,
+            expect_rewrite: RewriteOutcome::Changed,
             pg: 14..=18,
         },
         ProofCase {
             rule: "(control: strong lock, no rewrite)",
             table: "proof_control",
+            watch: "proof_control",
             setup: "CREATE TABLE proof_control (id int); \
                     INSERT INTO proof_control SELECT g FROM generate_series(1, 3) g;",
             ddl: "ALTER TABLE proof_control ADD COLUMN c int",
             expect_lock: "AccessExclusiveLock",
-            expect_rewrite: false,
+            expect_rewrite: RewriteOutcome::Unchanged,
             pg: 14..=18,
         },
     ]
@@ -108,7 +142,7 @@ fn cases() -> Vec<ProofCase> {
 /// What the harness observed for one case.
 struct Observed {
     lock: String,
-    rewrite: bool,
+    rewrite: RewriteOutcome,
 }
 
 /// Connect to `DATABASE_URL` (NoTls — throwaway local/CI Postgres only).
@@ -118,40 +152,40 @@ fn connect() -> Client {
     Client::connect(&url, NoTls).expect("connect to DATABASE_URL")
 }
 
-/// Read the current `relfilenode` of the relation with the given oid.
-fn relfilenode(c: &mut Client, oid: u32) -> u32 {
-    c.query_one("SELECT relfilenode FROM pg_class WHERE oid = $1", &[&oid])
+/// The current relfilenode of the relation with the given oid, or `None` if it no longer exists.
+fn relfilenode(c: &mut Client, oid: u32) -> Option<u32> {
+    c.query_opt("SELECT relfilenode FROM pg_class WHERE oid = $1", &[&oid])
         .expect("read relfilenode")
-        .get::<_, u32>(0)
+        .map(|row| row.get::<_, u32>(0))
 }
 
 /// Run one proof case: seed (committed), run the DDL in an open transaction, read the held
 /// lock from the observer session and the rewrite from the actor session, then roll back and
 /// drop the throwaway table.
 fn run_case(actor: &mut Client, observer: &mut Client, case: &ProofCase) -> Observed {
-    let t = case.table;
+    let root = case.table;
     actor
-        .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+        .batch_execute(&format!("DROP TABLE IF EXISTS {root} CASCADE"))
         .expect("drop pre-existing");
     actor.batch_execute(case.setup).expect("setup");
 
-    // Stable identifiers for the target table (committed schema).
+    // Resolve the watched relation's oid BEFORE the transaction so it survives a drop.
     let oid: u32 = actor
-        .query_one(&format!("SELECT '{t}'::regclass::oid"), &[])
-        .expect("resolve table oid")
+        .query_one(&format!("SELECT '{}'::regclass::oid", case.watch), &[])
+        .expect("resolve watch oid")
         .get::<_, u32>(0);
     let pid: i32 = actor
         .query_one("SELECT pg_backend_pid()", &[])
         .expect("backend pid")
         .get::<_, i32>(0);
-    let rel_before = relfilenode(actor, oid);
+    let rel_before = relfilenode(actor, oid).expect("watched relation exists before the ddl");
 
     // Act: run the flagged DDL in an OPEN transaction so the lock stays held.
     actor.batch_execute("BEGIN").expect("begin");
     actor.batch_execute(case.ddl).expect("run flagged ddl");
-    let rel_after = relfilenode(actor, oid);
+    let rewrite = classify_rewrite(rel_before, relfilenode(actor, oid));
 
-    // Observe the strongest relation lock the actor holds on the table, from a 2nd session.
+    // Observe the strongest relation lock the actor holds on the watched relation.
     let lock = observer
         .query(
             "SELECT mode FROM pg_locks \
@@ -162,17 +196,19 @@ fn run_case(actor: &mut Client, observer: &mut Client, case: &ProofCase) -> Obse
         .iter()
         .map(|r| r.get::<_, String>(0))
         .max_by_key(|m| lock_strength(m))
-        .unwrap_or_else(|| panic!("no relation lock observed on {t} for backend {pid}"));
+        .unwrap_or_else(|| {
+            panic!(
+                "no relation lock observed on {} for backend {pid}",
+                case.watch
+            )
+        });
 
     actor.batch_execute("ROLLBACK").expect("rollback");
     actor
-        .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+        .batch_execute(&format!("DROP TABLE IF EXISTS {root} CASCADE"))
         .expect("drop");
 
-    Observed {
-        lock,
-        rewrite: rel_after != rel_before,
-    }
+    Observed { lock, rewrite }
 }
 
 #[test]
@@ -200,7 +236,7 @@ fn rules_hold_against_real_postgres() {
         let lock_ok = obs.lock == case.expect_lock;
         let rewrite_ok = obs.rewrite == case.expect_rewrite;
         println!(
-            "  {} {:<34} lock={} rewrite={}",
+            "  {} {:<34} lock={} rewrite={:?}",
             if lock_ok && rewrite_ok {
                 "OK  "
             } else {
@@ -218,7 +254,7 @@ fn rules_hold_against_real_postgres() {
         }
         if !rewrite_ok {
             failures.push(format!(
-                "{}: rewrite expected {}, observed {}",
+                "{}: rewrite expected {:?}, observed {:?}",
                 case.rule, case.expect_rewrite, obs.rewrite
             ));
         }
