@@ -108,6 +108,7 @@ pgsafe migrations/*.sql || exit 1
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
 | `add-exclusion-constraint` | error | Adding an `EXCLUDE` constraint builds an index under an `ACCESS EXCLUSIVE` lock, scanning the whole table |
 | `prefer-jsonb` | warning | A `json` column has no equality/ordering operators (`SELECT DISTINCT`/`GROUP BY` fail); use `jsonb` |
+| `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
 | `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
 
 By default `concurrently-in-transaction` detects explicit `BEGIN … COMMIT` blocks in the SQL.
