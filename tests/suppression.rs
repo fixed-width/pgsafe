@@ -17,7 +17,9 @@ fn active_count(sql: &str) -> usize {
 
 #[test]
 fn suppressed_finding_is_present_but_not_active() {
-    let sql = "-- pgsafe:ignore drop-table  empty, confirmed off-peak\nDROP TABLE x;";
+    // SET lock_timeout prevents require-timeout; only drop-table fires (suppressed).
+    let sql =
+        "SET lock_timeout = '5s';\n-- pgsafe:ignore drop-table  empty, confirmed off-peak\nDROP TABLE x;";
     assert!(lint_sql(sql, &LintOptions::default())
         .unwrap()
         .iter()
@@ -54,8 +56,11 @@ fn string_literal_lookalike_is_not_a_directive() {
 }
 #[test]
 fn trailing_directive_suppresses() {
+    // SET lock_timeout prevents require-timeout; only drop-table fires (suppressed).
     assert_eq!(
-        active_count("DROP TABLE x;  -- pgsafe:ignore drop-table  one-off cleanup"),
+        active_count(
+            "SET lock_timeout = '5s';\nDROP TABLE x;  -- pgsafe:ignore drop-table  one-off cleanup"
+        ),
         0
     );
 }

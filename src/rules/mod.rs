@@ -3,7 +3,7 @@
 use std::sync::LazyLock;
 
 use pg_query::protobuf::{
-    AlterTableCmd, AlterTableType, ColumnDef, ConstrType, Constraint, DefElem,
+    AlterTableCmd, AlterTableType, ColumnDef, ConstrType, Constraint, DefElem, ReindexStmt,
 };
 use pg_query::NodeEnum;
 
@@ -164,6 +164,14 @@ fn constraints_being_added(node: &NodeEnum) -> Vec<&Constraint> {
             _ => None,
         })
         .collect()
+}
+
+/// A `REINDEX ... CONCURRENTLY` (a `concurrently` option that is true).
+pub(crate) fn reindex_is_concurrent(r: &ReindexStmt) -> bool {
+    r.params.iter().any(|p| {
+        matches!(p.node.as_ref(), Some(NodeEnum::DefElem(de))
+            if de.defname == "concurrently" && defelem_is_true(de))
+    })
 }
 
 /// Mirrors PostgreSQL's `defGetBoolean`: a `DefElem` with no `arg` (flag present but no

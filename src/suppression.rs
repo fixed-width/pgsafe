@@ -554,9 +554,17 @@ mod tests {
     #[test]
     fn returned_order_is_statement_then_hygiene() {
         let fs = resolved("DROP TABLE a;\n-- pgsafe:ignore truncate  stale\nDROP TABLE b;");
+        // rule-loop findings precede engine-synthesized ones within each statement;
+        // hygiene diagnostics follow all statement findings.
         assert_eq!(
             ids(&fs),
-            vec!["drop-table", "drop-table", "suppression-unused"]
+            vec![
+                "drop-table",
+                "require-timeout",
+                "drop-table",
+                "require-timeout",
+                "suppression-unused",
+            ]
         );
     }
 
