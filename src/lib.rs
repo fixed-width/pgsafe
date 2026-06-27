@@ -20,6 +20,9 @@ mod txn;
 #[cfg(feature = "cli")]
 pub mod cli;
 
+#[cfg(feature = "cli")]
+mod config;
+
 pub use output::{
     gate, lint_input, render_errors, render_finding_human, render_human, render_json, FailOn,
     FileReport, Format, SCHEMA_VERSION,

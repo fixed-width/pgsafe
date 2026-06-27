@@ -9,7 +9,8 @@ pub const SCHEMA_VERSION: u32 = 1;
 
 /// Minimum finding severity that fails the run (maps to exit code 1).
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum FailOn {
     /// Fail only on error-severity findings.
@@ -22,7 +23,8 @@ pub enum FailOn {
 
 /// Output format for the CLI.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
 pub enum Format {
     /// Human-readable text.
