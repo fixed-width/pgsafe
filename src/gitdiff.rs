@@ -42,7 +42,9 @@ fn repo_root() -> Result<PathBuf, String> {
 /// Both git commands run anchored at `root` so their paths share one namespace and the
 /// result is correct regardless of the caller's working directory.
 fn changed_names(root: &Path, reference: &str, scope: &[String]) -> Result<Vec<String>, String> {
-    let mut diff_args = vec!["diff", "--name-only", "--diff-filter=ACMR", reference];
+    // `-z` makes git NUL-terminate names and never quote them, so paths with spaces or
+    // non-ASCII characters come through verbatim instead of as `"db/mig\303\251.sql"`.
+    let mut diff_args = vec!["diff", "--name-only", "-z", "--diff-filter=ACMR", reference];
     if !scope.is_empty() {
         diff_args.push("--");
         diff_args.extend(scope.iter().map(String::as_str));
@@ -54,16 +56,17 @@ fn changed_names(root: &Path, reference: &str, scope: &[String]) -> Result<Vec<S
         )
     })?;
 
-    let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
+    let mut ls_args = vec!["ls-files", "--others", "--exclude-standard", "-z"];
     if !scope.is_empty() {
         ls_args.push("--");
         ls_args.extend(scope.iter().map(String::as_str));
     }
     let ls_out = run_git(Some(root), &ls_args)?;
 
+    // `-z` output is NUL-separated (with a trailing NUL), so split on '\0', not lines.
     let mut names: Vec<String> = diff_out
-        .lines()
-        .chain(ls_out.lines())
+        .split('\0')
+        .chain(ls_out.split('\0'))
         .filter(|l| !l.is_empty())
         .map(|l| l.to_owned())
         .collect();

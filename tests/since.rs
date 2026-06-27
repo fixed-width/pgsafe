@@ -89,3 +89,20 @@ fn since_and_git_diff_are_mutually_exclusive() {
     .failure()
     .code(2); // clap conflicts_with → usage error
 }
+
+#[test]
+fn since_rejects_stdin() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("m.sql"), "DROP TABLE a;\n").unwrap();
+    // Explicit --since with `-` in the paths.
+    run_in(dir.path(), &["--since", "0001.sql", "m.sql", "-"])
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("stdin"));
+    // A config `since` cutoff also rejects stdin, and the message mentions `since`.
+    fs::write(dir.path().join(".pgsafe.toml"), "since = \"0001.sql\"\n").unwrap();
+    run_in(dir.path(), &["m.sql", "-"])
+        .failure()
+        .code(2)
+        .stderr(predicate::str::contains("since"));
+}

@@ -155,3 +155,15 @@ fn works_from_a_subdirectory_with_untracked_file() {
         .code(1)
         .stdout(predicate::str::contains("drop-table"));
 }
+
+#[test]
+fn finds_a_changed_file_with_a_space_in_the_name() {
+    // git quotes names with spaces/non-ASCII unless `-z` is used; without the fix this
+    // file's `.sql` extension is hidden behind a trailing quote and it is dropped.
+    let dir = repo_with_base("0001_base.sql", "CREATE TABLE t (id bigint);\n");
+    fs::write(dir.path().join("0002 new.sql"), "DROP TABLE t;\n").unwrap();
+    pgsafe(dir.path(), &["--git-diff", "HEAD"])
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("drop-table"));
+}

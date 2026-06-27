@@ -92,6 +92,14 @@ pub fn run(args: CommonArgs) -> ExitCode {
             // `--since` (CLI) or a config `since` filters the explicit file paths by full-path
             // ordering, before reading. With no paths (stdin) `since` does not apply.
             let effective_since = args.since.clone().or(config.since.clone());
+            // `--since` selects from a file list; stdin has no path to compare, so reject `-`
+            // when a cutoff is active rather than silently dropping it.
+            if effective_since.is_some() && args.paths.iter().any(|p| p == "-") {
+                eprintln!(
+                    "error: `-` (stdin) cannot be combined with a `since` cutoff (--since or .pgsafe.toml)"
+                );
+                return ExitCode::from(2);
+            }
             let result = match effective_since {
                 Some(cutoff) if !args.paths.is_empty() => {
                     let kept: Vec<PathBuf> = filter_since(&args.paths, &cutoff)
