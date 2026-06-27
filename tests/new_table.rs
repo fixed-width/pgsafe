@@ -1,7 +1,10 @@
-use pgsafe::lint_sql;
+use pgsafe::{lint_sql, LintOptions};
 
 fn fires(sql: &str, rule_id: &str) -> bool {
-    lint_sql(sql).unwrap().iter().any(|f| f.rule_id == rule_id)
+    lint_sql(sql, &LintOptions::default())
+        .unwrap()
+        .iter()
+        .any(|f| f.rule_id == rule_id)
 }
 
 #[test]
@@ -21,6 +24,7 @@ fn directive_on_dropped_new_table_op_is_not_unused() {
         "CREATE TABLE foo (id int);\n\
          -- pgsafe:ignore add-unique-constraint  belt and suspenders\n\
          ALTER TABLE foo ADD CONSTRAINT u UNIQUE (id);",
+        &LintOptions::default(),
     )
     .unwrap();
     assert!(

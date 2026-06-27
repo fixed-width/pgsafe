@@ -1,10 +1,13 @@
 //! Table-driven rule coverage: one test function per rule, asserting both
 //! the "fires" and "does not fire" polarities. New rules extend this file.
 
-use pgsafe::lint_sql;
+use pgsafe::{lint_sql, LintOptions};
 
 fn fires(sql: &str, rule_id: &str) -> bool {
-    lint_sql(sql).unwrap().iter().any(|f| f.rule_id == rule_id)
+    lint_sql(sql, &LintOptions::default())
+        .unwrap()
+        .iter()
+        .any(|f| f.rule_id == rule_id)
 }
 
 // ── add-index-non-concurrent ────────────────────────────────────────────────
@@ -309,11 +312,14 @@ fn add_column_serial_fires() {
 
 #[test]
 fn add_column_serial_one_finding_per_column() {
-    let hits = lint_sql("ALTER TABLE t ADD COLUMN a serial, ADD COLUMN b bigserial")
-        .unwrap()
-        .into_iter()
-        .filter(|f| f.rule_id == "add-column-serial")
-        .count();
+    let hits = lint_sql(
+        "ALTER TABLE t ADD COLUMN a serial, ADD COLUMN b bigserial",
+        &LintOptions::default(),
+    )
+    .unwrap()
+    .into_iter()
+    .filter(|f| f.rule_id == "add-column-serial")
+    .count();
     assert_eq!(hits, 2);
 }
 
@@ -456,12 +462,14 @@ fn add_column_identity_fires() {
 #[test]
 fn add_column_identity_one_finding_per_column() {
     // Only the identity column fires; the plain column does not, and there is no double-count.
-    let hits =
-        lint_sql("ALTER TABLE t ADD COLUMN a int, ADD COLUMN b int GENERATED ALWAYS AS IDENTITY")
-            .unwrap()
-            .into_iter()
-            .filter(|f| f.rule_id == "add-column-identity")
-            .count();
+    let hits = lint_sql(
+        "ALTER TABLE t ADD COLUMN a int, ADD COLUMN b int GENERATED ALWAYS AS IDENTITY",
+        &LintOptions::default(),
+    )
+    .unwrap()
+    .into_iter()
+    .filter(|f| f.rule_id == "add-column-identity")
+    .count();
     assert_eq!(hits, 1);
 }
 
@@ -504,6 +512,7 @@ fn add_column_generated_stored_one_finding_per_column() {
     // Only the generated column fires; the plain column does not, and there is no double-count.
     let hits = lint_sql(
         "ALTER TABLE t ADD COLUMN x int, ADD COLUMN c int GENERATED ALWAYS AS (a + b) STORED",
+        &LintOptions::default(),
     )
     .unwrap()
     .into_iter()

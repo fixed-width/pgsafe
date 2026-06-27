@@ -40,6 +40,11 @@ pgsafe --format json migration.sql | jq '.files[].findings[] | select(.severity 
 # Gate strictness (default: any finding fails the run)
 pgsafe --fail-on=error migration.sql   # only error-severity findings fail (exit 1)
 pgsafe --fail-on=never migration.sql   # report-only, never fails on findings
+
+# Treat each migration as running inside a transaction (Rails, Flyway, and similar
+# tools wrap each migration implicitly), so CONCURRENTLY index ops are
+# flagged without an explicit BEGIN
+pgsafe --in-transaction migration.sql
 ```
 
 ### JSON output shape
@@ -102,9 +107,11 @@ pgsafe migrations/*.sql || exit 1
 | `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
 | `add-exclusion-constraint` | error | Adding an `EXCLUDE` constraint builds an index under an `ACCESS EXCLUSIVE` lock, scanning the whole table |
-| `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside an explicit `BEGIN … COMMIT` fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction |
+| `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
 
-`concurrently-in-transaction` detects only **explicit** `BEGIN … COMMIT` blocks; transaction wrapping done implicitly by a migration tool is not visible in the SQL.
+By default `concurrently-in-transaction` detects explicit `BEGIN … COMMIT` blocks in the SQL.
+Pass `--in-transaction` to also flag `CONCURRENTLY` operations when the transaction is applied
+implicitly by the migration tool (Rails, Flyway, and similar) rather than written in the file.
 
 ## Severity & gating
 
@@ -149,7 +156,7 @@ ignored, so a typo can never leave a real hazard un-suppressed:
 | `suppression-missing-reason` | error | the directive has no reason |
 | `suppression-unused` | warning | the directive matched no finding (stale) |
 
-## Scope (v0)
+## Scope
 
 `pgsafe` is a **static** analyzer: it parses SQL text only. It does not connect to a
 database, inspect table sizes, or check runtime conditions. All findings are based on

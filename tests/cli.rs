@@ -297,6 +297,28 @@ fn invalid_fail_on_value_is_a_usage_error() {
         .code(2);
 }
 
+// ── --in-transaction flag ────────────────────────────────────────────────────
+
+#[test]
+fn in_transaction_flag_flags_top_level_concurrently() {
+    // Without the flag: a top-level CONCURRENTLY index is NOT a concurrently-in-transaction finding.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .write_stdin("CREATE INDEX CONCURRENTLY i ON t (x);")
+        .assert()
+        .stdout(predicate::str::contains("concurrently-in-transaction").not());
+
+    // With --in-transaction: it IS flagged (exit 1).
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--in-transaction"])
+        .write_stdin("CREATE INDEX CONCURRENTLY i ON t (x);")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("concurrently-in-transaction"));
+}
+
 // ── --fail-on × suppression-diagnostic gating ───────────────────────────────
 
 #[test]

@@ -36,17 +36,25 @@ impl Rule for SetNotNull {
 
 #[cfg(test)]
 mod tests {
-    use crate::lint_sql;
+    use crate::{lint_sql, LintOptions};
 
     #[test]
     fn flags_set_not_null() {
-        let findings = lint_sql("ALTER TABLE t ALTER COLUMN a SET NOT NULL").unwrap();
+        let findings = lint_sql(
+            "ALTER TABLE t ALTER COLUMN a SET NOT NULL",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "set-not-null"));
     }
 
     #[test]
     fn ignores_drop_not_null() {
-        let findings = lint_sql("ALTER TABLE t ALTER COLUMN a DROP NOT NULL").unwrap();
+        let findings = lint_sql(
+            "ALTER TABLE t ALTER COLUMN a DROP NOT NULL",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings.iter().all(|f| f.rule_id != "set-not-null"));
     }
 }

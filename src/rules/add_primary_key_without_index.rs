@@ -55,7 +55,11 @@ impl Rule for AddPrimaryKeyWithoutIndex {
 mod tests {
     #[test]
     fn column_path_guidance_mentions_nullable_not_table_path() {
-        let findings = crate::lint_sql("ALTER TABLE t ADD COLUMN id int PRIMARY KEY").unwrap();
+        let findings = crate::lint_sql(
+            "ALTER TABLE t ADD COLUMN id int PRIMARY KEY",
+            &crate::LintOptions::default(),
+        )
+        .unwrap();
         let f = findings
             .iter()
             .find(|f| f.rule_id == "add-primary-key-without-index")

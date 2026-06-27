@@ -37,17 +37,25 @@ impl Rule for AlterColumnType {
 
 #[cfg(test)]
 mod tests {
-    use crate::lint_sql;
+    use crate::{lint_sql, LintOptions};
 
     #[test]
     fn flags_alter_column_type() {
-        let findings = lint_sql("ALTER TABLE t ALTER COLUMN a TYPE bigint").unwrap();
+        let findings = lint_sql(
+            "ALTER TABLE t ALTER COLUMN a TYPE bigint",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "alter-column-type"));
     }
 
     #[test]
     fn ignores_unrelated_alter() {
-        let findings = lint_sql("ALTER TABLE t ALTER COLUMN a SET DEFAULT 0").unwrap();
+        let findings = lint_sql(
+            "ALTER TABLE t ALTER COLUMN a SET DEFAULT 0",
+            &LintOptions::default(),
+        )
+        .unwrap();
         assert!(findings.iter().all(|f| f.rule_id != "alter-column-type"));
     }
 }

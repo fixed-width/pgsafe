@@ -1,14 +1,14 @@
-use pgsafe::lint_sql;
+use pgsafe::{lint_sql, LintOptions};
 
 fn ids(sql: &str) -> Vec<String> {
-    lint_sql(sql)
+    lint_sql(sql, &LintOptions::default())
         .unwrap()
         .into_iter()
         .map(|f| f.rule_id)
         .collect()
 }
 fn active_count(sql: &str) -> usize {
-    lint_sql(sql)
+    lint_sql(sql, &LintOptions::default())
         .unwrap()
         .iter()
         .filter(|f| !f.is_suppressed())
@@ -18,7 +18,7 @@ fn active_count(sql: &str) -> usize {
 #[test]
 fn suppressed_finding_is_present_but_not_active() {
     let sql = "-- pgsafe:ignore drop-table  empty, confirmed off-peak\nDROP TABLE x;";
-    assert!(lint_sql(sql)
+    assert!(lint_sql(sql, &LintOptions::default())
         .unwrap()
         .iter()
         .find(|f| f.rule_id == "drop-table")
@@ -46,7 +46,7 @@ fn unused_directive_is_a_warning() {
 #[test]
 fn string_literal_lookalike_is_not_a_directive() {
     let sql = "SELECT '-- pgsafe:ignore drop-table x';\nDROP TABLE y;";
-    let fs = lint_sql(sql).unwrap();
+    let fs = lint_sql(sql, &LintOptions::default()).unwrap();
     assert!(fs
         .iter()
         .any(|f| f.rule_id == "drop-table" && !f.is_suppressed()));
@@ -62,7 +62,7 @@ fn trailing_directive_suppresses() {
 #[test]
 fn multibyte_content_keeps_suppressed_finding_correct() {
     let sql = "SELECT 'café ☕';\n-- pgsafe:ignore drop-table  réson with ünïcode\nDROP TABLE x;";
-    let fs = lint_sql(sql).unwrap();
+    let fs = lint_sql(sql, &LintOptions::default()).unwrap();
     let dt = fs.iter().find(|f| f.rule_id == "drop-table").unwrap();
     assert!(dt.is_suppressed());
     assert_eq!(
@@ -74,7 +74,7 @@ fn multibyte_content_keeps_suppressed_finding_correct() {
 #[test]
 fn trailing_directive_with_two_statements_on_a_line_attaches_to_the_rightmost() {
     let sql = "DROP TABLE a; DROP TABLE b;  -- pgsafe:ignore drop-table  only b is safe";
-    let fs = lint_sql(sql).unwrap();
+    let fs = lint_sql(sql, &LintOptions::default()).unwrap();
     let drops: Vec<_> = fs.iter().filter(|f| f.rule_id == "drop-table").collect();
     assert_eq!(drops.len(), 2);
     assert!(!drops[0].is_suppressed(), "first statement still gates");
@@ -87,7 +87,7 @@ fn trailing_directive_with_two_statements_on_a_line_attaches_to_the_rightmost() 
 fn hygiene_diagnostic_severities_are_locked() {
     use pgsafe::Severity;
     let sev = |sql: &str, id: &str| -> Severity {
-        lint_sql(sql)
+        lint_sql(sql, &LintOptions::default())
             .unwrap()
             .into_iter()
             .find(|f| f.rule_id == id)
