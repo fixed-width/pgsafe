@@ -55,6 +55,7 @@ pub fn run(args: CommonArgs) -> ExitCode {
 
     let options = crate::LintOptions {
         assume_in_transaction: args.in_transaction,
+        ..crate::LintOptions::default()
     };
     let reports: Vec<FileReport> = inputs
         .into_iter()
