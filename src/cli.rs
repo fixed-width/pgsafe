@@ -1,6 +1,7 @@
 //! Command-line surface (only built with the `cli` feature). A superset binary
-//! can `#[command(flatten)]` [`CommonArgs`] and reuse [`run`] or its building
-//! blocks instead of re-implementing argument parsing, rendering, and gating.
+//! can `#[command(flatten)]` [`CommonArgs`] and call [`resolve`] to reuse the whole
+//! front-end — config discovery, `--config`/`--git-diff`/`--since` input selection, and
+//! per-file options — then run its own lint/render loop over the returned [`ResolvedRun`].
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -8,6 +9,7 @@ use std::process::ExitCode;
 
 use crate::{
     config, gate, lint_input, render_errors, render_human, render_json, FailOn, FileReport, Format,
+    LintOptions,
 };
 
 /// The flags shared by every pgsafe-style CLI. Flatten this into a larger
@@ -55,71 +57,48 @@ pub struct Cli {
     pub args: CommonArgs,
 }
 
-/// Read, lint, render, and gate the inputs in `args`, returning the process
-/// exit code (`0` clean, `1` gated findings, `2` parse/IO error).
-#[must_use]
-pub fn run(args: CommonArgs) -> ExitCode {
-    let (config, config_dir) = match load_config(&args) {
-        Ok(c) => c,
-        Err(msg) => {
-            eprintln!("error: {msg}");
-            return ExitCode::from(2);
-        }
-    };
+/// Everything the CLI front-end resolves from the args + config: the selected inputs,
+/// the effective gating/format settings, and a per-file [`LintOptions`] builder. Both the
+/// `pgsafe` binary and superset binaries (e.g. pgsafe-pro) build their run loop over this.
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct ResolvedRun {
+    /// Selected inputs after `--git-diff` / `--since` / config selection: `(display-name, sql)`.
+    pub inputs: Vec<(String, String)>,
+    /// Effective gate threshold (CLI-explicit > config > built-in default).
+    pub fail_on: FailOn,
+    /// Effective output format (CLI-explicit > config > built-in default).
+    pub format: Format,
+    config: config::Config,
+    config_dir: Option<PathBuf>,
+    assume_in_transaction: bool,
+}
 
-    let inputs = match &args.git_diff {
-        Some(reference) => {
-            if args.paths.iter().any(|p| p == "-") {
-                eprintln!("error: `-` (stdin) cannot be combined with --git-diff");
-                return ExitCode::from(2);
-            }
-            let files = match crate::gitdiff::changed_sql_files(reference, &args.paths) {
-                Ok(f) => f,
-                Err(msg) => {
-                    eprintln!("error: {msg}");
-                    return ExitCode::from(2);
-                }
-            };
-            match read_files(&files) {
-                Ok(i) => i,
-                Err(msg) => {
-                    eprintln!("error: {msg}");
-                    return ExitCode::from(2);
-                }
-            }
+impl ResolvedRun {
+    /// The per-file lint options: `assume_in_transaction` + this file's config `disabled_rules`
+    /// (path-relative) + the global `severity_overrides`.
+    #[must_use]
+    pub fn options_for(&self, name: &str) -> LintOptions {
+        let rel = rel_path(name, self.config_dir.as_deref());
+        LintOptions {
+            assume_in_transaction: self.assume_in_transaction,
+            disabled_rules: self.config.disabled_for(&rel),
+            severity_overrides: self.config.overrides().clone(),
+            ..LintOptions::default()
         }
-        None => {
-            // `--since` (CLI) or a config `since` filters the explicit file paths by full-path
-            // ordering, before reading. With no paths (stdin) `since` does not apply.
-            let effective_since = args.since.clone().or(config.since.clone());
-            // `--since` selects from a file list; stdin has no path to compare, so reject `-`
-            // when a cutoff is active rather than silently dropping it.
-            if effective_since.is_some() && args.paths.iter().any(|p| p == "-") {
-                eprintln!(
-                    "error: `-` (stdin) cannot be combined with a `since` cutoff (--since or .pgsafe.toml)"
-                );
-                return ExitCode::from(2);
-            }
-            let result = match effective_since {
-                Some(cutoff) if !args.paths.is_empty() => {
-                    let kept: Vec<PathBuf> = filter_since(&args.paths, &cutoff)
-                        .iter()
-                        .map(PathBuf::from)
-                        .collect();
-                    read_files(&kept)
-                }
-                _ => read_inputs(&args.paths),
-            };
-            match result {
-                Ok(i) => i,
-                Err(msg) => {
-                    eprintln!("error: {msg}");
-                    return ExitCode::from(2);
-                }
-            }
-        }
-    };
+    }
+}
 
+/// Resolve config (discovery / `--config` / `--no-config`), select and read the inputs
+/// (`--git-diff` / `--since` / positional paths, with all guards), and the effective scalar
+/// settings. The `Err` is a human-readable message the caller prints as `error: {msg}` (exit 2).
+///
+/// # Errors
+/// Returns a message when the config can't be loaded, an input can't be read, or a selection
+/// guard fails (e.g. `-`/stdin combined with `--git-diff` or `--since`).
+pub fn resolve(args: &CommonArgs) -> Result<ResolvedRun, String> {
+    let (config, config_dir) = load_config(args)?;
+    let inputs = select_inputs(args, &config)?;
     let fail_on = args.fail_on.or(config.fail_on).unwrap_or(FailOn::Warning);
     let format = args
         .format
@@ -127,26 +106,38 @@ pub fn run(args: CommonArgs) -> ExitCode {
         .or(config.format.clone())
         .unwrap_or(Format::Human);
     let assume_in_transaction = args.in_transaction || config.in_transaction.unwrap_or(false);
-    let overrides = config.overrides().clone();
+    Ok(ResolvedRun {
+        inputs,
+        fail_on,
+        format,
+        config,
+        config_dir,
+        assume_in_transaction,
+    })
+}
 
-    let reports: Vec<FileReport> = inputs
-        .into_iter()
-        .map(|(name, sql)| {
-            let rel = rel_path(&name, config_dir.as_deref());
-            let options = crate::LintOptions {
-                assume_in_transaction,
-                disabled_rules: config.disabled_for(&rel),
-                severity_overrides: overrides.clone(),
-                ..crate::LintOptions::default()
-            };
-            lint_input(name, &sql, &options)
-        })
+/// Read, lint, render, and gate the inputs in `args`, returning the process
+/// exit code (`0` clean, `1` gated findings, `2` parse/IO error).
+#[must_use]
+pub fn run(args: CommonArgs) -> ExitCode {
+    let r = match resolve(&args) {
+        Ok(r) => r,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let reports: Vec<FileReport> = r
+        .inputs
+        .iter()
+        .map(|(name, sql)| lint_input(name.clone(), sql, &r.options_for(name)))
         .collect();
 
-    let had_error = reports.iter().any(|r| r.error.is_some());
-    let had_findings = reports.iter().any(|r| gate(&r.findings, fail_on));
+    let had_error = reports.iter().any(|rep| rep.error.is_some());
+    let had_findings = reports.iter().any(|rep| gate(&rep.findings, r.fail_on));
 
-    match format {
+    match r.format {
         Format::Human => {
             eprint!("{}", render_errors(&reports));
             print!("{}", render_human(&reports));
@@ -217,6 +208,41 @@ fn rel_path(name: &str, config_dir: Option<&Path>) -> String {
         .unwrap_or(&abs_name)
         .to_string_lossy()
         .into_owned()
+}
+
+/// Select + read the inputs per `--git-diff` / `--since` / positional paths.
+fn select_inputs(
+    args: &CommonArgs,
+    config: &config::Config,
+) -> Result<Vec<(String, String)>, String> {
+    match &args.git_diff {
+        Some(reference) => {
+            if args.paths.iter().any(|p| p == "-") {
+                return Err("`-` (stdin) cannot be combined with --git-diff".to_string());
+            }
+            let files = crate::gitdiff::changed_sql_files(reference, &args.paths)?;
+            read_files(&files)
+        }
+        None => {
+            let effective_since = args.since.clone().or(config.since.clone());
+            if effective_since.is_some() && args.paths.iter().any(|p| p == "-") {
+                return Err(
+                    "`-` (stdin) cannot be combined with a `since` cutoff (--since or .pgsafe.toml)"
+                        .to_string(),
+                );
+            }
+            match effective_since {
+                Some(cutoff) if !args.paths.is_empty() => {
+                    let kept: Vec<PathBuf> = filter_since(&args.paths, &cutoff)
+                        .iter()
+                        .map(PathBuf::from)
+                        .collect();
+                    read_files(&kept)
+                }
+                _ => read_inputs(&args.paths),
+            }
+        }
+    }
 }
 
 fn read_inputs(paths: &[String]) -> Result<Vec<(String, String)>, String> {
