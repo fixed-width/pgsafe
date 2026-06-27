@@ -110,8 +110,16 @@ pub(crate) fn require_timeout_indices(
             },
             NodeEnum::VariableSetStmt(set) => {
                 if VariableSetKind::try_from(set.kind) == Ok(VariableSetKind::VarResetAll) {
-                    session_timeout = false; // RESET ALL clears session GUCs
+                    // RESET ALL clears all GUCs, including any SET LOCAL timeout override.
+                    session_timeout = false;
+                    local_timeout = false;
                 } else if is_timeout_var(&set.name) {
+                    // NOTE: lock_timeout and statement_timeout are collapsed into single
+                    // session_timeout/local_timeout booleans — either satisfies the rule.
+                    // This means deactivating one variable while a SET LOCAL of the *other*
+                    // is still active is not tracked independently. We deliberately accept
+                    // this rare imprecision; tracking both vars separately is not worth it
+                    // (consistent with the spec's out-of-scope notes).
                     let activates = set_activates(set);
                     if set.is_local {
                         // SET LOCAL only takes effect inside an explicit transaction.
@@ -196,6 +204,32 @@ mod tests {
         assert_eq!(
             indices("SET lock_timeout = '5s'; RESET ALL; ALTER TABLE t ADD COLUMN c int;"),
             vec![2]
+        );
+        // string-zero '0' also disables (arg_is_zero handles Sval "0")
+        assert_eq!(
+            indices(
+                "SET lock_timeout = '5s'; SET lock_timeout = '0'; ALTER TABLE t ADD COLUMN c int;"
+            ),
+            vec![2]
+        );
+        // SET ... = DEFAULT deactivates (VarSetDefault is not VarSetValue)
+        assert_eq!(
+            indices(
+                "SET lock_timeout = '5s'; SET lock_timeout = DEFAULT; ALTER TABLE t ADD COLUMN c int;"
+            ),
+            vec![2]
+        );
+    }
+
+    #[test]
+    fn reset_all_clears_a_set_local_timeout() {
+        // RESET ALL inside the txn disables the SET LOCAL timeout for the rest of the txn,
+        // so the following ALTER is unguarded and flagged.
+        assert_eq!(
+            indices(
+                "BEGIN; SET LOCAL lock_timeout = '5s'; RESET ALL; ALTER TABLE t ADD COLUMN c int; COMMIT;"
+            ),
+            vec![3]
         );
     }
 
