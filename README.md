@@ -107,6 +107,8 @@ pgsafe migrations/*.sql || exit 1
 | `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
 | `add-exclusion-constraint` | error | Adding an `EXCLUDE` constraint builds an index under an `ACCESS EXCLUSIVE` lock, scanning the whole table |
+| `prefer-jsonb` | warning | A `json` column has no equality/ordering operators (`SELECT DISTINCT`/`GROUP BY` fail); use `jsonb` |
+| `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
 | `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
 
 By default `concurrently-in-transaction` detects explicit `BEGIN … COMMIT` blocks in the SQL.
@@ -120,8 +122,9 @@ Each rule is `error` or `warning`:
 - **`error`** — the statement takes a lock that blocks concurrent access, rewrites/validates the
   table, or fails outright, **and a standard rewrite avoids it** (`CONCURRENTLY`, `NOT VALID` →
   `VALIDATE`, `USING INDEX`, a two-step). These are the avoidable outages.
-- **`warning`** — an intentional destructive op (`DROP TABLE` / `DROP COLUMN` / `TRUNCATE`) or an
-  app-compatibility heads-up (`RENAME`), where no lock-avoiding rewrite applies.
+- **`warning`** — an intentional destructive op (`DROP TABLE` / `DROP COLUMN` / `TRUNCATE`), an
+  app-compatibility heads-up (`RENAME`), or a schema-design issue (a `json` column, a small-int
+  primary key) — cases where no lock-avoiding rewrite applies.
 
 `--fail-on` controls which severities fail the run: `warning` (default — any finding fails),
 `error` (only errors fail; warnings are printed but exit `0`), or `never` (report-only). Parse

@@ -611,3 +611,38 @@ fn add_exclusion_constraint_silent() {
         "add-exclusion-constraint"
     ));
 }
+
+// ── prefer-bigint-primary-key ─────────────────────────────────────────────────
+
+#[test]
+fn prefer_bigint_primary_key_fires() {
+    assert!(fires(
+        "CREATE TABLE t (id serial PRIMARY KEY)",
+        "prefer-bigint-primary-key"
+    ));
+}
+
+#[test]
+fn prefer_bigint_primary_key_silent() {
+    assert!(!fires(
+        "CREATE TABLE t (id bigint PRIMARY KEY)",
+        "prefer-bigint-primary-key"
+    ));
+}
+
+// ── prefer-jsonb ──────────────────────────────────────────────────────────────
+
+#[test]
+fn prefer_jsonb_fires() {
+    assert!(fires("CREATE TABLE t (data json)", "prefer-jsonb"));
+    assert!(fires("ALTER TABLE t ADD COLUMN data json", "prefer-jsonb"));
+}
+
+#[test]
+fn prefer_jsonb_silent() {
+    assert!(!fires("CREATE TABLE t (data jsonb)", "prefer-jsonb"));
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN data jsonb",
+        "prefer-jsonb"
+    ));
+}
