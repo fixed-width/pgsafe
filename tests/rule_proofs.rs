@@ -587,3 +587,153 @@ fn statements_fail_as_claimed() {
         failures.join("\n")
     );
 }
+
+/// The outcome of running a statement while a holder session holds ACCESS SHARE on the table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockOutcome {
+    /// The op blocked on the holder's ACCESS SHARE and aborted (SQLSTATE 55P03) — it wants a
+    /// lock that conflicts with a concurrent reader (ACCESS EXCLUSIVE).
+    Blocked,
+    /// The op ran to completion despite the held ACCESS SHARE — its lock does not conflict.
+    Completes,
+}
+
+/// A statement (e.g. VACUUM FULL) that cannot run in a transaction, proven via a blocking-probe:
+/// a holder holds ACCESS SHARE and the runner is shown to block (or not) on it. When
+/// `expect_rewrite` is set, the op is also run to completion to observe the rewrite.
+struct BlockingCase {
+    rule: &'static str,
+    table: &'static str,
+    setup: &'static str,
+    op: &'static str,
+    expect: BlockOutcome,
+    expect_rewrite: Option<RewriteOutcome>,
+    pg: RangeInclusive<u32>,
+}
+
+fn blocking_cases() -> Vec<BlockingCase> {
+    vec![
+        BlockingCase {
+            rule: "vacuum-full-cluster",
+            table: "proof_vacuum_full",
+            setup: "CREATE TABLE proof_vacuum_full (c int); \
+                    INSERT INTO proof_vacuum_full SELECT g FROM generate_series(1, 100) g;",
+            op: "VACUUM FULL proof_vacuum_full",
+            expect: BlockOutcome::Blocked,
+            expect_rewrite: Some(RewriteOutcome::Changed),
+            pg: 14..=18,
+        },
+        BlockingCase {
+            rule: "(control: plain VACUUM does not block a reader)",
+            table: "proof_vacuum_full",
+            setup: "CREATE TABLE proof_vacuum_full (c int); \
+                    INSERT INTO proof_vacuum_full SELECT g FROM generate_series(1, 100) g;",
+            op: "VACUUM proof_vacuum_full",
+            expect: BlockOutcome::Completes,
+            expect_rewrite: None,
+            pg: 14..=18,
+        },
+    ]
+}
+
+/// Run one blocking case. A holder takes ACCESS SHARE (open transaction); the runner bounds its
+/// wait with `lock_timeout` and runs `op` as its OWN statement, observing block vs completion;
+/// then, if `expect_rewrite` is set, runs `op` to completion (no contention) to observe the rewrite.
+fn run_blocking_case(
+    holder: &mut Client,
+    runner: &mut Client,
+    case: &BlockingCase,
+) -> (BlockOutcome, Option<RewriteOutcome>) {
+    let t = case.table;
+    runner
+        .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+        .expect("drop pre-existing");
+    runner.batch_execute(case.setup).expect("setup");
+
+    // Blocking phase: holder holds a reader's lock; runner bounds its wait and runs the op.
+    holder.batch_execute("BEGIN").expect("holder begin");
+    holder
+        .batch_execute(&format!("LOCK TABLE {t} IN ACCESS SHARE MODE"))
+        .expect("holder lock");
+    runner
+        .batch_execute("SET lock_timeout = '1s'")
+        .expect("set lock_timeout");
+    let outcome = match runner.batch_execute(case.op) {
+        Ok(()) => BlockOutcome::Completes,
+        Err(e) if e.code() == Some(&postgres::error::SqlState::LOCK_NOT_AVAILABLE) => {
+            BlockOutcome::Blocked
+        }
+        Err(e) => panic!("{}: unexpected error running '{}': {e}", case.rule, case.op),
+    };
+    holder.batch_execute("ROLLBACK").expect("holder rollback");
+
+    // Rewrite phase: with the lock free, run the op to completion and observe the relfilenode.
+    let rewrite = case.expect_rewrite.map(|_| {
+        let oid: u32 = runner
+            .query_one(&format!("SELECT '{t}'::regclass::oid"), &[])
+            .expect("resolve oid")
+            .get::<_, u32>(0);
+        let before = relfilenode(runner, oid).expect("table exists before the completion run");
+        runner
+            .batch_execute("SET lock_timeout = '0'")
+            .expect("clear lock_timeout");
+        runner.batch_execute(case.op).expect("run op to completion");
+        classify_rewrite(before, relfilenode(runner, oid))
+    });
+
+    runner
+        .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+        .expect("drop");
+    (outcome, rewrite)
+}
+
+#[test]
+#[ignore = "requires DATABASE_URL pointing at a throwaway Postgres (run with --ignored)"]
+fn statements_block_as_claimed() {
+    let mut holder = connect();
+    let mut runner = connect();
+    let major = server_major(
+        runner
+            .query_one("SELECT current_setting('server_version_num')::int", &[])
+            .expect("read server_version_num")
+            .get::<_, i32>(0),
+    );
+
+    let mut ran = 0;
+    let mut failures = Vec::new();
+    println!("\n=== pgsafe blocking proofs (PostgreSQL {major}) ===");
+    for case in blocking_cases() {
+        if !case.pg.contains(&major) {
+            println!("  SKIP {:<42} (out of pg range)", case.rule);
+            continue;
+        }
+        ran += 1;
+        let (outcome, rewrite) = run_blocking_case(&mut holder, &mut runner, &case);
+        let ok = outcome == case.expect && rewrite == case.expect_rewrite;
+        println!(
+            "  {} {:<42} {:?} rewrite={:?}",
+            if ok { "OK  " } else { "FAIL" },
+            case.rule,
+            outcome,
+            rewrite,
+        );
+        if outcome != case.expect {
+            failures.push(format!(
+                "{}: expected {:?}, observed {:?}",
+                case.rule, case.expect, outcome
+            ));
+        }
+        if rewrite != case.expect_rewrite {
+            failures.push(format!(
+                "{}: rewrite expected {:?}, observed {:?}",
+                case.rule, case.expect_rewrite, rewrite
+            ));
+        }
+    }
+    assert!(ran > 0, "no blocking cases applied to PostgreSQL {major}");
+    assert!(
+        failures.is_empty(),
+        "blocking proofs failed on PostgreSQL {major}:\n{}",
+        failures.join("\n")
+    );
+}
