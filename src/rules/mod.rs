@@ -35,6 +35,7 @@ mod alter_column_type;
 mod drop_column;
 mod drop_index_non_concurrent;
 mod drop_table;
+mod prefer_jsonb;
 mod refresh_matview_non_concurrent;
 mod reindex_non_concurrent;
 mod rename;
@@ -67,6 +68,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(set_logged_unlogged::SetLoggedUnlogged),
         Box::new(refresh_matview_non_concurrent::RefreshMatviewNonConcurrent),
         Box::new(add_exclusion_constraint::AddExclusionConstraint),
+        Box::new(prefer_jsonb::PreferJsonb),
     ]
 });
 
@@ -117,6 +119,32 @@ fn column_has_constraint(col: &ColumnDef, contype: ConstrType) -> bool {
         matches!(cn.node.as_ref(), Some(NodeEnum::Constraint(con))
             if ConstrType::try_from(con.contype) == Ok(contype))
     })
+}
+
+/// Column definitions whose declared type is statically visible: those in a `CREATE TABLE`
+/// and those added by `ALTER TABLE ... ADD COLUMN`. Used by the schema-design lints.
+fn defined_columns(node: &NodeEnum) -> Vec<&ColumnDef> {
+    match node {
+        NodeEnum::CreateStmt(c) => c
+            .table_elts
+            .iter()
+            .filter_map(|n| match n.node.as_ref()? {
+                NodeEnum::ColumnDef(col) => Some(col.as_ref()),
+                _ => None,
+            })
+            .collect(),
+        NodeEnum::AlterTableStmt(_) => columns_being_added(node),
+        _ => Vec::new(),
+    }
+}
+
+/// The base type name of a column — the last element of its `TypeName.names`, lowercased
+/// (e.g. `json`, `jsonb`, `int4`, `serial`, `varchar`), or `None` if absent.
+fn column_base_type(col: &ColumnDef) -> Option<String> {
+    match col.type_name.as_ref()?.names.last()?.node.as_ref()? {
+        NodeEnum::String(s) => Some(s.sval.to_ascii_lowercase()),
+        _ => None,
+    }
 }
 
 /// All constraints added by `ADD CONSTRAINT` commands in an `ALTER TABLE`.
@@ -183,7 +211,13 @@ mod tests {
             "refresh-matview-non-concurrent",
             "add-exclusion-constraint",
         ];
-        let warnings = ["rename", "drop-table", "drop-column", "truncate"];
+        let warnings = [
+            "rename",
+            "drop-table",
+            "drop-column",
+            "truncate",
+            "prefer-jsonb",
+        ];
         for id in errors {
             assert_eq!(sev[id], Severity::Error, "{id} should be error");
         }
@@ -225,6 +259,7 @@ mod tests {
                 "set-logged-unlogged",
                 "refresh-matview-non-concurrent",
                 "add-exclusion-constraint",
+                "prefer-jsonb",
             ]
         );
     }

@@ -611,3 +611,20 @@ fn add_exclusion_constraint_silent() {
         "add-exclusion-constraint"
     ));
 }
+
+// ── prefer-jsonb ──────────────────────────────────────────────────────────────
+
+#[test]
+fn prefer_jsonb_fires() {
+    assert!(fires("CREATE TABLE t (data json)", "prefer-jsonb"));
+    assert!(fires("ALTER TABLE t ADD COLUMN data json", "prefer-jsonb"));
+}
+
+#[test]
+fn prefer_jsonb_silent() {
+    assert!(!fires("CREATE TABLE t (data jsonb)", "prefer-jsonb"));
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN data jsonb",
+        "prefer-jsonb"
+    ));
+}
