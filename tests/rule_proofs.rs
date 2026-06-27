@@ -85,6 +85,9 @@ struct ProofCase {
     ddl: &'static str,
     expect_lock: &'static str,
     expect_rewrite: RewriteOutcome,
+    /// A second relation to also assert a lock on (e.g. the parent table an FK locks), as
+    /// (relation, expected strongest lock). `None` for single-relation cases.
+    also_watch: Option<(&'static str, &'static str)>,
     pg: RangeInclusive<u32>,
 }
 
@@ -102,6 +105,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "CREATE INDEX proof_add_index_ix ON proof_add_index (c)",
             expect_lock: "ShareLock",
             expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -113,6 +117,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_alter_type ALTER COLUMN c TYPE bigint",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -124,6 +129,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_vol_default ADD COLUMN u uuid DEFAULT gen_random_uuid()",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -135,6 +141,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_control ADD COLUMN c int",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -147,6 +154,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "REINDEX TABLE proof_reindex",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -159,6 +167,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "DROP INDEX proof_drop_index_ix",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -170,6 +179,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_add_unique ADD CONSTRAINT u UNIQUE (c)",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -181,6 +191,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_add_pk ADD PRIMARY KEY (c)",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -192,6 +203,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_set_not_null ALTER COLUMN c SET NOT NULL",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -203,6 +215,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_add_check ADD CONSTRAINT ck CHECK (c > 0)",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -213,6 +226,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_add_exclude ADD CONSTRAINT ex EXCLUDE USING gist (r WITH &&)",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -224,6 +238,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_set_logged SET LOGGED",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -236,6 +251,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "REFRESH MATERIALIZED VIEW proof_mv",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -247,6 +263,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_add_serial ADD COLUMN s serial",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -258,6 +275,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_add_identity ADD COLUMN s int GENERATED ALWAYS AS IDENTITY",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -269,6 +287,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "ALTER TABLE proof_add_generated ADD COLUMN g int GENERATED ALWAYS AS (id * 2) STORED",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -280,6 +299,7 @@ fn cases() -> Vec<ProofCase> {
             ddl: "TRUNCATE proof_truncate",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
             pg: 14..=18,
         },
         ProofCase {
@@ -291,6 +311,35 @@ fn cases() -> Vec<ProofCase> {
             ddl: "DROP TABLE proof_drop_table",
             expect_lock: "AccessExclusiveLock",
             expect_rewrite: RewriteOutcome::Gone,
+            also_watch: None,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "vacuum-full-cluster",
+            table: "proof_cluster",
+            watch: "proof_cluster",
+            setup: "CREATE TABLE proof_cluster (c int); \
+                    INSERT INTO proof_cluster SELECT g FROM generate_series(1, 3) g; \
+                    CREATE INDEX proof_cluster_ix ON proof_cluster (c);",
+            ddl: "CLUSTER proof_cluster USING proof_cluster_ix",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Changed,
+            also_watch: None,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "add-fk-without-not-valid",
+            table: "proof_fk_parent, proof_fk_child",
+            watch: "proof_fk_child",
+            setup: "CREATE TABLE proof_fk_parent (id int PRIMARY KEY); \
+                    INSERT INTO proof_fk_parent SELECT g FROM generate_series(1, 3) g; \
+                    CREATE TABLE proof_fk_child (pid int); \
+                    INSERT INTO proof_fk_child SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_fk_child ADD CONSTRAINT fk \
+                  FOREIGN KEY (pid) REFERENCES proof_fk_parent (id)",
+            expect_lock: "ShareRowExclusiveLock",
+            expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: Some(("proof_fk_parent", "ShareRowExclusiveLock")),
             pg: 14..=18,
         },
     ]
@@ -300,6 +349,7 @@ fn cases() -> Vec<ProofCase> {
 struct Observed {
     lock: String,
     rewrite: RewriteOutcome,
+    also_lock: Option<String>,
 }
 
 /// Connect to `DATABASE_URL` (NoTls — throwaway local/CI Postgres only).
@@ -314,6 +364,21 @@ fn relfilenode(c: &mut Client, oid: u32) -> Option<u32> {
     c.query_opt("SELECT relfilenode FROM pg_class WHERE oid = $1", &[&oid])
         .expect("read relfilenode")
         .map(|row| row.get::<_, u32>(0))
+}
+
+/// Read the strongest relation lock `pid` holds on `oid` from the observer session.
+fn observe_lock(observer: &mut Client, pid: i32, oid: u32, what: &str) -> String {
+    observer
+        .query(
+            "SELECT mode FROM pg_locks \
+             WHERE pid = $1 AND locktype = 'relation' AND relation = $2 AND granted",
+            &[&pid, &oid],
+        )
+        .expect("read pg_locks")
+        .iter()
+        .map(|r| r.get::<_, String>(0))
+        .max_by_key(|m| lock_strength(m))
+        .unwrap_or_else(|| panic!("no relation lock observed on {what} for backend {pid}"))
 }
 
 /// Run one proof case: seed (committed), run the DDL in an open transaction, read the held
@@ -331,41 +396,39 @@ fn run_case(actor: &mut Client, observer: &mut Client, case: &ProofCase) -> Obse
         .query_one(&format!("SELECT '{}'::regclass::oid", case.watch), &[])
         .expect("resolve watch oid")
         .get::<_, u32>(0);
+    let also_oid: Option<u32> = case.also_watch.map(|(rel, _)| {
+        actor
+            .query_one(&format!("SELECT '{rel}'::regclass::oid"), &[])
+            .expect("resolve also_watch oid")
+            .get::<_, u32>(0)
+    });
     let pid: i32 = actor
         .query_one("SELECT pg_backend_pid()", &[])
         .expect("backend pid")
         .get::<_, i32>(0);
     let rel_before = relfilenode(actor, oid).expect("watched relation exists before the ddl");
 
-    // Act: run the flagged DDL in an OPEN transaction so the lock stays held.
+    // Act: run the flagged DDL in an OPEN transaction so the locks stay held.
     actor.batch_execute("BEGIN").expect("begin");
     actor.batch_execute(case.ddl).expect("run flagged ddl");
     let rewrite = classify_rewrite(rel_before, relfilenode(actor, oid));
 
-    // Observe the strongest relation lock the actor holds on the watched relation.
-    let lock = observer
-        .query(
-            "SELECT mode FROM pg_locks \
-             WHERE pid = $1 AND locktype = 'relation' AND relation = $2 AND granted",
-            &[&pid, &oid],
-        )
-        .expect("read pg_locks")
-        .iter()
-        .map(|r| r.get::<_, String>(0))
-        .max_by_key(|m| lock_strength(m))
-        .unwrap_or_else(|| {
-            panic!(
-                "no relation lock observed on {} for backend {pid}",
-                case.watch
-            )
-        });
+    let lock = observe_lock(observer, pid, oid, case.watch);
+    let also_lock = case
+        .also_watch
+        .zip(also_oid)
+        .map(|((rel, _), o)| observe_lock(observer, pid, o, rel));
 
     actor.batch_execute("ROLLBACK").expect("rollback");
     actor
         .batch_execute(&format!("DROP TABLE IF EXISTS {root} CASCADE"))
         .expect("drop");
 
-    Observed { lock, rewrite }
+    Observed {
+        lock,
+        rewrite,
+        also_lock,
+    }
 }
 
 #[test]
@@ -392,9 +455,17 @@ fn rules_hold_against_real_postgres() {
         let obs = run_case(&mut actor, &mut observer, &case);
         let lock_ok = obs.lock == case.expect_lock;
         let rewrite_ok = obs.rewrite == case.expect_rewrite;
+        let also_ok = match case.also_watch {
+            Some((_, expected)) => obs.also_lock.as_deref() == Some(expected),
+            None => true,
+        };
+        let also_note = match (&case.also_watch, &obs.also_lock) {
+            (Some((rel, _)), Some(l)) => format!(" also[{rel}]={l}"),
+            _ => String::new(),
+        };
         println!(
-            "  {} {:<34} lock={} rewrite={:?}",
-            if lock_ok && rewrite_ok {
+            "  {} {:<34} lock={} rewrite={:?}{}",
+            if lock_ok && rewrite_ok && also_ok {
                 "OK  "
             } else {
                 "FAIL"
@@ -402,6 +473,7 @@ fn rules_hold_against_real_postgres() {
             case.rule,
             obs.lock,
             obs.rewrite,
+            also_note,
         );
         if !lock_ok {
             failures.push(format!(
@@ -413,6 +485,14 @@ fn rules_hold_against_real_postgres() {
             failures.push(format!(
                 "{}: rewrite expected {:?}, observed {:?}",
                 case.rule, case.expect_rewrite, obs.rewrite
+            ));
+        }
+        if !also_ok {
+            failures.push(format!(
+                "{}: also_watch lock expected {:?}, observed {:?}",
+                case.rule,
+                case.also_watch.map(|(_, e)| e),
+                obs.also_lock
             ));
         }
     }
