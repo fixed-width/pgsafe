@@ -62,3 +62,27 @@ samply opens a Firefox Profiler tab in your browser with the captured profile.
 A rule's `id()` is the contract that inline `-- pgsafe:ignore <rule-id>` directives
 target. Renaming an id silently breaks every migration that suppresses it. Treat
 rule ids as stable: add new rules with new ids; do not rename existing ones.
+
+## Proving rules against real Postgres
+
+Each rule claims a lock and/or rewrite hazard. `tests/rule_proofs.rs` proves those claims
+empirically: it runs each flagged statement against a real Postgres, reads the held lock from
+`pg_locks`, and detects a table rewrite via a `relfilenode` change. These tests are `#[ignore]`d
+(they need a database), so the normal `cargo test` run and the PR gate stay DB-free.
+
+Run them against one database:
+
+```sh
+DATABASE_URL=postgres://postgres:secret@127.0.0.1:55459/postgres \
+  cargo test --test rule_proofs -- --ignored --nocapture
+```
+
+Or across the whole supported version matrix (spins up throwaway Docker Postgres 14–18):
+
+```sh
+scripts/prove-rules.sh            # all versions
+scripts/prove-rules.sh 16         # just one
+```
+
+The same proofs run in CI via the `rule-proofs` workflow (manual dispatch + weekly), so a
+Postgres release that changes a rule's behavior turns that workflow red.
