@@ -22,6 +22,10 @@ pub struct CommonArgs {
     /// Minimum finding severity that fails the run (exit code 1).
     #[arg(long, value_enum, default_value_t = FailOn::Warning)]
     pub fail_on: FailOn,
+    /// Treat each input as already running inside a transaction (as migration tools that wrap
+    /// each migration do), so CONCURRENTLY index operations are flagged without an explicit BEGIN.
+    #[arg(long)]
+    pub in_transaction: bool,
 }
 
 /// The `pgsafe` binary's top-level parser.
@@ -49,9 +53,12 @@ pub fn run(args: CommonArgs) -> ExitCode {
         }
     };
 
+    let options = crate::LintOptions {
+        assume_in_transaction: args.in_transaction,
+    };
     let reports: Vec<FileReport> = inputs
         .into_iter()
-        .map(|(name, sql)| lint_input(name, &sql, &crate::LintOptions::default()))
+        .map(|(name, sql)| lint_input(name, &sql, &options))
         .collect();
 
     let had_error = reports.iter().any(|r| r.error.is_some());

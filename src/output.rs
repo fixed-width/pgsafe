@@ -45,8 +45,8 @@ pub struct FileReport {
     pub error: Option<String>,
 }
 
-/// Lint one named input into a [`FileReport`], turning a parse failure into the
-/// report's `error` field instead of returning an error.
+/// Lint one named input into a [`FileReport`] under `options`, turning a parse
+/// failure into the report's `error` field instead of returning an error.
 pub fn lint_input(name: impl Into<String>, sql: &str, options: &crate::LintOptions) -> FileReport {
     match crate::lint_sql(sql, options) {
         Ok(findings) => FileReport {
