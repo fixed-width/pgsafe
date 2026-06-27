@@ -8,6 +8,8 @@
 //! the same rules is provided by the `pgsafe` binary.
 #![deny(missing_docs)]
 
+use std::collections::{BTreeMap, BTreeSet};
+
 mod newtable;
 mod output;
 mod rules;
@@ -17,6 +19,9 @@ mod txn;
 
 #[cfg(feature = "cli")]
 pub mod cli;
+
+#[cfg(feature = "cli")]
+mod config;
 
 pub use output::{
     gate, lint_input, render_errors, render_finding_human, render_human, render_json, FailOn,
@@ -117,6 +122,12 @@ pub struct LintOptions {
     /// each migration implicitly), so `CONCURRENTLY` index operations are flagged even without an
     /// explicit `BEGIN`. Default `false`.
     pub assume_in_transaction: bool,
+    /// Rule ids that must not run for this input (their findings — and, for synthesized rules,
+    /// their syntheses — are skipped). Default empty.
+    pub disabled_rules: BTreeSet<String>,
+    /// Per-rule severity overrides applied to the findings this run emits, keyed by rule id.
+    /// Default empty.
+    pub severity_overrides: BTreeMap<String, Severity>,
 }
 
 /// Error returned when `pgsafe` cannot process the provided SQL.
@@ -144,6 +155,15 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
         }
     }
     (line, column)
+}
+
+/// Every lint-rule id: the registered rules plus the engine-synthesized ones
+/// (`concurrently-in-transaction`, `require-timeout`). NOT the `suppression-*` hygiene ids.
+pub(crate) fn known_rule_ids() -> Vec<&'static str> {
+    let mut ids = rules::rule_ids();
+    ids.push(txn::ID);
+    ids.push(timeout::ID);
+    ids
 }
 
 /// Lint `sql` under `options`, returning findings in source order.
@@ -187,6 +207,9 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
         };
         let snippet = sql.get(g.start..g.end).unwrap_or("").trim().to_string();
         for rule in rules {
+            if options.disabled_rules.contains(rule.id()) {
+                continue;
+            }
             rule.check(node, &mut hits);
             for h in hits.drain(..) {
                 findings.push(Finding {
@@ -202,46 +225,55 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             }
         }
     }
-    for i in timeout::require_timeout_indices(stmts, options.assume_in_transaction) {
-        let g = &geoms[i];
-        let (line, column) = line_col(sql, g.start);
-        findings.push(Finding {
-            rule_id: timeout::ID.to_string(),
-            severity: Severity::Warning,
-            message: timeout::MESSAGE.to_string(),
-            guidance: timeout::GUIDANCE.to_string(),
-            statement_index: i,
-            location: Location {
-                byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                line,
-                column,
-            },
-            snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-            suppression: None,
-        });
+    if !options.disabled_rules.contains(timeout::ID) {
+        for i in timeout::require_timeout_indices(stmts, options.assume_in_transaction) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: timeout::ID.to_string(),
+                severity: Severity::Warning,
+                message: timeout::MESSAGE.to_string(),
+                guidance: timeout::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
     }
     let (mut findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);
-    for i in txn::concurrently_in_transaction_indices(stmts, options.assume_in_transaction) {
-        let g = &geoms[i];
-        let (line, column) = line_col(sql, g.start);
-        findings.push(Finding {
-            rule_id: txn::ID.to_string(),
-            severity: Severity::Error,
-            message: txn::MESSAGE.to_string(),
-            guidance: txn::GUIDANCE.to_string(),
-            statement_index: i,
-            location: Location {
-                byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                line,
-                column,
-            },
-            snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-            suppression: None,
-        });
+    if !options.disabled_rules.contains(txn::ID) {
+        for i in txn::concurrently_in_transaction_indices(stmts, options.assume_in_transaction) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: txn::ID.to_string(),
+                severity: Severity::Error,
+                message: txn::MESSAGE.to_string(),
+                guidance: txn::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
     }
-    let mut known_ids = rules::rule_ids();
-    known_ids.push(txn::ID);
-    known_ids.push(timeout::ID);
+    if !options.severity_overrides.is_empty() {
+        for f in &mut findings {
+            if let Some(&sev) = options.severity_overrides.get(&f.rule_id) {
+                f.severity = sev;
+            }
+        }
+    }
+    let known_ids = known_rule_ids();
     suppression::resolve(
         sql,
         &geoms,
@@ -249,6 +281,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
         findings,
         &known_ids,
         &new_table_dropped,
+        &options.disabled_rules,
     )
 }
 
@@ -373,6 +406,7 @@ mod tests {
             sql,
             &LintOptions {
                 assume_in_transaction: true,
+                ..LintOptions::default()
             },
         )
         .unwrap();
@@ -383,5 +417,55 @@ mod tests {
         assert!(!off
             .iter()
             .any(|f| f.rule_id == "concurrently-in-transaction"));
+    }
+
+    fn opts(disabled: &[&str], overrides: &[(&str, Severity)]) -> LintOptions {
+        LintOptions {
+            disabled_rules: disabled.iter().map(|s| (*s).to_string()).collect(),
+            severity_overrides: overrides
+                .iter()
+                .map(|(k, v)| ((*k).to_string(), *v))
+                .collect(),
+            ..LintOptions::default()
+        }
+    }
+
+    #[test]
+    fn disabled_registered_rule_produces_no_finding() {
+        let fs = lint_sql("DROP TABLE x;", &opts(&["drop-table"], &[])).unwrap();
+        assert!(!fs.iter().any(|f| f.rule_id == "drop-table"));
+    }
+
+    #[test]
+    fn disabled_synthesized_rule_is_silent() {
+        // require-timeout normally fires on a bare ALTER TABLE.
+        let fs = lint_sql(
+            "ALTER TABLE t ADD COLUMN c int;",
+            &opts(&["require-timeout"], &[]),
+        )
+        .unwrap();
+        assert!(!fs.iter().any(|f| f.rule_id == "require-timeout"));
+    }
+
+    #[test]
+    fn severity_override_changes_a_findings_severity() {
+        let fs = lint_sql(
+            "CREATE INDEX i ON t (x);",
+            &opts(&[], &[("add-index-non-concurrent", Severity::Warning)]),
+        )
+        .unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-index-non-concurrent")
+            .unwrap();
+        assert_eq!(f.severity, Severity::Warning); // default is Error
+    }
+
+    #[test]
+    fn directive_for_a_disabled_rule_is_not_reported_unused() {
+        let sql = "-- pgsafe:ignore drop-table  disabled in config anyway\nDROP TABLE x;";
+        let fs = lint_sql(sql, &opts(&["drop-table"], &[])).unwrap();
+        assert!(!fs.iter().any(|f| f.rule_id == "suppression-unused"));
+        assert!(!fs.iter().any(|f| f.rule_id == "drop-table"));
     }
 }

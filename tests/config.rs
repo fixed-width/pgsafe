@@ -1,0 +1,161 @@
+use std::fs;
+
+use assert_cmd::Command;
+use predicates::prelude::*;
+use tempfile::tempdir;
+
+/// Run pgsafe from `dir` with `args`. Returns the assert for further checks.
+fn run_in(dir: &std::path::Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir)
+        .args(args)
+        .assert()
+}
+
+#[test]
+fn disabling_a_rule_drops_its_findings() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "[rules]\ndrop-table = false\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("m.sql"), "DROP TABLE x;\n").unwrap();
+    run_in(dir.path(), &["m.sql"]).stdout(predicate::str::contains("drop-table").not());
+}
+
+#[test]
+fn severity_override_changes_gating() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("m.sql"), "CREATE INDEX i ON t (x);\n").unwrap();
+    // add-index-non-concurrent is normally an error → --fail-on=error exits 1.
+    run_in(dir.path(), &["--no-config", "--fail-on", "error", "m.sql"])
+        .failure()
+        .code(1);
+    // Demoted to warning by config → --fail-on=error no longer fails.
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "[rules]\nadd-index-non-concurrent = \"warning\"\n",
+    )
+    .unwrap();
+    run_in(dir.path(), &["--fail-on", "error", "m.sql"])
+        .success()
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
+}
+
+#[test]
+fn per_path_ignore_applies_only_to_matching_files() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "[[ignore]]\npath = \"legacy/**\"\nrules = [\"drop-table\"]\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join("legacy")).unwrap();
+    fs::write(dir.path().join("legacy/a.sql"), "DROP TABLE x;\n").unwrap();
+    fs::write(dir.path().join("current.sql"), "DROP TABLE y;\n").unwrap();
+    run_in(dir.path(), &["legacy/a.sql"]).stdout(predicate::str::contains("drop-table").not());
+    run_in(dir.path(), &["current.sql"]).stdout(predicate::str::contains("drop-table"));
+}
+
+#[test]
+fn no_config_ignores_a_present_file() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "[rules]\ndrop-table = false\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("m.sql"), "DROP TABLE x;\n").unwrap();
+    // With the config, drop-table is gone; with --no-config it fires again.
+    run_in(dir.path(), &["--no-config", "m.sql"]).stdout(predicate::str::contains("drop-table"));
+}
+
+#[test]
+fn explicit_config_path_is_used() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("ci.toml"), "[rules]\ndrop-table = false\n").unwrap();
+    fs::write(dir.path().join("m.sql"), "DROP TABLE x;\n").unwrap();
+    run_in(dir.path(), &["--config", "ci.toml", "m.sql"])
+        .stdout(predicate::str::contains("drop-table").not());
+}
+
+#[test]
+fn malformed_config_fails_with_exit_2() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join(".pgsafe.toml"), "fail_onn = \"error\"\n").unwrap();
+    fs::write(dir.path().join("m.sql"), "DROP TABLE x;\n").unwrap();
+    run_in(dir.path(), &["m.sql"]).failure().code(2);
+}
+
+#[test]
+fn unknown_rule_id_in_config_fails_with_exit_2() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "[rules]\ndrop-tabel = false\n",
+    )
+    .unwrap();
+    fs::write(dir.path().join("m.sql"), "DROP TABLE x;\n").unwrap();
+    run_in(dir.path(), &["m.sql"]).failure().code(2);
+}
+
+#[test]
+fn directive_for_a_disabled_rule_is_not_unused() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "[rules]\ndrop-table = false\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("m.sql"),
+        "-- pgsafe:ignore drop-table  disabled anyway\nDROP TABLE x;\n",
+    )
+    .unwrap();
+    run_in(dir.path(), &["m.sql"]).stdout(predicate::str::contains("suppression-unused").not());
+}
+
+#[test]
+fn ignore_matches_when_run_from_a_subdirectory() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "[[ignore]]\npath = \"db/legacy/**\"\nrules = [\"drop-table\"]\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join("db/legacy")).unwrap();
+    fs::write(dir.path().join("db/legacy/a.sql"), "DROP TABLE x;\n").unwrap();
+    // Invoked from db/legacy with a path relative to THAT dir; the ignore glob is
+    // written relative to the config dir (repo root) and must still match.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path().join("db/legacy"))
+        .arg("a.sql")
+        .assert()
+        .stdout(predicate::str::contains("drop-table").not());
+}
+
+#[test]
+fn config_fail_on_changes_gating_without_a_cli_flag() {
+    let dir = tempdir().unwrap();
+    // DROP TABLE fires only warnings (drop-table + require-timeout), no errors.
+    fs::write(dir.path().join("m.sql"), "DROP TABLE x;\n").unwrap();
+    // Default fail_on=warning → any finding gates → exit 1.
+    run_in(dir.path(), &["--no-config", "m.sql"])
+        .failure()
+        .code(1);
+    // Config fail_on="error" (no CLI flag) → warnings don't gate → exit 0.
+    fs::write(dir.path().join(".pgsafe.toml"), "fail_on = \"error\"\n").unwrap();
+    run_in(dir.path(), &["m.sql"]).success();
+}
+
+#[test]
+fn missing_explicit_config_fails_with_exit_2() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("m.sql"), "DROP TABLE x;\n").unwrap();
+    run_in(dir.path(), &["--config", "nope.toml", "m.sql"])
+        .failure()
+        .code(2);
+}
