@@ -136,6 +136,162 @@ fn cases() -> Vec<ProofCase> {
             expect_rewrite: RewriteOutcome::Unchanged,
             pg: 14..=18,
         },
+        ProofCase {
+            rule: "reindex-non-concurrent",
+            table: "proof_reindex",
+            watch: "proof_reindex_ix",
+            setup: "CREATE TABLE proof_reindex (c int); \
+                    INSERT INTO proof_reindex SELECT g FROM generate_series(1, 3) g; \
+                    CREATE INDEX proof_reindex_ix ON proof_reindex (c);",
+            ddl: "REINDEX TABLE proof_reindex",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Changed,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "drop-index-non-concurrent",
+            table: "proof_drop_index",
+            watch: "proof_drop_index",
+            setup: "CREATE TABLE proof_drop_index (c int); \
+                    INSERT INTO proof_drop_index SELECT g FROM generate_series(1, 3) g; \
+                    CREATE INDEX proof_drop_index_ix ON proof_drop_index (c);",
+            ddl: "DROP INDEX proof_drop_index_ix",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Unchanged,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "add-unique-constraint",
+            table: "proof_add_unique",
+            watch: "proof_add_unique",
+            setup: "CREATE TABLE proof_add_unique (c int); \
+                    INSERT INTO proof_add_unique SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_add_unique ADD CONSTRAINT u UNIQUE (c)",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Unchanged,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "add-primary-key-without-index",
+            table: "proof_add_pk",
+            watch: "proof_add_pk",
+            setup: "CREATE TABLE proof_add_pk (c int NOT NULL); \
+                    INSERT INTO proof_add_pk SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_add_pk ADD PRIMARY KEY (c)",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Unchanged,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "set-not-null",
+            table: "proof_set_not_null",
+            watch: "proof_set_not_null",
+            setup: "CREATE TABLE proof_set_not_null (c int); \
+                    INSERT INTO proof_set_not_null SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_set_not_null ALTER COLUMN c SET NOT NULL",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Unchanged,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "add-check-without-not-valid",
+            table: "proof_add_check",
+            watch: "proof_add_check",
+            setup: "CREATE TABLE proof_add_check (c int); \
+                    INSERT INTO proof_add_check SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_add_check ADD CONSTRAINT ck CHECK (c > 0)",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Unchanged,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "add-exclusion-constraint",
+            table: "proof_add_exclude",
+            watch: "proof_add_exclude",
+            setup: "CREATE TABLE proof_add_exclude (r int4range);",
+            ddl: "ALTER TABLE proof_add_exclude ADD CONSTRAINT ex EXCLUDE USING gist (r WITH &&)",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Unchanged,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "set-logged-unlogged",
+            table: "proof_set_logged",
+            watch: "proof_set_logged",
+            setup: "CREATE UNLOGGED TABLE proof_set_logged (c int); \
+                    INSERT INTO proof_set_logged SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_set_logged SET LOGGED",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Changed,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "refresh-matview-non-concurrent",
+            table: "proof_mv_base",
+            watch: "proof_mv",
+            setup: "CREATE TABLE proof_mv_base (c int); \
+                    INSERT INTO proof_mv_base SELECT g FROM generate_series(1, 3) g; \
+                    CREATE MATERIALIZED VIEW proof_mv AS SELECT * FROM proof_mv_base;",
+            ddl: "REFRESH MATERIALIZED VIEW proof_mv",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Changed,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "add-column-serial",
+            table: "proof_add_serial",
+            watch: "proof_add_serial",
+            setup: "CREATE TABLE proof_add_serial (id int); \
+                    INSERT INTO proof_add_serial SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_add_serial ADD COLUMN s serial",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Changed,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "add-column-identity",
+            table: "proof_add_identity",
+            watch: "proof_add_identity",
+            setup: "CREATE TABLE proof_add_identity (id int); \
+                    INSERT INTO proof_add_identity SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_add_identity ADD COLUMN s int GENERATED ALWAYS AS IDENTITY",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Changed,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "add-column-generated-stored",
+            table: "proof_add_generated",
+            watch: "proof_add_generated",
+            setup: "CREATE TABLE proof_add_generated (id int); \
+                    INSERT INTO proof_add_generated SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_add_generated ADD COLUMN g int GENERATED ALWAYS AS (id * 2) STORED",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Changed,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "truncate",
+            table: "proof_truncate",
+            watch: "proof_truncate",
+            setup: "CREATE TABLE proof_truncate (c int); \
+                    INSERT INTO proof_truncate SELECT g FROM generate_series(1, 3) g;",
+            ddl: "TRUNCATE proof_truncate",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Changed,
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "drop-table",
+            table: "proof_drop_table",
+            watch: "proof_drop_table",
+            setup: "CREATE TABLE proof_drop_table (c int); \
+                    INSERT INTO proof_drop_table SELECT g FROM generate_series(1, 3) g;",
+            ddl: "DROP TABLE proof_drop_table",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Gone,
+            pg: 14..=18,
+        },
     ]
 }
 
