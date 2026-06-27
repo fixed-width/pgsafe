@@ -88,8 +88,9 @@ struct ProofCase {
     pg: RangeInclusive<u32>,
 }
 
-/// The v0 proof cases. The final entry is a *control*: a strong-lock statement that does NOT
-/// rewrite, proving the rewrite detector discriminates (it must observe `rewrite = Unchanged`).
+/// The proof cases. The 4th entry (`proof_control`) is a *control*: a strong-lock statement that
+/// does NOT rewrite, proving the rewrite detector discriminates (it must observe
+/// `rewrite = Unchanged`, not `Changed`).
 fn cases() -> Vec<ProofCase> {
     vec![
         ProofCase {
