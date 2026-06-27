@@ -221,7 +221,7 @@ versus a ref (plus untracked ones), so a PR checks only what it changed:
 
 ```sh
 pgsafe --git-diff origin/main
-pgsafe --git-diff origin/main db/migrate   # scope to a directory
+pgsafe --git-diff origin/main db/migrate   # scope to a directory (relative to the repo root)
 ```
 
 This requires the ref to be present in the checkout (a single `git fetch --depth=1 origin <branch>`

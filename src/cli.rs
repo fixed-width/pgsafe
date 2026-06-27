@@ -33,7 +33,7 @@ pub struct CommonArgs {
     #[arg(long)]
     pub no_config: bool,
     /// Lint only the `.sql` files added/modified versus this git ref (e.g. `origin/main`).
-    /// Positional paths become a git pathspec scope; with no paths, the whole repository.
+    /// Positional paths become a git pathspec scope (relative to the repo root); with no paths, the whole repository.
     #[arg(long, value_name = "REF")]
     pub git_diff: Option<String>,
     /// Lint only migration files whose path sorts after this cutoff (the last legacy migration).

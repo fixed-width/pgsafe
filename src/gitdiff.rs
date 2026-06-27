@@ -47,7 +47,12 @@ fn changed_names(root: &Path, reference: &str, scope: &[String]) -> Result<Vec<S
         diff_args.push("--");
         diff_args.extend(scope.iter().map(String::as_str));
     }
-    let diff_out = run_git(Some(root), &diff_args)?;
+    let diff_out = run_git(Some(root), &diff_args).map_err(|e| {
+        format!(
+            "{e}\nhint: make sure `{reference}` is available — fetch it shallowly, e.g. \
+             `git fetch --depth=1 origin <branch>` (full history is not required)"
+        )
+    })?;
 
     let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
     if !scope.is_empty() {

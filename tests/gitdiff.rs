@@ -113,11 +113,12 @@ fn composes_with_config_ignore() {
 }
 
 #[test]
-fn bad_ref_exits_two() {
+fn bad_ref_exits_two_with_a_fetch_hint() {
     let dir = repo_with_base("0001_base.sql", "CREATE TABLE t (id bigint);\n");
     pgsafe(dir.path(), &["--git-diff", "no-such-ref"])
         .failure()
-        .code(2);
+        .code(2)
+        .stderr(predicate::str::contains("fetch").and(predicate::str::contains("not required")));
 }
 
 #[test]
