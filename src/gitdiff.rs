@@ -10,7 +10,7 @@ use std::process::Command;
 /// knowing the repo root). Any git failure becomes an `Err(message)`.
 pub(crate) fn changed_sql_files(reference: &str, scope: &[String]) -> Result<Vec<PathBuf>, String> {
     let root = repo_root()?;
-    let names = changed_names(reference, scope)?;
+    let names = changed_names(&root, reference, scope)?;
     Ok(select_sql(&root, names))
 }
 
@@ -28,9 +28,9 @@ fn select_sql(root: &Path, names: Vec<String>) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Repo root via `git rev-parse --show-toplevel` (also confirms we are inside a repo).
+/// Repo root via `git rev-parse --show-toplevel` (run in the caller's CWD; also confirms a repo).
 fn repo_root() -> Result<PathBuf, String> {
-    let out = run_git(&["rev-parse", "--show-toplevel"])?;
+    let out = run_git(None, &["rev-parse", "--show-toplevel"])?;
     let path = out.trim();
     if path.is_empty() {
         return Err("not a git repository".to_string());
@@ -38,27 +38,23 @@ fn repo_root() -> Result<PathBuf, String> {
     Ok(PathBuf::from(path))
 }
 
-/// Changed file names (repo-root-relative) for `reference`, scoped by `scope` pathspecs.
-///
-/// Collects both tracked changes (`git diff --name-only`) and untracked files
-/// (`git ls-files --others`) so that newly written migrations are picked up
-/// even before `git add`.
-fn changed_names(reference: &str, scope: &[String]) -> Result<Vec<String>, String> {
-    // Tracked: added/copied/modified/renamed vs the reference (staged or unstaged).
+/// Changed (tracked, vs `reference`) plus untracked file names, repo-root-relative.
+/// Both git commands run anchored at `root` so their paths share one namespace and the
+/// result is correct regardless of the caller's working directory.
+fn changed_names(root: &Path, reference: &str, scope: &[String]) -> Result<Vec<String>, String> {
     let mut diff_args = vec!["diff", "--name-only", "--diff-filter=ACMR", reference];
     if !scope.is_empty() {
         diff_args.push("--");
         diff_args.extend(scope.iter().map(String::as_str));
     }
-    let diff_out = run_git(&diff_args)?;
+    let diff_out = run_git(Some(root), &diff_args)?;
 
-    // Untracked: files not yet known to git (respects .gitignore).
     let mut ls_args = vec!["ls-files", "--others", "--exclude-standard"];
     if !scope.is_empty() {
         ls_args.push("--");
         ls_args.extend(scope.iter().map(String::as_str));
     }
-    let ls_out = run_git(&ls_args)?;
+    let ls_out = run_git(Some(root), &ls_args)?;
 
     let mut names: Vec<String> = diff_out
         .lines()
@@ -71,10 +67,14 @@ fn changed_names(reference: &str, scope: &[String]) -> Result<Vec<String>, Strin
     Ok(names)
 }
 
-/// Run `git <args>`, returning stdout on success or a message on failure.
-fn run_git(args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .args(args)
+/// Run `git <args>`, optionally anchored at `dir`; stdout on success, a message on failure.
+fn run_git(dir: Option<&Path>, args: &[&str]) -> Result<String, String> {
+    let mut cmd = Command::new("git");
+    cmd.args(args);
+    if let Some(d) = dir {
+        cmd.current_dir(d);
+    }
+    let output = cmd
         .output()
         .map_err(|e| format!("could not run git: {e}"))?;
     if !output.status.success() {

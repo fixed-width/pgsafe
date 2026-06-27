@@ -137,3 +137,20 @@ fn stdin_with_git_diff_is_rejected() {
         .code(2)
         .stderr(predicate::str::contains("stdin"));
 }
+
+#[test]
+fn works_from_a_subdirectory_with_untracked_file() {
+    let dir = repo_with_base("0001_base.sql", "CREATE TABLE t (id bigint);\n");
+    fs::create_dir_all(dir.path().join("db/migrate")).unwrap();
+    // An untracked new migration in a nested dir.
+    fs::write(dir.path().join("db/migrate/0002.sql"), "DROP TABLE t;\n").unwrap();
+    // Invoke pgsafe FROM the nested dir; the untracked file must still be found + linted.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path().join("db/migrate"))
+        .args(["--git-diff", "HEAD"])
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("drop-table"));
+}
