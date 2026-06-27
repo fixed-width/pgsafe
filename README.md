@@ -195,6 +195,38 @@ rules = ["drop-table"]       # ignore only these rules here
 **Validation is strict:** an unknown key, an unknown rule id, a bad value, or a bad glob fails
 the run (exit 2) rather than being silently ignored — so a typo can't quietly disable a check.
 
+## Linting only new migrations
+
+To adopt pgsafe on a repo full of existing migrations without fixing them all first, lint only
+the migrations added after a cutoff. Migrations run in lexicographic filename order, so this is a
+simple, git-free path comparison that works on any CI with any checkout depth.
+
+```sh
+# Lint only migrations whose path sorts after the last legacy one:
+pgsafe --since db/migrate/0042_last_legacy.sql db/migrate/*.sql
+```
+
+Set the cutoff **once** when you adopt pgsafe — every new migration sorts after it and is linted,
+every legacy one before it is skipped, and you never have to bump it. You can also set it in
+`.pgsafe.toml` so CI just runs `pgsafe db/migrate/*.sql`:
+
+```toml
+since = "db/migrate/0042_last_legacy.sql"
+```
+
+### Using git instead
+
+If you'd rather select by git history, `--git-diff <ref>` lints the `.sql` files added/modified
+versus a ref (plus untracked ones), so a PR checks only what it changed:
+
+```sh
+pgsafe --git-diff origin/main
+pgsafe --git-diff origin/main db/migrate   # scope to a directory
+```
+
+This requires the ref to be present in the checkout (a single `git fetch --depth=1 origin <branch>`
+is enough — full history is **not** needed). `--since` and `--git-diff` can't be combined.
+
 ## Scope
 
 `pgsafe` is a **static** analyzer: it parses SQL text only. It does not connect to a
