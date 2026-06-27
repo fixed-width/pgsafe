@@ -3,7 +3,7 @@
 //! in a transaction, so it fails at runtime. This is an engine-synthesized
 //! finding, not a registered `Rule`.
 
-use pg_query::protobuf::{ObjectType, RawStmt, ReindexStmt, TransactionStmtKind};
+use pg_query::protobuf::{ObjectType, RawStmt, TransactionStmtKind};
 use pg_query::NodeEnum;
 
 pub(crate) const ID: &str = "concurrently-in-transaction";
@@ -13,14 +13,6 @@ pub(crate) const MESSAGE: &str =
 pub(crate) const GUIDANCE: &str = "Run the CONCURRENTLY statement outside the transaction — put it in \
     its own migration, or move it before BEGIN / after COMMIT. (Note: many migration tools also wrap \
     each migration in an implicit transaction; disable that for this migration.)";
-
-/// A `REINDEX ... CONCURRENTLY` (a `concurrently` option that is true).
-fn reindex_is_concurrent(r: &ReindexStmt) -> bool {
-    r.params.iter().any(|p| {
-        matches!(p.node.as_ref(), Some(NodeEnum::DefElem(de))
-            if de.defname == "concurrently" && crate::rules::defelem_is_true(de))
-    })
-}
 
 /// Whether a statement is a CONCURRENTLY index operation.
 fn is_concurrently_index_op(node: &NodeEnum) -> bool {
@@ -33,7 +25,7 @@ fn is_concurrently_index_op(node: &NodeEnum) -> bool {
                     Ok(ObjectType::ObjectIndex)
                 )
         }
-        NodeEnum::ReindexStmt(r) => reindex_is_concurrent(r),
+        NodeEnum::ReindexStmt(r) => crate::rules::reindex_is_concurrent(r),
         _ => false,
     }
 }

@@ -188,7 +188,10 @@ fn error_severity_renders_in_human_and_json() {
 fn suppressed_only_run_exits_zero() {
     Command::cargo_bin("pgsafe")
         .unwrap()
-        .write_stdin("-- pgsafe:ignore drop-table  empty, confirmed\nDROP TABLE x;")
+        // SET lock_timeout keeps require-timeout from firing; only drop-table fires (suppressed).
+        .write_stdin(
+            "SET lock_timeout = '5s';\n-- pgsafe:ignore drop-table  empty, confirmed\nDROP TABLE x;",
+        )
         .assert()
         .success()
         .stdout(predicate::str::contains("suppressed"));
@@ -208,7 +211,10 @@ fn json_output_includes_suppression_reason() {
     Command::cargo_bin("pgsafe")
         .unwrap()
         .args(["--format", "json"])
-        .write_stdin("-- pgsafe:ignore drop-table  empty, confirmed\nDROP TABLE x;")
+        // SET lock_timeout keeps require-timeout from firing; only drop-table fires (suppressed).
+        .write_stdin(
+            "SET lock_timeout = '5s';\n-- pgsafe:ignore drop-table  empty, confirmed\nDROP TABLE x;",
+        )
         .assert()
         .success()
         .stdout(predicate::str::contains("\"suppression\""))

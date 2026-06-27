@@ -12,6 +12,7 @@ mod newtable;
 mod output;
 mod rules;
 mod suppression;
+mod timeout;
 mod txn;
 
 #[cfg(feature = "cli")]
@@ -201,6 +202,24 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             }
         }
     }
+    for i in timeout::require_timeout_indices(stmts, options.assume_in_transaction) {
+        let g = &geoms[i];
+        let (line, column) = line_col(sql, g.start);
+        findings.push(Finding {
+            rule_id: timeout::ID.to_string(),
+            severity: Severity::Warning,
+            message: timeout::MESSAGE.to_string(),
+            guidance: timeout::GUIDANCE.to_string(),
+            statement_index: i,
+            location: Location {
+                byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                line,
+                column,
+            },
+            snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+            suppression: None,
+        });
+    }
     let (mut findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);
     for i in txn::concurrently_in_transaction_indices(stmts, options.assume_in_transaction) {
         let g = &geoms[i];
@@ -222,6 +241,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
     }
     let mut known_ids = rules::rule_ids();
     known_ids.push(txn::ID);
+    known_ids.push(timeout::ID);
     suppression::resolve(
         sql,
         &geoms,
@@ -275,21 +295,27 @@ mod tests {
         let sql = "CREATE INDEX i ON t (x);\n\nALTER TABLE t ALTER COLUMN a TYPE bigint, ALTER COLUMN a SET NOT NULL;\n";
         let f = lint_sql(sql, &LintOptions::default()).unwrap();
 
-        // Order: statement source order, then registry order within a statement.
-        // set-not-null is registered before alter-column-type, so it comes first.
+        // Order: statement source order; within a statement, rule-loop findings
+        // (registry order) precede engine-synthesized findings.
+        // set-not-null is registered before alter-column-type, so it comes first;
+        // require-timeout is synthesized after the rule loop for each statement.
         let ids: Vec<&str> = f.iter().map(|x| x.rule_id.as_str()).collect();
         assert_eq!(
             ids,
             [
                 "add-index-non-concurrent",
+                "require-timeout",
                 "set-not-null",
-                "alter-column-type"
+                "alter-column-type",
+                "require-timeout",
             ]
         );
 
         assert_eq!(f[0].statement_index, 0);
-        assert_eq!(f[1].statement_index, 1);
+        assert_eq!(f[1].statement_index, 0);
         assert_eq!(f[2].statement_index, 1);
+        assert_eq!(f[3].statement_index, 1);
+        assert_eq!(f[4].statement_index, 1);
 
         // location.byte points at the statement's first real token (NOT leading whitespace):
         for finding in &f {
@@ -302,10 +328,10 @@ mod tests {
 
         // line/column: CREATE on line 1, the ALTER on line 3 (after the blank line).
         assert_eq!((f[0].location.line, f[0].location.column), (1, 1));
-        assert_eq!((f[1].location.line, f[1].location.column), (3, 1));
-        assert_eq!(f[2].location.line, 3);
+        assert_eq!((f[2].location.line, f[2].location.column), (3, 1));
+        assert_eq!(f[3].location.line, 3);
 
-        assert!(f[1].snippet.starts_with("ALTER TABLE"));
+        assert!(f[2].snippet.starts_with("ALTER TABLE"));
     }
 
     #[test]
