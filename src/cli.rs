@@ -3,10 +3,11 @@
 //! blocks instead of re-implementing argument parsing, rendering, and gating.
 
 use std::io::Read;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::{
-    gate, lint_input, render_errors, render_human, render_json, FailOn, FileReport, Format,
+    config, gate, lint_input, render_errors, render_human, render_json, FailOn, FileReport, Format,
 };
 
 /// The flags shared by every pgsafe-style CLI. Flatten this into a larger
@@ -16,16 +17,21 @@ use crate::{
 pub struct CommonArgs {
     /// SQL files to lint; use '-' or omit to read from stdin.
     pub paths: Vec<String>,
-    /// Output format.
-    #[arg(long, value_enum, default_value_t = Format::Human)]
-    pub format: Format,
-    /// Minimum finding severity that fails the run (exit code 1).
-    #[arg(long, value_enum, default_value_t = FailOn::Warning)]
-    pub fail_on: FailOn,
-    /// Treat each input as already running inside a transaction (as migration tools that wrap
-    /// each migration do), so CONCURRENTLY index operations are flagged without an explicit BEGIN.
+    /// Output format. (Default: human; overrides the config's `format`.)
+    #[arg(long, value_enum)]
+    pub format: Option<Format>,
+    /// Minimum finding severity that fails the run. (Default: warning; overrides the config's `fail_on`.)
+    #[arg(long, value_enum)]
+    pub fail_on: Option<FailOn>,
+    /// Treat each input as already running inside a transaction.
     #[arg(long)]
     pub in_transaction: bool,
+    /// Use this exact config file (skips discovery).
+    #[arg(long, value_name = "PATH", conflicts_with = "no_config")]
+    pub config: Option<PathBuf>,
+    /// Ignore any `.pgsafe.toml`; use built-in defaults + CLI flags only.
+    #[arg(long)]
+    pub no_config: bool,
 }
 
 /// The `pgsafe` binary's top-level parser.
@@ -45,6 +51,14 @@ pub struct Cli {
 /// exit code (`0` clean, `1` gated findings, `2` parse/IO error).
 #[must_use]
 pub fn run(args: CommonArgs) -> ExitCode {
+    let (config, config_dir) = match load_config(&args) {
+        Ok(c) => c,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            return ExitCode::from(2);
+        }
+    };
+
     let inputs = match read_inputs(&args.paths) {
         Ok(i) => i,
         Err(msg) => {
@@ -53,19 +67,33 @@ pub fn run(args: CommonArgs) -> ExitCode {
         }
     };
 
-    let options = crate::LintOptions {
-        assume_in_transaction: args.in_transaction,
-        ..crate::LintOptions::default()
-    };
+    let fail_on = args.fail_on.or(config.fail_on).unwrap_or(FailOn::Warning);
+    let format = args
+        .format
+        .clone()
+        .or(config.format.clone())
+        .unwrap_or(Format::Human);
+    let assume_in_transaction = args.in_transaction || config.in_transaction.unwrap_or(false);
+    let overrides = config.overrides().clone();
+
     let reports: Vec<FileReport> = inputs
         .into_iter()
-        .map(|(name, sql)| lint_input(name, &sql, &options))
+        .map(|(name, sql)| {
+            let rel = rel_path(&name, config_dir.as_deref());
+            let options = crate::LintOptions {
+                assume_in_transaction,
+                disabled_rules: config.disabled_for(&rel),
+                severity_overrides: overrides.clone(),
+                ..crate::LintOptions::default()
+            };
+            lint_input(name, &sql, &options)
+        })
         .collect();
 
     let had_error = reports.iter().any(|r| r.error.is_some());
-    let had_findings = reports.iter().any(|r| gate(&r.findings, args.fail_on));
+    let had_findings = reports.iter().any(|r| gate(&r.findings, fail_on));
 
-    match args.format {
+    match format {
         Format::Human => {
             eprint!("{}", render_errors(&reports));
             print!("{}", render_human(&reports));
@@ -85,6 +113,42 @@ pub fn run(args: CommonArgs) -> ExitCode {
         ExitCode::from(1)
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// Resolve the active config and the directory it lives in (for relative-path matching).
+/// `--no-config` or "no file discovered" yields an empty default config.
+fn load_config(args: &CommonArgs) -> Result<(config::Config, Option<PathBuf>), String> {
+    if args.no_config {
+        return Ok((config::Config::default(), None));
+    }
+    let path = match &args.config {
+        Some(p) => Some(p.clone()),
+        None => {
+            let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+            config::discover(&cwd)
+        }
+    };
+    match path {
+        Some(p) => {
+            let known = crate::known_rule_ids();
+            let cfg = config::load(&p, &known).map_err(|e| e.to_string())?;
+            let dir = p.parent().map(Path::to_path_buf);
+            Ok((cfg, dir))
+        }
+        None => Ok((config::Config::default(), None)),
+    }
+}
+
+/// A linted file's path made relative to the config dir (best effort), for glob matching.
+fn rel_path(name: &str, config_dir: Option<&Path>) -> String {
+    match config_dir {
+        Some(dir) => Path::new(name)
+            .strip_prefix(dir)
+            .unwrap_or(Path::new(name))
+            .to_string_lossy()
+            .into_owned(),
+        None => name.to_string(),
     }
 }
 

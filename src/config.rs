@@ -3,9 +3,6 @@
 //! `cli` feature. The `Config` type is a format-neutral serde target; the loader
 //! dispatches on file extension so a future YAML format is one match arm away.
 
-// Items are consumed by Task 3 (CLI wiring); suppress dead_code until then.
-#![allow(dead_code)]
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -299,6 +296,16 @@ mod tests {
         let err =
             from_toml_str("[[ignore]]\npath = \"a[\"\nrules=[\"truncate\"]\n", KNOWN).unwrap_err();
         assert!(err.0.contains("glob"));
+    }
+
+    #[test]
+    fn ignore_with_unknown_rule_is_rejected() {
+        let err = from_toml_str(
+            "[[ignore]]\npath = \"legacy/**\"\nrules = [\"typo-rule\"]\n",
+            KNOWN,
+        )
+        .unwrap_err();
+        assert!(err.0.contains("typo-rule"));
     }
 
     #[test]
