@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use globset::Glob;
+use globset::GlobBuilder;
 use serde::Deserialize;
 
 use crate::{FailOn, Format, Severity};
@@ -161,7 +161,9 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
 
     let mut ignores = Vec::new();
     for ig in &raw.ignore {
-        let matcher = Glob::new(&ig.path)
+        let matcher = GlobBuilder::new(&ig.path)
+            .literal_separator(true)
+            .build()
             .map_err(|e| ConfigError(format!("[[ignore]] invalid glob `{}`: {e}", ig.path)))?
             .compile_matcher();
         let mut rules = BTreeSet::new();

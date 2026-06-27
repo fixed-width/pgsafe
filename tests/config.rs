@@ -39,7 +39,9 @@ fn severity_override_changes_gating() {
         "[rules]\nadd-index-non-concurrent = \"warning\"\n",
     )
     .unwrap();
-    run_in(dir.path(), &["--fail-on", "error", "m.sql"]).success();
+    run_in(dir.path(), &["--fail-on", "error", "m.sql"])
+        .success()
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
 }
 
 #[test]
@@ -113,4 +115,47 @@ fn directive_for_a_disabled_rule_is_not_unused() {
     )
     .unwrap();
     run_in(dir.path(), &["m.sql"]).stdout(predicate::str::contains("suppression-unused").not());
+}
+
+#[test]
+fn ignore_matches_when_run_from_a_subdirectory() {
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "[[ignore]]\npath = \"db/legacy/**\"\nrules = [\"drop-table\"]\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join("db/legacy")).unwrap();
+    fs::write(dir.path().join("db/legacy/a.sql"), "DROP TABLE x;\n").unwrap();
+    // Invoked from db/legacy with a path relative to THAT dir; the ignore glob is
+    // written relative to the config dir (repo root) and must still match.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path().join("db/legacy"))
+        .arg("a.sql")
+        .assert()
+        .stdout(predicate::str::contains("drop-table").not());
+}
+
+#[test]
+fn config_fail_on_changes_gating_without_a_cli_flag() {
+    let dir = tempdir().unwrap();
+    // DROP TABLE fires only warnings (drop-table + require-timeout), no errors.
+    fs::write(dir.path().join("m.sql"), "DROP TABLE x;\n").unwrap();
+    // Default fail_on=warning → any finding gates → exit 1.
+    run_in(dir.path(), &["--no-config", "m.sql"])
+        .failure()
+        .code(1);
+    // Config fail_on="error" (no CLI flag) → warnings don't gate → exit 0.
+    fs::write(dir.path().join(".pgsafe.toml"), "fail_on = \"error\"\n").unwrap();
+    run_in(dir.path(), &["m.sql"]).success();
+}
+
+#[test]
+fn missing_explicit_config_fails_with_exit_2() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("m.sql"), "DROP TABLE x;\n").unwrap();
+    run_in(dir.path(), &["--config", "nope.toml", "m.sql"])
+        .failure()
+        .code(2);
 }

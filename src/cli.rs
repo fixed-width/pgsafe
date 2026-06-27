@@ -140,16 +140,30 @@ fn load_config(args: &CommonArgs) -> Result<(config::Config, Option<PathBuf>), S
     }
 }
 
-/// A linted file's path made relative to the config dir (best effort), for glob matching.
+/// A linted file's path made relative to the config dir (for glob matching).
+/// Both the file path and the config dir are absolutized against the current
+/// working directory first, so an ignore glob written relative to the config
+/// dir still matches when pgsafe is invoked from a subdirectory.
 fn rel_path(name: &str, config_dir: Option<&Path>) -> String {
-    match config_dir {
-        Some(dir) => Path::new(name)
-            .strip_prefix(dir)
-            .unwrap_or(Path::new(name))
-            .to_string_lossy()
-            .into_owned(),
-        None => name.to_string(),
-    }
+    let Some(dir) = config_dir else {
+        return name.to_string();
+    };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let abs_name = if Path::new(name).is_absolute() {
+        PathBuf::from(name)
+    } else {
+        cwd.join(name)
+    };
+    let abs_dir = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        cwd.join(dir)
+    };
+    abs_name
+        .strip_prefix(&abs_dir)
+        .unwrap_or(&abs_name)
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn read_inputs(paths: &[String]) -> Result<Vec<(String, String)>, String> {
