@@ -32,6 +32,10 @@ pub struct CommonArgs {
     /// Ignore any `.pgsafe.toml`; use built-in defaults + CLI flags only.
     #[arg(long)]
     pub no_config: bool,
+    /// Lint only the `.sql` files added/modified versus this git ref (e.g. `origin/main`).
+    /// Positional paths become a git pathspec scope; with no paths, the whole repository.
+    #[arg(long, value_name = "REF")]
+    pub git_diff: Option<String>,
 }
 
 /// The `pgsafe` binary's top-level parser.
@@ -59,12 +63,34 @@ pub fn run(args: CommonArgs) -> ExitCode {
         }
     };
 
-    let inputs = match read_inputs(&args.paths) {
-        Ok(i) => i,
-        Err(msg) => {
-            eprintln!("error: {msg}");
-            return ExitCode::from(2);
+    let inputs = match &args.git_diff {
+        Some(reference) => {
+            if args.paths.iter().any(|p| p == "-") {
+                eprintln!("error: `-` (stdin) cannot be combined with --git-diff");
+                return ExitCode::from(2);
+            }
+            let files = match crate::gitdiff::changed_sql_files(reference, &args.paths) {
+                Ok(f) => f,
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    return ExitCode::from(2);
+                }
+            };
+            match read_files(&files) {
+                Ok(i) => i,
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    return ExitCode::from(2);
+                }
+            }
         }
+        None => match read_inputs(&args.paths) {
+            Ok(i) => i,
+            Err(msg) => {
+                eprintln!("error: {msg}");
+                return ExitCode::from(2);
+            }
+        },
     };
 
     let fail_on = args.fail_on.or(config.fail_on).unwrap_or(FailOn::Warning);
@@ -178,6 +204,18 @@ fn read_inputs(paths: &[String]) -> Result<Vec<(String, String)>, String> {
             let sql = std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?;
             out.push((p.clone(), sql));
         }
+    }
+    Ok(out)
+}
+
+/// Read each path into a `(display-name, contents)` pair. Unlike `read_inputs`, an empty
+/// list yields no inputs — it never falls back to stdin, so `--git-diff` with no changed
+/// files lints nothing rather than blocking on stdin.
+fn read_files(paths: &[PathBuf]) -> Result<Vec<(String, String)>, String> {
+    let mut out = Vec::new();
+    for p in paths {
+        let sql = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+        out.push((p.display().to_string(), sql));
     }
     Ok(out)
 }
