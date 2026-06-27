@@ -301,9 +301,6 @@ fn invalid_fail_on_value_is_a_usage_error() {
 
 #[test]
 fn in_transaction_flag_flags_top_level_concurrently() {
-    use assert_cmd::Command;
-    use predicates::prelude::*;
-
     // Without the flag: a top-level CONCURRENTLY index is NOT a concurrently-in-transaction finding.
     Command::cargo_bin("pgsafe")
         .unwrap()
