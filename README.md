@@ -135,6 +135,7 @@ pgsafe migrations/*.sql || exit 1
 | `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
 | `rename` | warning | Renaming a table or column breaks existing queries and ORM mappings that reference the old name |
 | `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
+| `set-access-method` | error | `ALTER TABLE … SET ACCESS METHOD` (PG 15+) rewrites the entire table and rebuilds its indexes under an `ACCESS EXCLUSIVE` lock when the access method changes |
 | `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
 | `set-not-null` | error | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
 | `truncate` | warning | `TRUNCATE` takes an `ACCESS EXCLUSIVE` lock and irreversibly removes all rows; with `CASCADE` the lock propagates to every FK-referencing table |
@@ -163,6 +164,10 @@ partitioned table; the PG 14+ `CONCURRENTLY` form takes only `SHARE UPDATE EXCLU
 flags `ATTACH PARTITION`, which locks the table being attached (`ACCESS EXCLUSIVE`) and scans it to
 validate the partition bound; adding a matching, already-validated `CHECK` constraint first lets the
 attach skip the scan. An attach of a child created empty earlier in the same migration is not flagged.
+
+`set-access-method` flags `ALTER TABLE … SET ACCESS METHOD` (PG 15+): changing a table's access method
+rewrites the whole table under an `ACCESS EXCLUSIVE` lock. The linter can't see the current access
+method, so it flags every `SET ACCESS METHOD` (setting it to the table's current method is a no-op).
 
 ## Severity & gating
 
