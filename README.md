@@ -120,6 +120,7 @@ pgsafe migrations/*.sql || exit 1
 | `add-trigger` | warning | `CREATE TRIGGER` takes a `SHARE ROW EXCLUSIVE` lock and changes behavior for every subsequent write to the table |
 | `add-unique-constraint` | error | Adding a `UNIQUE` constraint inline builds its underlying index while holding `ACCESS EXCLUSIVE` on the table for the whole build |
 | `alter-column-type` | error | `ALTER COLUMN ... TYPE` usually rewrites the whole table under a lock; even a no-rewrite change (e.g. `varchar`→`text` or a precision widen) invalidates cached query plans and prepared statements (`cached plan must not change result type`) |
+| `attach-partition` | warning | `ALTER TABLE … ATTACH PARTITION` locks the table being attached (`ACCESS EXCLUSIVE`) and scans it to validate the partition bound; add a matching validated `CHECK` first to skip the scan |
 | `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
 | `detach-partition-non-concurrent` | error | `ALTER TABLE … DETACH PARTITION` takes `ACCESS EXCLUSIVE` on the parent and the partition, blocking the whole partitioned table; use `… DETACH PARTITION … CONCURRENTLY` (PG 14+) |
 | `drop-column` | warning | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |

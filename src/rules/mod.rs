@@ -33,6 +33,7 @@ mod add_primary_key_without_index;
 mod add_trigger;
 mod add_unique_constraint;
 mod alter_column_type;
+mod attach_partition;
 mod detach_partition_non_concurrent;
 mod drop_column;
 mod drop_constraint;
@@ -77,6 +78,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(drop_constraint::DropConstraint),
         Box::new(add_trigger::AddTrigger),
         Box::new(detach_partition_non_concurrent::DetachPartitionNonConcurrent),
+        Box::new(attach_partition::AttachPartition),
     ]
 });
 
@@ -255,6 +257,7 @@ mod tests {
             "prefer-bigint-primary-key",
             "drop-constraint",
             "add-trigger",
+            "attach-partition",
         ];
         for id in errors {
             assert_eq!(sev[id], Severity::Error, "{id} should be error");
@@ -302,6 +305,7 @@ mod tests {
                 "drop-constraint",
                 "add-trigger",
                 "detach-partition-non-concurrent",
+                "attach-partition",
             ]
         );
     }
