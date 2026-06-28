@@ -349,6 +349,32 @@ fn fail_on_error_gates_on_a_hygiene_error_but_not_on_unused() {
 }
 
 #[test]
+fn require_primary_key_enabled_via_config_fires() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("pgsafe.toml");
+    std::fs::write(&cfg, "[rules]\nrequire-primary-key = true\n").unwrap();
+
+    // Without the config: no finding (off by default).
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg("--no-config")
+        .write_stdin("CREATE TABLE t (id int);")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("require-primary-key").not());
+
+    // With the config enabling it: the finding appears and gates (exit 1).
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--config", cfg.to_str().unwrap()])
+        .write_stdin("CREATE TABLE t (id int);")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("require-primary-key"));
+}
+
+#[test]
 fn version_flag_prints_the_crate_version() {
     Command::cargo_bin("pgsafe")
         .unwrap()
