@@ -79,7 +79,7 @@ pub(crate) fn missing_comments(stmts: &[RawStmt]) -> Vec<(usize, String)> {
         for col in defined_columns(node) {
             let key = format!("{table}.{}", col.colname);
             if !commented_columns.contains(&key) {
-                out.push((i, format!("The column `{}` has no COMMENT.", key)));
+                out.push((i, format!("The column `{key}` has no COMMENT.")));
             }
         }
     }

@@ -68,9 +68,17 @@ mod tests {
     }
 
     #[test]
-    fn create_index_sequence_schema_without_guard_are_flagged() {
+    fn create_index_without_guard_is_flagged() {
         assert_eq!(flagged("CREATE INDEX i ON t (x)"), 1);
+    }
+
+    #[test]
+    fn create_sequence_without_guard_is_flagged() {
         assert_eq!(flagged("CREATE SEQUENCE s"), 1);
+    }
+
+    #[test]
+    fn create_schema_without_guard_is_flagged() {
         assert_eq!(flagged("CREATE SCHEMA app"), 1);
     }
 
