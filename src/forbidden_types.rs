@@ -217,6 +217,24 @@ mod tests {
     }
 
     #[test]
+    fn severity_override_escalates_to_error() {
+        use crate::Severity;
+        let opts = LintOptions {
+            forbidden_column_types: forbid(&[("timestamp", "timestamptz")]),
+            severity_overrides: [("forbidden-column-type".to_string(), Severity::Error)]
+                .into_iter()
+                .collect(),
+            ..LintOptions::default()
+        };
+        let f = lint_sql("CREATE TABLE t (created timestamp)", &opts).unwrap();
+        let hit = f
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire");
+        assert_eq!(hit.severity, Severity::Error);
+    }
+
+    #[test]
     fn passes_on_allowed_type() {
         let f = lint_sql(
             "CREATE TABLE t (created timestamptz)",
