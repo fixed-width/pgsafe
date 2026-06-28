@@ -20,6 +20,7 @@ pub(crate) trait Rule: Send + Sync {
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>);
 }
 
+mod add_trigger;
 mod add_check_without_not_valid;
 mod add_column_generated_stored;
 mod add_column_identity;
@@ -73,6 +74,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(prefer_jsonb::PreferJsonb),
         Box::new(prefer_bigint_primary_key::PreferBigintPrimaryKey),
         Box::new(drop_constraint::DropConstraint),
+        Box::new(add_trigger::AddTrigger),
     ]
 });
 
@@ -231,6 +233,7 @@ mod tests {
             "prefer-jsonb",
             "prefer-bigint-primary-key",
             "drop-constraint",
+            "add-trigger",
         ];
         for id in errors {
             assert_eq!(sev[id], Severity::Error, "{id} should be error");
@@ -276,6 +279,7 @@ mod tests {
                 "prefer-jsonb",
                 "prefer-bigint-primary-key",
                 "drop-constraint",
+                "add-trigger",
             ]
         );
     }
