@@ -682,6 +682,131 @@ fn statements_fail_as_claimed() {
     );
 }
 
+/// A statement whose hazard is (or isn't) that it sequentially scans the table to validate a
+/// constraint — proven deterministically by whether `pg_stat_user_tables.seq_scan` increments. A
+/// plain metadata-only change does not scan; an inline CHECK on `ADD COLUMN` does (even with no
+/// default — NULL rows are still scanned); an inline FK on `ADD COLUMN` with no default does NOT
+/// (NULL is FK-exempt, so Postgres skips the scan). PG15+ only (uses `pg_stat_force_next_flush`
+/// for a deterministic stats read).
+struct ScanCase {
+    rule: &'static str,
+    table: &'static str,
+    setup: &'static str,
+    ddl: &'static str,
+    expect_scan: bool,
+    pg: RangeInclusive<u32>,
+}
+
+fn scan_cases() -> Vec<ScanCase> {
+    vec![
+        ScanCase {
+            rule: "plain ADD COLUMN (baseline — no scan)",
+            table: "proof_scan_plain",
+            setup: "CREATE TABLE proof_scan_plain (id int); \
+                    INSERT INTO proof_scan_plain SELECT g FROM generate_series(1, 1000) g;",
+            ddl: "ALTER TABLE proof_scan_plain ADD COLUMN x int",
+            expect_scan: false,
+            pg: 15..=18,
+        },
+        ScanCase {
+            rule: "add-check-without-not-valid (inline CHECK on ADD COLUMN, no default — scans)",
+            table: "proof_scan_check_nd",
+            setup: "CREATE TABLE proof_scan_check_nd (id int); \
+                    INSERT INTO proof_scan_check_nd SELECT g FROM generate_series(1, 1000) g;",
+            ddl: "ALTER TABLE proof_scan_check_nd ADD COLUMN x int CHECK (x > 5)",
+            expect_scan: true,
+            pg: 15..=18,
+        },
+        ScanCase {
+            rule: "add-fk-without-not-valid (inline FK on ADD COLUMN, no default — does NOT scan)",
+            table: "proof_scan_fk_nd",
+            setup: "DROP TABLE IF EXISTS proof_scan_fk_parent CASCADE; \
+                    CREATE TABLE proof_scan_fk_parent (id int PRIMARY KEY); \
+                    CREATE TABLE proof_scan_fk_nd (id int); \
+                    INSERT INTO proof_scan_fk_nd SELECT g FROM generate_series(1, 1000) g;",
+            ddl: "ALTER TABLE proof_scan_fk_nd ADD COLUMN pid int \
+                  REFERENCES proof_scan_fk_parent(id)",
+            expect_scan: false,
+            pg: 15..=18,
+        },
+    ]
+}
+
+/// `pg_stat_user_tables.seq_scan` for `table`, after forcing the stats collector to flush so the
+/// read is deterministic (PG15+).
+fn seq_scan_count(c: &mut Client, table: &str) -> i64 {
+    c.batch_execute("SELECT pg_stat_force_next_flush()")
+        .expect("force stats flush");
+    c.query_one(
+        "SELECT coalesce(seq_scan, 0) FROM pg_stat_user_tables WHERE relname = $1",
+        &[&table],
+    )
+    .expect("read seq_scan")
+    .get::<_, i64>(0)
+}
+
+#[test]
+#[ignore = "requires DATABASE_URL pointing at a throwaway Postgres (run with --ignored)"]
+fn statements_scan_as_claimed() {
+    let mut client = connect();
+    let major = server_major(
+        client
+            .query_one("SELECT current_setting('server_version_num')::int", &[])
+            .expect("read server_version_num")
+            .get::<_, i32>(0),
+    );
+
+    let mut ran = 0;
+    let mut failures = Vec::new();
+    println!("\n=== pgsafe scan proofs (PostgreSQL {major}) ===");
+    for case in scan_cases() {
+        if !case.pg.contains(&major) {
+            println!("  SKIP {:<34} (out of pg range)", case.rule);
+            continue;
+        }
+        ran += 1;
+        let t = case.table;
+        client
+            .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+            .expect("drop pre-existing");
+        client.batch_execute(case.setup).expect("setup");
+
+        let before = seq_scan_count(&mut client, t);
+        client.batch_execute(case.ddl).expect("run ddl");
+        let after = seq_scan_count(&mut client, t);
+        let scanned = after > before;
+
+        let ok = scanned == case.expect_scan;
+        println!(
+            "  {} {:<60} scanned={} (seq_scan {} -> {})",
+            if ok { "OK  " } else { "FAIL" },
+            case.rule,
+            scanned,
+            before,
+            after
+        );
+        if !ok {
+            failures.push(format!(
+                "{}: expected scan={}, observed scan={}",
+                case.rule, case.expect_scan, scanned
+            ));
+        }
+
+        client
+            .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+            .expect("drop");
+    }
+    if ran == 0 {
+        println!("  (no scan cases apply to PostgreSQL {major} — needs PG15+)");
+        return;
+    }
+    assert!(
+        failures.is_empty(),
+        "scan proofs failed on PostgreSQL {major}:\n{}",
+        failures.join("\n")
+    );
+}
+
 /// The outcome of running a statement while a holder session holds ACCESS SHARE on the table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockOutcome {

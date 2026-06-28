@@ -31,17 +31,16 @@ impl Rule for AddCheckWithoutNotValid {
             }
         }
 
-        // An inline CHECK on an `ADD COLUMN` with a DEFAULT validates the default against every
-        // existing row under the lock (a nullable column with no default is exempt — existing rows
-        // are NULL and a CHECK passes on NULL — so this is scoped to columns that carry a DEFAULT).
-        // The inline form cannot take NOT VALID, so the safe rewrite differs from the constraint form.
+        // An inline CHECK on an `ADD COLUMN` scans the whole table to validate the constraint under
+        // an ACCESS EXCLUSIVE lock — regardless of any DEFAULT, and even with no default (NULL rows
+        // are still scanned; measured ~320ms-1s on 10M rows vs <1ms for a plain ADD COLUMN). The
+        // inline form cannot take NOT VALID, so the safe rewrite differs from the constraint form.
+        // (A same-migration empty table is exempted separately by the new-table tracker.)
         for col in super::columns_being_added(node) {
-            if super::column_has_constraint(col, ConstrType::ConstrCheck)
-                && super::column_has_constraint(col, ConstrType::ConstrDefault)
-            {
+            if super::column_has_constraint(col, ConstrType::ConstrCheck) {
                 out.push(RuleHit {
-                    message: "An inline CHECK on a new column with a DEFAULT validates the default \
-                              against every existing row under an ACCESS EXCLUSIVE lock."
+                    message: "An inline CHECK on a new column scans the whole table to validate it \
+                              under an ACCESS EXCLUSIVE lock."
                         .into(),
                     guidance: "Add the column without the CHECK, then ADD CONSTRAINT ... CHECK (...) \
                                NOT VALID, then VALIDATE CONSTRAINT separately (SHARE UPDATE EXCLUSIVE)."
@@ -93,8 +92,9 @@ mod tests {
     }
 
     #[test]
-    fn ignores_inline_check_on_add_column_without_default() {
-        // No default — existing rows are NULL and a CHECK passes on NULL, so no scan.
+    fn flags_inline_check_on_add_column_without_default() {
+        // Even with no default, the inline CHECK is validated by scanning the table (the NULL rows
+        // are still scanned) under ACCESS EXCLUSIVE — proven by tests/rule_proofs.rs (seq_scan++).
         let findings = lint_sql(
             "ALTER TABLE t ADD COLUMN x int CHECK (x > 0)",
             &LintOptions::default(),
@@ -102,6 +102,6 @@ mod tests {
         .unwrap();
         assert!(findings
             .iter()
-            .all(|f| f.rule_id != "add-check-without-not-valid"));
+            .any(|f| f.rule_id == "add-check-without-not-valid"));
     }
 }
