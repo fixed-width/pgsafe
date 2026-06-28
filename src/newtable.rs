@@ -13,13 +13,22 @@ use crate::Finding;
 /// `RangeVar.relpersistence` for a temporary relation (libpg_query's `RELPERSISTENCE_TEMP`).
 const RELPERSISTENCE_TEMP: &str = "t";
 
-/// `schemaname.relname`, or just `relname` when unqualified.
-pub(crate) fn rangevar_key(rv: &RangeVar) -> String {
-    if rv.schemaname.is_empty() {
-        rv.relname.clone()
+/// A cross-statement table key. The default `public` schema is normalized to bare, so a table
+/// written `t` in one statement and `public.t` in another correlates (`public` is the default
+/// search_path schema); any other schema stays distinct (`app.t` is not `t`). This is what lets the
+/// cross-statement rules (fk-without-covering-index, require-comment, require-columns, the new-table
+/// exemption) match the same table across spellings.
+pub(crate) fn qualified_key(schema: &str, relname: &str) -> String {
+    if schema.is_empty() || schema == "public" {
+        relname.to_string()
     } else {
-        format!("{}.{}", rv.schemaname, rv.relname)
+        format!("{schema}.{relname}")
     }
+}
+
+/// The cross-statement key of a `RangeVar` (see [`qualified_key`]).
+pub(crate) fn rangevar_key(rv: &RangeVar) -> String {
+    qualified_key(&rv.schemaname, &rv.relname)
 }
 
 /// The `RangeVar` of a `CREATE TABLE` the schema-design and policy lints care about: a persistent,
@@ -89,20 +98,24 @@ fn drop_table_key(node: &NodeEnum) -> Option<String> {
     if ObjectType::try_from(d.remove_type) != Ok(ObjectType::ObjectTable) || d.objects.len() != 1 {
         return None;
     }
-    // A drop object is a `List` of the name parts (`["t"]` or `["schema", "t"]`); join to the same
-    // shape as `rangevar_key`.
+    // A drop object is a `List` of the name parts (`["t"]` or `["schema", "t"]`); build the same key
+    // shape as `rangevar_key` (with the default `public` schema normalized to bare).
     let NodeEnum::List(list) = d.objects[0].node.as_ref()? else {
         return None;
     };
-    let parts: Vec<String> = list
+    let parts: Vec<&str> = list
         .items
         .iter()
         .filter_map(|n| match n.node.as_ref() {
-            Some(NodeEnum::String(s)) => Some(s.sval.clone()),
+            Some(NodeEnum::String(s)) => Some(s.sval.as_str()),
             _ => None,
         })
         .collect();
-    (!parts.is_empty()).then(|| parts.join("."))
+    match parts.as_slice() {
+        [relname] => Some(qualified_key("", relname)),
+        [schema, relname] => Some(qualified_key(schema, relname)),
+        _ => None,
+    }
 }
 
 /// The single table a `TRUNCATE` targets, or `None` for a multi-table truncate.
@@ -175,6 +188,13 @@ pub(crate) fn drop_new_table_findings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualified_key_normalizes_public_to_bare() {
+        assert_eq!(qualified_key("", "t"), "t");
+        assert_eq!(qualified_key("public", "t"), "t");
+        assert_eq!(qualified_key("app", "t"), "app.t");
+    }
 
     fn first_node(sql: &str) -> NodeEnum {
         pg_query::parse(sql).unwrap().protobuf.stmts[0]

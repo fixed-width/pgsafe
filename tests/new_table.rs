@@ -8,6 +8,34 @@ fn fires(sql: &str, rule_id: &str) -> bool {
 }
 
 #[test]
+fn public_qualified_correlates_with_bare_table() {
+    // `public` is the default schema, so `public.t` and `t` are the same table: the new-table
+    // exemption correlates across spellings.
+    assert!(!fires(
+        "CREATE TABLE public.t (id int); DROP TABLE t;",
+        "drop-table"
+    ));
+    assert!(!fires(
+        "CREATE TABLE t (id int); TRUNCATE public.t;",
+        "truncate"
+    ));
+    // a bare covering index clears fk-without-covering-index on a public-qualified FK column.
+    assert!(!fires(
+        "CREATE TABLE public.child (pid int REFERENCES parent); CREATE INDEX ON child (pid);",
+        "fk-without-covering-index"
+    ));
+}
+
+#[test]
+fn non_public_schema_stays_distinct() {
+    // `app.t` is not the same table as bare `t`, so the exemption does not apply.
+    assert!(fires(
+        "CREATE TABLE app.t (id int); DROP TABLE t;",
+        "drop-table"
+    ));
+}
+
+#[test]
 fn merge_populated_new_table_still_fires() {
     assert!(fires(
         "CREATE TABLE foo (id int); \
