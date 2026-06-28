@@ -132,34 +132,36 @@ mod tests {
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
     }
 
+    /// The `rename` finding's message for `sql`, asserting the rule fired. Used to pin the
+    /// per-object-kind word in the message (so a swapped match arm is caught).
+    fn rename_message(sql: &str) -> String {
+        lint_sql(sql, &LintOptions::default())
+            .unwrap()
+            .into_iter()
+            .find(|f| f.rule_id == "rename")
+            .expect("rename must fire")
+            .message
+    }
+
     #[test]
     fn flags_function_rename() {
-        let findings = lint_sql(
-            "ALTER FUNCTION get_user(int) RENAME TO fetch_user",
-            &LintOptions::default(),
-        )
-        .unwrap();
-        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+        assert!(
+            rename_message("ALTER FUNCTION get_user(int) RENAME TO fetch_user")
+                .contains("function")
+        );
     }
 
     #[test]
     fn flags_procedure_rename() {
-        let findings = lint_sql(
-            "ALTER PROCEDURE charge(uuid) RENAME TO process_charge",
-            &LintOptions::default(),
-        )
-        .unwrap();
-        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+        assert!(
+            rename_message("ALTER PROCEDURE charge(uuid) RENAME TO process_charge")
+                .contains("procedure")
+        );
     }
 
     #[test]
     fn flags_domain_rename() {
-        let findings = lint_sql(
-            "ALTER DOMAIN us_postal RENAME TO zip",
-            &LintOptions::default(),
-        )
-        .unwrap();
-        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+        assert!(rename_message("ALTER DOMAIN us_postal RENAME TO zip").contains("domain"));
     }
 
     #[test]

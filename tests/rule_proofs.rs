@@ -533,13 +533,24 @@ fn rules_hold_against_real_postgres() {
     );
 }
 
-/// A statement the linter flags because it fails outright on a populated table.
+/// What running an outcome case's DDL should produce.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    /// The DDL fails outright with this SQLSTATE (e.g. `"23502"`).
+    Fails(&'static str),
+    /// The DDL runs to completion — a rejection proof that a non-hazard is allowed (e.g. `REFRESH
+    /// MATERIALIZED VIEW CONCURRENTLY` inside a transaction).
+    Succeeds,
+}
+
+/// A statement whose runtime outcome on a populated table backs (or refutes) a rule: it either fails
+/// with a specific SQLSTATE, or succeeds to prove the operation is allowed.
 struct FailureCase {
     rule: &'static str,
     table: &'static str,
     setup: &'static str,
     ddl: &'static str,
-    sqlstate: &'static str,
+    expect: Expect,
     pg: RangeInclusive<u32>,
 }
 
@@ -551,7 +562,7 @@ fn failure_cases() -> Vec<FailureCase> {
             setup: "CREATE TABLE proof_nn_fail (id int); \
                     INSERT INTO proof_nn_fail SELECT g FROM generate_series(1, 3) g;",
             ddl: "ALTER TABLE proof_nn_fail ADD COLUMN x int NOT NULL",
-            sqlstate: "23502",
+            expect: Expect::Fails("23502"),
             pg: 14..=18,
         },
         FailureCase {
@@ -562,7 +573,7 @@ fn failure_cases() -> Vec<FailureCase> {
                     CREATE TABLE proof_enum (m proof_enum_t);",
             ddl: "BEGIN; ALTER TYPE proof_enum_t ADD VALUE 'b'; \
                   INSERT INTO proof_enum VALUES ('b'); COMMIT;",
-            sqlstate: "55P04",
+            expect: Expect::Fails("55P04"),
             pg: 14..=18,
         },
         // A column-level PRIMARY KEY implies NOT NULL, so adding one to a populated table fails the
@@ -574,7 +585,7 @@ fn failure_cases() -> Vec<FailureCase> {
             setup: "CREATE TABLE proof_pk_fail (id int); \
                     INSERT INTO proof_pk_fail SELECT g FROM generate_series(1, 3) g;",
             ddl: "ALTER TABLE proof_pk_fail ADD COLUMN c int PRIMARY KEY",
-            sqlstate: "23502",
+            expect: Expect::Fails("23502"),
             pg: 14..=18,
         },
         // An inline CHECK on an ADD COLUMN with a DEFAULT is validated against the (defaulted) existing
@@ -585,7 +596,7 @@ fn failure_cases() -> Vec<FailureCase> {
             setup: "CREATE TABLE proof_inline_check (id int); \
                     INSERT INTO proof_inline_check SELECT g FROM generate_series(1, 3) g;",
             ddl: "ALTER TABLE proof_inline_check ADD COLUMN x int DEFAULT 1 CHECK (x > 5)",
-            sqlstate: "23514",
+            expect: Expect::Fails("23514"),
             pg: 14..=18,
         },
         // An inline FK on an ADD COLUMN with a DEFAULT is validated against the (defaulted) existing
@@ -599,12 +610,12 @@ fn failure_cases() -> Vec<FailureCase> {
                     INSERT INTO proof_inline_fk SELECT g FROM generate_series(1, 3) g;",
             ddl: "ALTER TABLE proof_inline_fk ADD COLUMN pid int DEFAULT 999 \
                   REFERENCES proof_inline_fk_parent(id)",
-            sqlstate: "23503",
+            expect: Expect::Fails("23503"),
             pg: 14..=18,
         },
         // REJECTION proof: `REFRESH MATERIALIZED VIEW CONCURRENTLY` IS allowed inside a transaction
         // (unlike CREATE/DROP INDEX CONCURRENTLY), so `concurrently-in-transaction` must NOT flag it.
-        // `sqlstate: "(succeeded)"` asserts the statement runs to completion in a transaction.
+        // `expect: Expect::Succeeds` asserts the statement runs to completion in a transaction.
         FailureCase {
             rule: "refresh-matview-concurrently-allowed-in-txn (must NOT be flagged)",
             table: "proof_refresh_base",
@@ -613,7 +624,7 @@ fn failure_cases() -> Vec<FailureCase> {
                     CREATE MATERIALIZED VIEW proof_refresh_mv AS SELECT id FROM proof_refresh_base; \
                     CREATE UNIQUE INDEX proof_refresh_mv_uidx ON proof_refresh_mv (id);",
             ddl: "BEGIN; REFRESH MATERIALIZED VIEW CONCURRENTLY proof_refresh_mv; COMMIT;",
-            sqlstate: "(succeeded)",
+            expect: Expect::Succeeds,
             pg: 14..=18,
         },
     ]
@@ -645,7 +656,7 @@ fn statements_fail_as_claimed() {
             .expect("drop pre-existing");
         client.batch_execute(case.setup).expect("setup");
 
-        // Run the flagged DDL in autocommit; it must fail with the claimed SQLSTATE.
+        // Run the DDL in autocommit and capture its outcome — a SQLSTATE on failure, or success.
         let got = match client.batch_execute(case.ddl) {
             Ok(()) => "(succeeded)".to_string(),
             Err(e) => e
@@ -656,18 +667,19 @@ fn statements_fail_as_claimed() {
         // A failing ddl that opened an explicit transaction leaves it aborted; roll back so the
         // cleanup DROP below can run. Harmless no-op when there is no open transaction.
         client.batch_execute("ROLLBACK").ok();
-        let ok = got == case.sqlstate;
+        let want = match case.expect {
+            Expect::Fails(sqlstate) => sqlstate,
+            Expect::Succeeds => "(succeeded)",
+        };
+        let ok = got == want;
         println!(
-            "  {} {:<34} sqlstate={}",
+            "  {} {:<34} outcome={}",
             if ok { "OK  " } else { "FAIL" },
             case.rule,
             got
         );
         if !ok {
-            failures.push(format!(
-                "{}: expected failure SQLSTATE {}, got {}",
-                case.rule, case.sqlstate, got
-            ));
+            failures.push(format!("{}: expected {want}, got {got}", case.rule));
         }
 
         client

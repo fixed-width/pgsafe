@@ -92,6 +92,20 @@ fn drop_truncate_rename_on_existing_or_populated_table_still_fire() {
         "CREATE TABLE foo (id int); INSERT INTO foo VALUES (1); DROP TABLE foo;",
         "drop-table"
     ));
+    assert!(fires(
+        "CREATE TABLE foo (id int); INSERT INTO foo VALUES (1); TRUNCATE foo;",
+        "truncate"
+    ));
+    // Multi-table DROP/TRUNCATE is conservatively never exempted (the key extractor returns None),
+    // so even a new-empty table named among several still fires.
+    assert!(fires(
+        "CREATE TABLE foo (id int); DROP TABLE foo, bar;",
+        "drop-table"
+    ));
+    assert!(fires(
+        "CREATE TABLE foo (id int); TRUNCATE foo, bar;",
+        "truncate"
+    ));
 }
 
 #[test]
