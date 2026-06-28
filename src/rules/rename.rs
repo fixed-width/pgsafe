@@ -124,12 +124,9 @@ mod tests {
 
     #[test]
     fn flags_enum_value_rename() {
-        let findings = lint_sql(
-            "ALTER TYPE mood RENAME VALUE 'happy' TO 'glad'",
-            &LintOptions::default(),
-        )
-        .unwrap();
-        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+        assert!(
+            rename_message("ALTER TYPE mood RENAME VALUE 'happy' TO 'glad'").contains("enum value")
+        );
     }
 
     /// The `rename` finding's message for `sql`, asserting the rule fired. Used to pin the

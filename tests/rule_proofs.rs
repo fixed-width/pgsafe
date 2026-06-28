@@ -545,7 +545,7 @@ enum Expect {
 
 /// A statement whose runtime outcome on a populated table backs (or refutes) a rule: it either fails
 /// with a specific SQLSTATE, or succeeds to prove the operation is allowed.
-struct FailureCase {
+struct OutcomeCase {
     rule: &'static str,
     table: &'static str,
     setup: &'static str,
@@ -554,9 +554,9 @@ struct FailureCase {
     pg: RangeInclusive<u32>,
 }
 
-fn failure_cases() -> Vec<FailureCase> {
+fn outcome_cases() -> Vec<OutcomeCase> {
     vec![
-        FailureCase {
+        OutcomeCase {
             rule: "add-column-not-null-no-default",
             table: "proof_nn_fail",
             setup: "CREATE TABLE proof_nn_fail (id int); \
@@ -565,7 +565,7 @@ fn failure_cases() -> Vec<FailureCase> {
             expect: Expect::Fails("23502"),
             pg: 14..=18,
         },
-        FailureCase {
+        OutcomeCase {
             rule: "enum-value-used-in-transaction",
             table: "proof_enum",
             setup: "DROP TYPE IF EXISTS proof_enum_t CASCADE; \
@@ -579,7 +579,7 @@ fn failure_cases() -> Vec<FailureCase> {
         // A column-level PRIMARY KEY implies NOT NULL, so adding one to a populated table fails the
         // same way as an explicit NOT NULL with no default (backs `add-column-not-null-no-default`
         // treating ConstrPrimary as NOT NULL).
-        FailureCase {
+        OutcomeCase {
             rule: "add-column-not-null-no-default (PRIMARY KEY)",
             table: "proof_pk_fail",
             setup: "CREATE TABLE proof_pk_fail (id int); \
@@ -590,7 +590,7 @@ fn failure_cases() -> Vec<FailureCase> {
         },
         // An inline CHECK on an ADD COLUMN with a DEFAULT is validated against the (defaulted) existing
         // rows — a default that violates the check errors, proving the validation happens (not free).
-        FailureCase {
+        OutcomeCase {
             rule: "add-check-without-not-valid (inline on ADD COLUMN with DEFAULT)",
             table: "proof_inline_check",
             setup: "CREATE TABLE proof_inline_check (id int); \
@@ -601,7 +601,7 @@ fn failure_cases() -> Vec<FailureCase> {
         },
         // An inline FK on an ADD COLUMN with a DEFAULT is validated against the (defaulted) existing
         // rows — a default with no matching parent row errors, proving the FK validation happens.
-        FailureCase {
+        OutcomeCase {
             rule: "add-fk-without-not-valid (inline on ADD COLUMN with DEFAULT)",
             table: "proof_inline_fk",
             setup: "DROP TABLE IF EXISTS proof_inline_fk_parent CASCADE; \
@@ -616,7 +616,7 @@ fn failure_cases() -> Vec<FailureCase> {
         // REJECTION proof: `REFRESH MATERIALIZED VIEW CONCURRENTLY` IS allowed inside a transaction
         // (unlike CREATE/DROP INDEX CONCURRENTLY), so `concurrently-in-transaction` must NOT flag it.
         // `expect: Expect::Succeeds` asserts the statement runs to completion in a transaction.
-        FailureCase {
+        OutcomeCase {
             rule: "refresh-matview-concurrently-allowed-in-txn (must NOT be flagged)",
             table: "proof_refresh_base",
             setup: "CREATE TABLE proof_refresh_base (id int); \
@@ -632,7 +632,7 @@ fn failure_cases() -> Vec<FailureCase> {
 
 #[test]
 #[ignore = "requires DATABASE_URL pointing at a throwaway Postgres (run with --ignored)"]
-fn statements_fail_as_claimed() {
+fn statements_outcome_as_claimed() {
     let mut client = connect();
     let major = server_major(
         client
@@ -643,8 +643,8 @@ fn statements_fail_as_claimed() {
 
     let mut ran = 0;
     let mut failures = Vec::new();
-    println!("\n=== pgsafe failure proofs (PostgreSQL {major}) ===");
-    for case in failure_cases() {
+    println!("\n=== pgsafe outcome proofs (PostgreSQL {major}) ===");
+    for case in outcome_cases() {
         if !case.pg.contains(&major) {
             println!("  SKIP {:<34} (out of pg range)", case.rule);
             continue;
@@ -686,10 +686,10 @@ fn statements_fail_as_claimed() {
             .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
             .expect("drop");
     }
-    assert!(ran > 0, "no failure cases applied to PostgreSQL {major}");
+    assert!(ran > 0, "no outcome cases applied to PostgreSQL {major}");
     assert!(
         failures.is_empty(),
-        "failure proofs failed on PostgreSQL {major}:\n{}",
+        "outcome proofs failed on PostgreSQL {major}:\n{}",
         failures.join("\n")
     );
 }
