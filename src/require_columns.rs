@@ -53,7 +53,15 @@ pub(crate) fn missing_required_columns(
         let table = rangevar_key(rv);
         let present = columns.get(&table);
         for req in required {
-            if !present.is_some_and(|s| s.contains(req)) {
+            // Match case-insensitively against PostgreSQL's identifier folding: an unquoted column is
+            // stored lower case in the AST, so fold the required name too. An empty required name is
+            // skipped (it can never name a column). A quoted, mixed-case column keeps its case and is
+            // intentionally not matched. The original `req` is shown in the message.
+            if req.is_empty() {
+                continue;
+            }
+            let needle = req.to_ascii_lowercase();
+            if !present.is_some_and(|s| s.contains(&needle)) {
                 out.push((
                     i,
                     format!("The table `{table}` is missing the required column `{req}`."),
@@ -126,6 +134,24 @@ mod tests {
     }
 
     #[test]
+    fn required_name_matches_case_insensitively() {
+        // a mixed-case required name matches an unquoted (lower-folded) column; still flagged when
+        // the column is genuinely absent.
+        assert!(flagged(
+            "CREATE TABLE t (id int, created_at timestamptz)",
+            &["Created_At"]
+        )
+        .is_empty());
+        assert_eq!(flagged("CREATE TABLE t (id int)", &["Created_At"]).len(), 1);
+    }
+
+    #[test]
+    fn empty_required_name_is_skipped() {
+        // an empty required name can never match a column, but must not flag every table.
+        assert!(flagged("CREATE TABLE t (id int)", &[""]).is_empty());
+    }
+
+    #[test]
     fn column_added_by_later_alter_satisfies() {
         let sql = "CREATE TABLE t (id int);\nALTER TABLE t ADD COLUMN created_at timestamptz;";
         assert!(flagged(sql, &["created_at"]).is_empty());
@@ -159,6 +185,18 @@ mod tests {
     #[test]
     fn off_without_config() {
         let f = lint_sql("CREATE TABLE t (id int)", &LintOptions::default()).unwrap();
+        assert!(f.iter().all(|f| f.rule_id != "require-columns"));
+    }
+
+    #[test]
+    fn mixed_case_lint_options_name_matches_via_lint_sql() {
+        // A direct library caller passing a mixed-case name in LintOptions must not get a false
+        // positive: the rule folds it to match the lower-folded column.
+        let f = lint_sql(
+            "CREATE TABLE t (id int, created_at timestamptz)",
+            &opts(&["Created_At"]),
+        )
+        .unwrap();
         assert!(f.iter().all(|f| f.rule_id != "require-columns"));
     }
 
