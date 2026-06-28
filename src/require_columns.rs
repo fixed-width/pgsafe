@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pg_query::protobuf::RawStmt;
 use pg_query::NodeEnum;
 
-use crate::newtable::rangevar_key;
+use crate::newtable::{lintable_create_relation, rangevar_key};
 use crate::rules::defined_columns;
 
 pub(crate) const ID: &str = "require-columns";
@@ -47,18 +47,9 @@ pub(crate) fn missing_required_columns(
         let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
             continue;
         };
-        let NodeEnum::CreateStmt(c) = node else {
+        let Some(rv) = lintable_create_relation(node) else {
             continue;
         };
-        if c.partbound.is_some() {
-            continue;
-        }
-        let Some(rv) = c.relation.as_ref() else {
-            continue;
-        };
-        if rv.relpersistence == "t" {
-            continue;
-        }
         let table = rangevar_key(rv);
         let present = columns.get(&table);
         for req in required {

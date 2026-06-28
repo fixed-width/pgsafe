@@ -10,6 +10,9 @@ use pg_query::NodeEnum;
 
 use crate::Finding;
 
+/// `RangeVar.relpersistence` for a temporary relation (libpg_query's `RELPERSISTENCE_TEMP`).
+const RELPERSISTENCE_TEMP: &str = "t";
+
 /// `schemaname.relname`, or just `relname` when unqualified.
 pub(crate) fn rangevar_key(rv: &RangeVar) -> String {
     if rv.schemaname.is_empty() {
@@ -17,6 +20,23 @@ pub(crate) fn rangevar_key(rv: &RangeVar) -> String {
     } else {
         format!("{}.{}", rv.schemaname, rv.relname)
     }
+}
+
+/// The `RangeVar` of a `CREATE TABLE` the schema-design and policy lints care about: a persistent,
+/// non-partition-child table. `None` for any other node, a `PARTITION OF` child (it inherits the
+/// parent's columns), or a temporary table.
+pub(crate) fn lintable_create_relation(node: &NodeEnum) -> Option<&RangeVar> {
+    let NodeEnum::CreateStmt(c) = node else {
+        return None;
+    };
+    if c.partbound.is_some() {
+        return None;
+    }
+    let rv = c.relation.as_ref()?;
+    if rv.relpersistence == RELPERSISTENCE_TEMP {
+        return None;
+    }
+    Some(rv)
 }
 
 /// Table created by a bare `CREATE TABLE` (`CreateStmt`). `CREATE TABLE AS`

@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{AlterTableType, ColumnDef, ConstrType, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::rangevar_key;
+use crate::newtable::{lintable_create_relation, rangevar_key};
 use crate::rules::{
     alter_table_cmds, column_base_type, column_has_constraint, defined_columns,
     defined_table_constraints,
@@ -100,18 +100,9 @@ pub(crate) fn nullable_columns(stmts: &[RawStmt]) -> Vec<(usize, String)> {
         let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
             continue;
         };
-        let NodeEnum::CreateStmt(c) = node else {
+        let Some(rv) = lintable_create_relation(node) else {
             continue;
         };
-        if c.partbound.is_some() {
-            continue; // a PARTITION OF child inherits the parent's columns
-        }
-        let Some(rv) = c.relation.as_ref() else {
-            continue;
-        };
-        if rv.relpersistence == "t" {
-            continue; // temporary table
-        }
         let table = rangevar_key(rv);
         let pk_names = pk_column_names(node);
         for col in defined_columns(node) {

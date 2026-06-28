@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{ConstrType, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::rangevar_key;
+use crate::newtable::{lintable_create_relation, rangevar_key};
 use crate::require_not_null::{column_satisfied, columns_set_not_null, pk_column_names};
 use crate::rules::{column_has_constraint, defined_columns, defined_table_constraints};
 
@@ -46,18 +46,9 @@ pub(crate) fn nullable_fk_columns(stmts: &[RawStmt]) -> Vec<(usize, String)> {
         let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
             continue;
         };
-        let NodeEnum::CreateStmt(c) = node else {
+        let Some(rv) = lintable_create_relation(node) else {
             continue;
         };
-        if c.partbound.is_some() {
-            continue;
-        }
-        let Some(rv) = c.relation.as_ref() else {
-            continue;
-        };
-        if rv.relpersistence == "t" {
-            continue;
-        }
         let fk_names = fk_column_names(node);
         if fk_names.is_empty() {
             continue;

@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{ObjectType, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::rangevar_key;
+use crate::newtable::{lintable_create_relation, rangevar_key};
 use crate::rules::defined_columns;
 
 pub(crate) const ID: &str = "require-comment";
@@ -64,16 +64,10 @@ pub(crate) fn missing_comments(stmts: &[RawStmt]) -> Vec<(usize, String)> {
         // table itself to be commented; an `ALTER TABLE … ADD COLUMN` only adds columns (the table
         // was created elsewhere), so its columns are checked but not the table.
         let (table, check_table) = match node {
-            NodeEnum::CreateStmt(c) => {
-                if c.partbound.is_some() {
-                    continue; // a PARTITION OF child inherits the parent's columns
-                }
-                let Some(rv) = c.relation.as_ref() else {
-                    continue;
+            NodeEnum::CreateStmt(_) => {
+                let Some(rv) = lintable_create_relation(node) else {
+                    continue; // partition child or temp table — nothing to require here
                 };
-                if rv.relpersistence == "t" {
-                    continue; // temporary table
-                }
                 (rangevar_key(rv), true)
             }
             NodeEnum::AlterTableStmt(a) => {
