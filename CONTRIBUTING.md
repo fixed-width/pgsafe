@@ -65,10 +65,13 @@ rule ids as stable: add new rules with new ids; do not rename existing ones.
 
 ## Proving rules against real Postgres
 
-Each rule claims a lock and/or rewrite hazard. `tests/rule_proofs.rs` proves those claims
-empirically: it runs each flagged statement against a real Postgres, reads the held lock from
-`pg_locks`, and detects a table rewrite via a `relfilenode` change. These tests are `#[ignore]`d
-(they need a database), so the normal `cargo test` run and the PR gate stay DB-free.
+Each rule claims a lock, rewrite, outright-failure, blocking, or plan-invalidation hazard.
+`tests/rule_proofs.rs` proves those claims empirically against a real Postgres: it reads the held
+lock from `pg_locks`, detects a table rewrite via a `relfilenode` change, confirms statements that
+must fail do (by SQLSTATE), shows a blocking statement blocks a concurrent reader, and shows that a
+non-rewriting `ALTER COLUMN … TYPE` still breaks a cached plan (`cached plan must not change result
+type`). These tests are `#[ignore]`d (they need a database), so the normal `cargo test` run and the
+PR gate stay DB-free.
 
 Run them against one database:
 
