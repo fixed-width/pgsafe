@@ -222,10 +222,11 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
     (line, column)
 }
 
-/// Every lint-rule id: the registered rules plus the engine-synthesized ones
+/// Every lint-rule id: the registered rules plus the engine-synthesized ones, in push order
 /// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`,
-/// `fk-without-covering-index`, `enum-value-used-in-transaction`,
-/// `require-primary-key`, `naming-convention`).
+/// `fk-without-covering-index`, `enum-value-used-in-transaction`, `require-primary-key`,
+/// `require-not-null`, `naming-convention`, `forbidden-column-type`, `require-if-exists`,
+/// `require-comment`, `require-columns`, `forbid-nullable-fk`).
 /// NOT the `suppression-*` hygiene ids.
 pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     let mut ids = rules::rule_ids();
