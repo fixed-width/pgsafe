@@ -30,6 +30,25 @@ impl Rule for AddCheckWithoutNotValid {
                 });
             }
         }
+
+        // An inline CHECK on an `ADD COLUMN` with a DEFAULT validates the default against every
+        // existing row under the lock (a nullable column with no default is exempt — existing rows
+        // are NULL and a CHECK passes on NULL — so this is scoped to columns that carry a DEFAULT).
+        // The inline form cannot take NOT VALID, so the safe rewrite differs from the constraint form.
+        for col in super::columns_being_added(node) {
+            if super::column_has_constraint(col, ConstrType::ConstrCheck)
+                && super::column_has_constraint(col, ConstrType::ConstrDefault)
+            {
+                out.push(RuleHit {
+                    message: "An inline CHECK on a new column with a DEFAULT validates the default \
+                              against every existing row under an ACCESS EXCLUSIVE lock."
+                        .into(),
+                    guidance: "Add the column without the CHECK, then ADD CONSTRAINT ... CHECK (...) \
+                               NOT VALID, then VALIDATE CONSTRAINT separately (SHARE UPDATE EXCLUSIVE)."
+                        .into(),
+                });
+            }
+        }
     }
 }
 
@@ -53,6 +72,31 @@ mod tests {
     fn ignores_check_with_not_valid() {
         let findings = lint_sql(
             "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0) NOT VALID",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        assert!(findings
+            .iter()
+            .all(|f| f.rule_id != "add-check-without-not-valid"));
+    }
+
+    #[test]
+    fn flags_inline_check_on_add_column_with_default() {
+        let findings = lint_sql(
+            "ALTER TABLE t ADD COLUMN x int DEFAULT 1 CHECK (x > 0)",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        assert!(findings
+            .iter()
+            .any(|f| f.rule_id == "add-check-without-not-valid"));
+    }
+
+    #[test]
+    fn ignores_inline_check_on_add_column_without_default() {
+        // No default — existing rows are NULL and a CHECK passes on NULL, so no scan.
+        let findings = lint_sql(
+            "ALTER TABLE t ADD COLUMN x int CHECK (x > 0)",
             &LintOptions::default(),
         )
         .unwrap();

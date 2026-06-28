@@ -24,6 +24,9 @@ impl Rule for Rename {
                 Ok(ObjectType::ObjectSchema) => "schema",
                 Ok(ObjectType::ObjectType) => "type",
                 Ok(ObjectType::ObjectAttribute) => "type attribute",
+                Ok(ObjectType::ObjectFunction) => "function",
+                Ok(ObjectType::ObjectProcedure) => "procedure",
+                Ok(ObjectType::ObjectDomain) => "domain",
                 _ => return,
             },
             // ALTER TYPE ... RENAME VALUE 'old' TO 'new' renames an enum label. ADD VALUE leaves
@@ -123,6 +126,36 @@ mod tests {
     fn flags_enum_value_rename() {
         let findings = lint_sql(
             "ALTER TYPE mood RENAME VALUE 'happy' TO 'glad'",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_function_rename() {
+        let findings = lint_sql(
+            "ALTER FUNCTION get_user(int) RENAME TO fetch_user",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_procedure_rename() {
+        let findings = lint_sql(
+            "ALTER PROCEDURE charge(uuid) RENAME TO process_charge",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_domain_rename() {
+        let findings = lint_sql(
+            "ALTER DOMAIN us_postal RENAME TO zip",
             &LintOptions::default(),
         )
         .unwrap();

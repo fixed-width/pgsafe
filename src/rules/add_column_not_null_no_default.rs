@@ -25,9 +25,15 @@ impl Rule for AddColumnNotNullNoDefault {
             else {
                 continue;
             };
+            // A column-level PRIMARY KEY implies NOT NULL (the parser emits only `ConstrPrimary`, not a
+            // separate `ConstrNotnull`), so `ADD COLUMN c int PRIMARY KEY` on a populated table fails
+            // the same way as an explicit NOT NULL with no default.
             let has_not_null = col.constraints.iter().any(|cn| {
                 matches!(cn.node.as_ref(), Some(NodeEnum::Constraint(con))
-                    if matches!(ConstrType::try_from(con.contype), Ok(ConstrType::ConstrNotnull)))
+                if matches!(
+                    ConstrType::try_from(con.contype),
+                    Ok(ConstrType::ConstrNotnull) | Ok(ConstrType::ConstrPrimary)
+                ))
             });
             let has_default = col.constraints.iter().any(|cn| {
                 matches!(cn.node.as_ref(), Some(NodeEnum::Constraint(con))
