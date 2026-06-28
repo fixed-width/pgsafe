@@ -97,6 +97,35 @@ mod tests {
     }
 
     #[test]
+    fn public_and_bare_correlate() {
+        // `public.t` ≡ `t`: a bare ADD COLUMN satisfies a required column on a public-qualified
+        // CREATE, and the reverse. (Auto-fixed via rangevar_key's public normalization.)
+        assert!(flagged(
+            "CREATE TABLE public.t (id int); ALTER TABLE t ADD COLUMN created_at timestamptz;",
+            &["created_at"]
+        )
+        .is_empty());
+        assert!(flagged(
+            "CREATE TABLE t (id int); ALTER TABLE public.t ADD COLUMN created_at timestamptz;",
+            &["created_at"]
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn non_public_schema_alter_does_not_satisfy() {
+        // app.t is a different table than bare t, so its ADD COLUMN does not satisfy t's requirement.
+        assert_eq!(
+            flagged(
+                "CREATE TABLE t (id int); ALTER TABLE app.t ADD COLUMN created_at timestamptz;",
+                &["created_at"]
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
     fn column_added_by_later_alter_satisfies() {
         let sql = "CREATE TABLE t (id int);\nALTER TABLE t ADD COLUMN created_at timestamptz;";
         assert!(flagged(sql, &["created_at"]).is_empty());

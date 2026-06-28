@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{ObjectType, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::{lintable_create_relation, rangevar_key};
+use crate::newtable::{lintable_create_relation, qualified_key, rangevar_key};
 use crate::rules::defined_columns;
 
 pub(crate) const ID: &str = "require-comment";
@@ -30,6 +30,20 @@ fn object_path(object: Option<&NodeEnum>) -> Vec<String> {
     }
 }
 
+/// The cross-statement key for a commented table (`is_column == false`) or column object path,
+/// normalized the same way as the `CREATE TABLE` side (`rangevar_key` for the table, `table.column`
+/// for the column, with the default `public` schema treated as bare). `None` for an unexpected shape.
+fn comment_key(path: &[String], is_column: bool) -> Option<String> {
+    let parts: Vec<&str> = path.iter().map(String::as_str).collect();
+    match (is_column, parts.as_slice()) {
+        (false, [relname]) => Some(qualified_key("", relname)),
+        (false, [schema, relname]) => Some(qualified_key(schema, relname)),
+        (true, [table, col]) => Some(format!("{}.{col}", qualified_key("", table))),
+        (true, [schema, table, col]) => Some(format!("{}.{col}", qualified_key(schema, table))),
+        _ => None,
+    }
+}
+
 /// `(statement_index, message)` for each new table/column the migration leaves without a COMMENT.
 pub(crate) fn missing_comments(stmts: &[RawStmt]) -> Vec<(usize, String)> {
     let mut commented_tables: BTreeSet<String> = BTreeSet::new();
@@ -40,16 +54,16 @@ pub(crate) fn missing_comments(stmts: &[RawStmt]) -> Vec<(usize, String)> {
         };
         if let NodeEnum::CommentStmt(cs) = node {
             let path = object_path(cs.object.as_ref().and_then(|b| b.node.as_ref()));
-            if path.is_empty() {
-                continue;
-            }
-            let key = path.join(".");
             match ObjectType::try_from(cs.objtype) {
                 Ok(ObjectType::ObjectTable) => {
-                    commented_tables.insert(key);
+                    if let Some(key) = comment_key(&path, false) {
+                        commented_tables.insert(key);
+                    }
                 }
                 Ok(ObjectType::ObjectColumn) => {
-                    commented_columns.insert(key);
+                    if let Some(key) = comment_key(&path, true) {
+                        commented_columns.insert(key);
+                    }
                 }
                 _ => {}
             }
@@ -123,6 +137,23 @@ mod tests {
         let sql = "CREATE TABLE t (id int);\n\
                    COMMENT ON TABLE t IS 'the t table';\n\
                    COMMENT ON COLUMN t.id IS 'identifier';";
+        assert!(messages(sql).is_empty());
+    }
+
+    #[test]
+    fn public_qualified_comment_satisfies_bare_table() {
+        // `public.t` ≡ `t`: a public-qualified COMMENT satisfies a bare-created table and column.
+        let sql = "CREATE TABLE t (id int);\n\
+                   COMMENT ON TABLE public.t IS 'x';\n\
+                   COMMENT ON COLUMN public.t.id IS 'y';";
+        assert!(messages(sql).is_empty());
+    }
+
+    #[test]
+    fn bare_comment_satisfies_public_table() {
+        let sql = "CREATE TABLE public.t (id int);\n\
+                   COMMENT ON TABLE t IS 'x';\n\
+                   COMMENT ON COLUMN t.id IS 'y';";
         assert!(messages(sql).is_empty());
     }
 
