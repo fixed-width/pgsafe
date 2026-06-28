@@ -21,7 +21,9 @@ VERSION=v0.4.1   # set to the latest release tag
 BASE="https://github.com/fixed-width/pgsafe/releases/download/$VERSION"
 curl -fsSLO "$BASE/pgsafe-$TARGET.tar.gz"
 curl -fsSLO "$BASE/pgsafe-$TARGET.tar.gz.sha256"
-sha256sum -c "pgsafe-$TARGET.tar.gz.sha256"
+# verify the checksum (sha256sum on Linux, shasum on macOS):
+command -v sha256sum >/dev/null && sha256sum -c "pgsafe-$TARGET.tar.gz.sha256" \
+  || shasum -a 256 -c "pgsafe-$TARGET.tar.gz.sha256"
 tar xzf "pgsafe-$TARGET.tar.gz"
 ./pgsafe --version
 ```
