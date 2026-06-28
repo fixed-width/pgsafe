@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod enum_value;
 mod fk_index;
+mod forbidden_types;
 mod identifier;
 mod naming;
 mod newtable;
@@ -179,6 +180,9 @@ pub struct LintOptions {
     /// Per-kind naming-convention patterns (raw regex strings). The `naming-convention` rule runs only
     /// when this is non-empty. Default empty.
     pub naming_patterns: BTreeMap<NameKind, String>,
+    /// Forbidden column types mapped to a suggested replacement (raw spellings). The
+    /// `forbidden-column-type` rule runs only when this is non-empty. Default empty.
+    pub forbidden_column_types: BTreeMap<String, String>,
 }
 
 /// Error returned when `pgsafe` cannot process the provided SQL.
@@ -223,6 +227,7 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(require_pk::ID);
     ids.push(require_not_null::ID);
     ids.push(naming::ID);
+    ids.push(forbidden_types::ID);
     ids
 }
 
@@ -454,6 +459,30 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 severity: Severity::Warning,
                 message,
                 guidance: naming::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if !options.forbidden_column_types.is_empty()
+        && !options.disabled_rules.contains(forbidden_types::ID)
+    {
+        for (i, message) in
+            forbidden_types::forbidden_violations(stmts, &options.forbidden_column_types)
+        {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: forbidden_types::ID.to_string(),
+                severity: Severity::Warning,
+                message,
+                guidance: forbidden_types::GUIDANCE.to_string(),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),
