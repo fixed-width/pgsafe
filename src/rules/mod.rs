@@ -44,6 +44,7 @@ mod prefer_jsonb;
 mod refresh_matview_non_concurrent;
 mod reindex_non_concurrent;
 mod rename;
+mod set_access_method;
 mod set_logged_unlogged;
 mod set_not_null;
 mod truncate;
@@ -79,6 +80,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(add_trigger::AddTrigger),
         Box::new(detach_partition_non_concurrent::DetachPartitionNonConcurrent),
         Box::new(attach_partition::AttachPartition),
+        Box::new(set_access_method::SetAccessMethod),
     ]
 });
 
@@ -247,6 +249,7 @@ mod tests {
             "refresh-matview-non-concurrent",
             "add-exclusion-constraint",
             "detach-partition-non-concurrent",
+            "set-access-method",
         ];
         let warnings = [
             "rename",
@@ -306,6 +309,7 @@ mod tests {
                 "add-trigger",
                 "detach-partition-non-concurrent",
                 "attach-partition",
+                "set-access-method",
             ]
         );
     }
