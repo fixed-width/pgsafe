@@ -10,6 +10,9 @@ use pg_query::NodeEnum;
 
 use crate::Finding;
 
+/// `RangeVar.relpersistence` for a temporary relation (libpg_query's `RELPERSISTENCE_TEMP`).
+const RELPERSISTENCE_TEMP: &str = "t";
+
 /// `schemaname.relname`, or just `relname` when unqualified.
 pub(crate) fn rangevar_key(rv: &RangeVar) -> String {
     if rv.schemaname.is_empty() {
@@ -30,7 +33,7 @@ pub(crate) fn lintable_create_relation(node: &NodeEnum) -> Option<&RangeVar> {
         return None;
     }
     let rv = c.relation.as_ref()?;
-    if rv.relpersistence == "t" {
+    if rv.relpersistence == RELPERSISTENCE_TEMP {
         return None;
     }
     Some(rv)

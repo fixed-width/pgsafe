@@ -246,9 +246,10 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids
 }
 
-/// Push one engine-synthesized rule's hits as [`Finding`]s. Each hit is `(statement_index, message,
-/// guidance)`; `rule_id` and `severity` are constant for the rule. Centralizes the location / snippet
-/// / `Finding` construction shared by every synthesized block in [`lint_sql`].
+/// Push one engine-synthesized rule's hits as [`Finding`]s. Each hit is a `(statement_index, message,
+/// guidance)` tuple — the statement index sources the location and snippet, and the message/guidance
+/// are this finding's own. `rule_id` and `severity` are constant for the rule. Centralizes the
+/// location / snippet / `Finding` construction shared by every synthesized block in [`lint_sql`].
 fn push_synthesized(
     findings: &mut Vec<Finding>,
     sql: &str,
@@ -258,6 +259,12 @@ fn push_synthesized(
     hits: impl IntoIterator<Item = (usize, String, String)>,
 ) {
     for (i, message, guidance) in hits {
+        // The index comes from a rule walking these same `stmts`, so it is always in range; assert
+        // it in debug builds to attribute any future rule bug to its source rather than this push.
+        debug_assert!(
+            i < geoms.len(),
+            "synthesized hit index {i} out of range for {rule_id}"
+        );
         let g = &geoms[i];
         let (line, column) = line_col(sql, g.start);
         findings.push(Finding {
