@@ -184,9 +184,10 @@ DROP TABLE legacy_events;
 DROP TABLE old_audit;  -- pgsafe:ignore drop-table  one-off cleanup, off-peak
 ```
 
-- The directive must sit on the line(s) **immediately above** the statement, or
-  **trailing** on the statement's own line.
-- One rule id per directive; stack two directive lines to suppress two rules.
+- Put the directive on the line **directly above** the statement, or **trailing** on
+  the statement's own line — either way it binds to that one statement.
+- Each directive silences **one** rule id. To silence several rules on the same
+  statement, stack the directives one per line on the lines just above it.
 - **A reason is required.** It builds an audit trail and shows up in the PR diff.
 
 Malformed or stale directives are reported (and gate CI) rather than silently
