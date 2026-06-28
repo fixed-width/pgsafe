@@ -375,6 +375,32 @@ fn require_primary_key_enabled_via_config_fires() {
 }
 
 #[test]
+fn forbidden_column_type_via_config_fires() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("pgsafe.toml");
+    std::fs::write(&cfg, "[forbidden-types]\ntimestamp = \"timestamptz\"\n").unwrap();
+
+    // Without the config: no finding.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg("--no-config")
+        .write_stdin("CREATE TABLE t (created timestamp);")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("forbidden-column-type").not());
+
+    // With the config: the finding appears and gates (exit 1).
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--config", cfg.to_str().unwrap()])
+        .write_stdin("CREATE TABLE t (created timestamp);")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("forbidden-column-type"));
+}
+
+#[test]
 fn require_not_null_enabled_via_config_fires() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = dir.path().join("pgsafe.toml");
