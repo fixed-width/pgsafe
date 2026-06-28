@@ -50,6 +50,11 @@ fn introduced_names(node: &NodeEnum) -> Vec<(NameKind, String)> {
         NodeEnum::AlterTableStmt(_) => {
             for col in crate::rules::defined_columns(node) {
                 out.push((NameKind::Column, col.colname.clone()));
+                for con in &col.constraints {
+                    if let Some(NodeEnum::Constraint(cn)) = con.node.as_ref() {
+                        out.push((NameKind::Constraint, cn.conname.clone()));
+                    }
+                }
             }
             for con in crate::rules::defined_table_constraints(node) {
                 out.push((NameKind::Constraint, con.conname.clone()));
@@ -204,6 +209,19 @@ mod tests {
             violations(
                 "ALTER TABLE t ADD COLUMN \"BadCol\" text",
                 &[(NameKind::Column, "^[a-z][a-z0-9_]*$")]
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn alter_add_column_inline_constraint_name_is_checked() {
+        // an inline column-level constraint name on ALTER ... ADD COLUMN is checked, like in CREATE.
+        assert_eq!(
+            violations(
+                "ALTER TABLE t ADD COLUMN x int CONSTRAINT bad CHECK (x > 0)",
+                &[(NameKind::Constraint, "^ck_")]
             )
             .len(),
             1
