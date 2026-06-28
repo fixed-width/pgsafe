@@ -375,6 +375,32 @@ fn require_primary_key_enabled_via_config_fires() {
 }
 
 #[test]
+fn require_not_null_enabled_via_config_fires() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("pgsafe.toml");
+    std::fs::write(&cfg, "[rules]\nrequire-not-null = true\n").unwrap();
+
+    // Without the config: no finding (off by default).
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg("--no-config")
+        .write_stdin("CREATE TABLE t (email text);")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("require-not-null").not());
+
+    // With the config enabling it: the finding appears and gates (exit 1).
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--config", cfg.to_str().unwrap()])
+        .write_stdin("CREATE TABLE t (email text);")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("require-not-null"));
+}
+
+#[test]
 fn version_flag_prints_the_crate_version() {
     Command::cargo_bin("pgsafe")
         .unwrap()
