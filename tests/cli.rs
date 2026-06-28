@@ -437,6 +437,30 @@ fn version_flag_prints_the_crate_version() {
 }
 
 #[test]
+fn require_columns_via_config_fires() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("pgsafe.toml");
+    std::fs::write(&cfg, "required-columns = [\"created_at\"]\n").unwrap();
+
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg("--no-config")
+        .write_stdin("CREATE TABLE t (id int);")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("require-columns").not());
+
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--config", cfg.to_str().unwrap()])
+        .write_stdin("CREATE TABLE t (id int);")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("require-columns"));
+}
+
+#[test]
 fn naming_convention_via_config_fires() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = dir.path().join("pgsafe.toml");

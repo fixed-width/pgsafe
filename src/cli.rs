@@ -88,6 +88,7 @@ impl ResolvedRun {
             severity_overrides: self.config.overrides().clone(),
             naming_patterns: self.config.naming().clone(),
             forbidden_column_types: self.config.forbidden_types().clone(),
+            required_columns: self.config.required_columns().clone(),
             ..LintOptions::default()
         }
     }

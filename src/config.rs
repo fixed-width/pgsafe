@@ -103,6 +103,8 @@ struct RawConfig {
     naming: NamingConfig,
     #[serde(default, rename = "forbidden-types")]
     forbidden_types: BTreeMap<String, String>,
+    #[serde(default, rename = "required-columns")]
+    required_columns: Vec<String>,
 }
 
 /// A validated, compiled config ready for per-file resolution.
@@ -119,6 +121,7 @@ pub(crate) struct Config {
     ignores: Vec<(globset::GlobMatcher, BTreeSet<String>)>, // compiled glob -> ids ("*" expanded)
     naming: BTreeMap<NameKind, String>,
     forbidden_types: BTreeMap<String, String>,
+    required_columns: BTreeSet<String>,
 }
 
 /// Walk up from `start` to the first directory holding a candidate config file,
@@ -244,6 +247,7 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         ignores,
         naming,
         forbidden_types: raw.forbidden_types,
+        required_columns: raw.required_columns.into_iter().collect(),
     })
 }
 
@@ -278,6 +282,11 @@ impl Config {
     /// Forbidden column types → suggested replacement (global).
     pub(crate) fn forbidden_types(&self) -> &BTreeMap<String, String> {
         &self.forbidden_types
+    }
+
+    /// Column names every CREATE TABLE must include (global).
+    pub(crate) fn required_columns(&self) -> &BTreeSet<String> {
+        &self.required_columns
     }
 }
 
@@ -492,6 +501,23 @@ mod tests {
         // match time, never a config error).
         let cfg = from_toml_str("[forbidden-types]\nnotatype = \"text\"\n", KNOWN).unwrap();
         assert!(cfg.forbidden_types().contains_key("notatype"));
+    }
+
+    #[test]
+    fn required_columns_section_compiles() {
+        let cfg = from_toml_str(
+            "required-columns = [\"created_at\", \"updated_at\"]\n",
+            KNOWN,
+        )
+        .unwrap();
+        assert!(cfg.required_columns().contains("created_at"));
+        assert!(cfg.required_columns().contains("updated_at"));
+    }
+
+    #[test]
+    fn required_columns_absent_is_empty() {
+        let cfg = from_toml_str("", KNOWN).unwrap();
+        assert!(cfg.required_columns().is_empty());
     }
 
     #[test]
