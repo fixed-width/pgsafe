@@ -77,7 +77,7 @@ pub struct ResolvedRun {
 
 impl ResolvedRun {
     /// The per-file lint options: `assume_in_transaction` + this file's config `disabled_rules`
-    /// (path-relative) + the global `severity_overrides`.
+    /// (path-relative) + the global `severity_overrides` and `enabled_rules`.
     #[must_use]
     pub fn options_for(&self, name: &str) -> LintOptions {
         let rel = rel_path(name, self.config_dir.as_deref());

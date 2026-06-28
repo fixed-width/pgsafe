@@ -118,6 +118,11 @@ mod tests {
             "CREATE TABLE t (id int); ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY (id);"
         )
         .is_empty());
+        // a PK added via ALTER ... ADD COLUMN ... PRIMARY KEY also counts
+        assert!(
+            flagged("CREATE TABLE t (a int); ALTER TABLE t ADD COLUMN id int PRIMARY KEY;")
+                .is_empty()
+        );
     }
 
     #[test]
