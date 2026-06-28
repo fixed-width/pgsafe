@@ -131,6 +131,7 @@ pgsafe migrations/*.sql || exit 1
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
 | `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
 | `rename` | warning | Renaming a table, column, type, enum value, or other object breaks existing queries, views, and functions that reference the old name |
+| `require-comment` | warning | **(opt-in)** A new table or column left without a `COMMENT` — enable with `[rules] require-comment = true` |
 | `require-if-exists` | warning | **(opt-in)** A `CREATE TABLE/INDEX/SEQUENCE/SCHEMA` without `IF NOT EXISTS`, or a `DROP` without `IF EXISTS` — enable with `[rules] require-if-exists = true` |
 | `require-not-null` | warning | **(opt-in)** A `CREATE TABLE` with a column left nullable — enable with `[rules] require-not-null = true` |
 | `require-primary-key` | warning | **(opt-in)** A `CREATE TABLE` the migration leaves without a primary key — enable with `[rules] require-primary-key = true` |
@@ -215,6 +216,10 @@ money     = "numeric"
 `require-if-exists` enforces idempotent DDL: it flags a `CREATE TABLE`, `CREATE INDEX`, `CREATE
 SEQUENCE`, or `CREATE SCHEMA` written without `IF NOT EXISTS`, and any `DROP` written without `IF
 EXISTS`. Enable with `[rules] require-if-exists = true`.
+
+`require-comment` enforces documentation: every new table and every new column must have a `COMMENT`.
+A `COMMENT ON TABLE`/`COMMENT ON COLUMN` anywhere in the migration (cross-statement) satisfies it.
+Enable with `[rules] require-comment = true`.
 
 ## Severity & gating
 

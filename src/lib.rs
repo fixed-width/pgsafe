@@ -17,6 +17,7 @@ mod identifier;
 mod naming;
 mod newtable;
 mod output;
+mod require_comment;
 mod require_if_exists;
 mod require_not_null;
 mod require_pk;
@@ -230,6 +231,7 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(naming::ID);
     ids.push(forbidden_types::ID);
     ids.push(require_if_exists::ID);
+    ids.push(require_comment::ID);
     ids
 }
 
@@ -507,6 +509,28 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 severity: Severity::Warning,
                 message,
                 guidance: require_if_exists::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if options.enabled_rules.contains(require_comment::ID)
+        && !options.disabled_rules.contains(require_comment::ID)
+    {
+        for (i, message) in require_comment::missing_comments(stmts) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: require_comment::ID.to_string(),
+                severity: Severity::Warning,
+                message,
+                guidance: require_comment::GUIDANCE.to_string(),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),
