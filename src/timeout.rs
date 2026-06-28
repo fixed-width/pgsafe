@@ -43,7 +43,8 @@ fn takes_blocking_lock(node: &NodeEnum) -> bool {
         NodeEnum::IndexStmt(i) => !i.concurrent,
         NodeEnum::RefreshMatViewStmt(r) => !r.concurrent,
         NodeEnum::DropStmt(d) => match ObjectType::try_from(d.remove_type) {
-            Ok(ObjectType::ObjectTable) => true,
+            // DROP TABLE and DROP MATERIALIZED VIEW both take ACCESS EXCLUSIVE on a relation with data.
+            Ok(ObjectType::ObjectTable | ObjectType::ObjectMatview) => true,
             Ok(ObjectType::ObjectIndex) => !d.concurrent,
             _ => false,
         },

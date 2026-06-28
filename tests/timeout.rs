@@ -20,6 +20,7 @@ fn fires_assumed(sql: &str) -> bool {
 fn unguarded_alter_table_fires() {
     assert!(fires("ALTER TABLE t ADD COLUMN c int;"));
     assert!(fires("DROP TABLE t;"));
+    assert!(fires("DROP MATERIALIZED VIEW mv;"));
     assert!(fires("TRUNCATE t;"));
     assert!(fires("VACUUM FULL t;"));
     assert!(fires("CREATE INDEX i ON t (x);"));

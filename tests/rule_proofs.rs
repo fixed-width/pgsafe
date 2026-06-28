@@ -565,6 +565,57 @@ fn failure_cases() -> Vec<FailureCase> {
             sqlstate: "55P04",
             pg: 14..=18,
         },
+        // A column-level PRIMARY KEY implies NOT NULL, so adding one to a populated table fails the
+        // same way as an explicit NOT NULL with no default (backs `add-column-not-null-no-default`
+        // treating ConstrPrimary as NOT NULL).
+        FailureCase {
+            rule: "add-column-not-null-no-default (PRIMARY KEY)",
+            table: "proof_pk_fail",
+            setup: "CREATE TABLE proof_pk_fail (id int); \
+                    INSERT INTO proof_pk_fail SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_pk_fail ADD COLUMN c int PRIMARY KEY",
+            sqlstate: "23502",
+            pg: 14..=18,
+        },
+        // An inline CHECK on an ADD COLUMN with a DEFAULT is validated against the (defaulted) existing
+        // rows — a default that violates the check errors, proving the validation happens (not free).
+        FailureCase {
+            rule: "add-check-without-not-valid (inline on ADD COLUMN with DEFAULT)",
+            table: "proof_inline_check",
+            setup: "CREATE TABLE proof_inline_check (id int); \
+                    INSERT INTO proof_inline_check SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_inline_check ADD COLUMN x int DEFAULT 1 CHECK (x > 5)",
+            sqlstate: "23514",
+            pg: 14..=18,
+        },
+        // An inline FK on an ADD COLUMN with a DEFAULT is validated against the (defaulted) existing
+        // rows — a default with no matching parent row errors, proving the FK validation happens.
+        FailureCase {
+            rule: "add-fk-without-not-valid (inline on ADD COLUMN with DEFAULT)",
+            table: "proof_inline_fk",
+            setup: "DROP TABLE IF EXISTS proof_inline_fk_parent CASCADE; \
+                    CREATE TABLE proof_inline_fk_parent (id int PRIMARY KEY); \
+                    CREATE TABLE proof_inline_fk (id int); \
+                    INSERT INTO proof_inline_fk SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_inline_fk ADD COLUMN pid int DEFAULT 999 \
+                  REFERENCES proof_inline_fk_parent(id)",
+            sqlstate: "23503",
+            pg: 14..=18,
+        },
+        // REJECTION proof: `REFRESH MATERIALIZED VIEW CONCURRENTLY` IS allowed inside a transaction
+        // (unlike CREATE/DROP INDEX CONCURRENTLY), so `concurrently-in-transaction` must NOT flag it.
+        // `sqlstate: "(succeeded)"` asserts the statement runs to completion in a transaction.
+        FailureCase {
+            rule: "refresh-matview-concurrently-allowed-in-txn (must NOT be flagged)",
+            table: "proof_refresh_base",
+            setup: "CREATE TABLE proof_refresh_base (id int); \
+                    INSERT INTO proof_refresh_base SELECT g FROM generate_series(1, 3) g; \
+                    CREATE MATERIALIZED VIEW proof_refresh_mv AS SELECT id FROM proof_refresh_base; \
+                    CREATE UNIQUE INDEX proof_refresh_mv_uidx ON proof_refresh_mv (id);",
+            ddl: "BEGIN; REFRESH MATERIALIZED VIEW CONCURRENTLY proof_refresh_mv; COMMIT;",
+            sqlstate: "(succeeded)",
+            pg: 14..=18,
+        },
     ]
 }
 

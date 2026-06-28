@@ -51,6 +51,41 @@ fn empty_new_table_operations_are_dropped() {
 }
 
 #[test]
+fn drop_truncate_rename_on_new_empty_table_are_dropped() {
+    // A table created empty in the same migration has no data and no traffic, so dropping, truncating,
+    // or renaming it is safe — the findings must be dropped.
+    assert!(!fires(
+        "CREATE TABLE foo (id int); DROP TABLE foo;",
+        "drop-table"
+    ));
+    assert!(!fires(
+        "CREATE TABLE foo (id int); TRUNCATE foo;",
+        "truncate"
+    ));
+    assert!(!fires(
+        "CREATE TABLE foo (id int); ALTER TABLE foo RENAME TO bar;",
+        "rename"
+    ));
+    assert!(!fires(
+        "CREATE TABLE foo (id int, a int); ALTER TABLE foo RENAME COLUMN a TO b;",
+        "rename"
+    ));
+}
+
+#[test]
+fn drop_truncate_rename_on_existing_or_populated_table_still_fire() {
+    // No CREATE in the migration → the table is pre-existing → not exempt.
+    assert!(fires("DROP TABLE foo;", "drop-table"));
+    assert!(fires("TRUNCATE foo;", "truncate"));
+    assert!(fires("ALTER TABLE foo RENAME TO bar;", "rename"));
+    // Populated in the same migration → no longer empty → still fires.
+    assert!(fires(
+        "CREATE TABLE foo (id int); INSERT INTO foo VALUES (1); DROP TABLE foo;",
+        "drop-table"
+    ));
+}
+
+#[test]
 fn populated_new_table_still_fires() {
     // INSERT populates → flagged
     assert!(fires(

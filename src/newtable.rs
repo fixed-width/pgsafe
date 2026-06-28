@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::{AlterTableType, RangeVar, RawStmt};
+use pg_query::protobuf::{AlterTableType, ObjectType, RangeVar, RawStmt};
 use pg_query::NodeEnum;
 
 use crate::Finding;
@@ -60,8 +60,48 @@ fn attach_partition_child(node: &NodeEnum) -> Option<String> {
     })
 }
 
-/// Table an `ALTER TABLE`, `CREATE INDEX`, or `CREATE TRIGGER` operates on. For an
-/// `ALTER TABLE … ATTACH PARTITION`, the operated-on table is the partition child.
+/// The single table a `DROP TABLE` targets, or `None` for a non-table drop or a multi-table
+/// `DROP TABLE a, b` (conservatively not exempted).
+fn drop_table_key(node: &NodeEnum) -> Option<String> {
+    let NodeEnum::DropStmt(d) = node else {
+        return None;
+    };
+    if ObjectType::try_from(d.remove_type) != Ok(ObjectType::ObjectTable) || d.objects.len() != 1 {
+        return None;
+    }
+    // A drop object is a `List` of the name parts (`["t"]` or `["schema", "t"]`); join to the same
+    // shape as `rangevar_key`.
+    let NodeEnum::List(list) = d.objects[0].node.as_ref()? else {
+        return None;
+    };
+    let parts: Vec<String> = list
+        .items
+        .iter()
+        .filter_map(|n| match n.node.as_ref() {
+            Some(NodeEnum::String(s)) => Some(s.sval.clone()),
+            _ => None,
+        })
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("."))
+}
+
+/// The single table a `TRUNCATE` targets, or `None` for a multi-table truncate.
+fn truncate_table_key(node: &NodeEnum) -> Option<String> {
+    let NodeEnum::TruncateStmt(t) = node else {
+        return None;
+    };
+    if t.relations.len() != 1 {
+        return None;
+    }
+    match t.relations[0].node.as_ref()? {
+        NodeEnum::RangeVar(rv) => Some(rangevar_key(rv)),
+        _ => None,
+    }
+}
+
+/// Table an `ALTER TABLE`, `CREATE INDEX`, `CREATE TRIGGER`, `RENAME`, single-table `DROP TABLE`, or
+/// single-table `TRUNCATE` operates on. For an `ALTER TABLE … ATTACH PARTITION`, the operated-on table
+/// is the partition child.
 fn target_table_key(node: &NodeEnum) -> Option<String> {
     if let Some(child) = attach_partition_child(node) {
         return Some(child);
@@ -70,6 +110,9 @@ fn target_table_key(node: &NodeEnum) -> Option<String> {
         NodeEnum::AlterTableStmt(a) => a.relation.as_ref().map(rangevar_key),
         NodeEnum::IndexStmt(i) => i.relation.as_ref().map(rangevar_key),
         NodeEnum::CreateTrigStmt(t) => t.relation.as_ref().map(rangevar_key),
+        NodeEnum::RenameStmt(r) => r.relation.as_ref().map(rangevar_key),
+        NodeEnum::DropStmt(_) => drop_table_key(node),
+        NodeEnum::TruncateStmt(_) => truncate_table_key(node),
         _ => None,
     }
 }
