@@ -16,6 +16,7 @@ mod identifier;
 mod naming;
 mod newtable;
 mod output;
+mod require_not_null;
 mod require_pk;
 mod rules;
 mod suppression;
@@ -220,6 +221,7 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(fk_index::ID);
     ids.push(enum_value::ID);
     ids.push(require_pk::ID);
+    ids.push(require_not_null::ID);
     ids.push(naming::ID);
     ids
 }
@@ -410,6 +412,28 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 severity: Severity::Warning,
                 message: require_pk::MESSAGE.to_string(),
                 guidance: require_pk::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if options.enabled_rules.contains(require_not_null::ID)
+        && !options.disabled_rules.contains(require_not_null::ID)
+    {
+        for (i, message) in require_not_null::nullable_columns(stmts) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: require_not_null::ID.to_string(),
+                severity: Severity::Warning,
+                message,
+                guidance: require_not_null::GUIDANCE.to_string(),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),
