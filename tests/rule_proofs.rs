@@ -718,6 +718,15 @@ fn scan_cases() -> Vec<ScanCase> {
             pg: 15..=18,
         },
         ScanCase {
+            rule: "add-check-without-not-valid (inline CHECK on ADD COLUMN, with default — scans)",
+            table: "proof_scan_check_def",
+            setup: "CREATE TABLE proof_scan_check_def (id int); \
+                    INSERT INTO proof_scan_check_def SELECT g FROM generate_series(1, 1000) g;",
+            ddl: "ALTER TABLE proof_scan_check_def ADD COLUMN x int DEFAULT 1 CHECK (x > 0)",
+            expect_scan: true,
+            pg: 15..=18,
+        },
+        ScanCase {
             rule: "add-fk-without-not-valid (inline FK on ADD COLUMN, no default — does NOT scan)",
             table: "proof_scan_fk_nd",
             setup: "DROP TABLE IF EXISTS proof_scan_fk_parent CASCADE; \
@@ -737,16 +746,22 @@ fn scan_cases() -> Vec<ScanCase> {
 fn seq_scan_count(c: &mut Client, table: &str) -> i64 {
     c.batch_execute("SELECT pg_stat_force_next_flush()")
         .expect("force stats flush");
-    c.query_one(
+    // query_opt + explicit panic: a silent 0 here would hide a fixture bug (a ScanCase whose `table`
+    // does not match the table its `setup` actually creates), making an `expect_scan: false` case
+    // pass vacuously.
+    c.query_opt(
         "SELECT coalesce(seq_scan, 0) FROM pg_stat_user_tables WHERE relname = $1",
         &[&table],
     )
     .expect("read seq_scan")
+    .unwrap_or_else(|| {
+        panic!("table {table:?} not in pg_stat_user_tables — ScanCase.table mismatch?")
+    })
     .get::<_, i64>(0)
 }
 
 #[test]
-#[ignore = "requires DATABASE_URL pointing at a throwaway Postgres (run with --ignored)"]
+#[ignore = "requires DATABASE_URL pointing at a throwaway Postgres, PG15+ for the stats flush (run with --ignored)"]
 fn statements_scan_as_claimed() {
     let mut client = connect();
     let major = server_major(
@@ -760,6 +775,12 @@ fn statements_scan_as_claimed() {
     let mut failures = Vec::new();
     println!("\n=== pgsafe scan proofs (PostgreSQL {major}) ===");
     for case in scan_cases() {
+        // pg_stat_force_next_flush() is PG15+; a case must not claim an older floor.
+        debug_assert!(
+            *case.pg.start() >= 15,
+            "ScanCase {} sets pg floor < 15, but the stats flush needs PG15+",
+            case.rule
+        );
         if !case.pg.contains(&major) {
             println!("  SKIP {:<34} (out of pg range)", case.rule);
             continue;
@@ -797,7 +818,12 @@ fn statements_scan_as_claimed() {
             .expect("drop");
     }
     if ran == 0 {
-        println!("  (no scan cases apply to PostgreSQL {major} — needs PG15+)");
+        // Not a pass — these proofs simply cannot run here (the stats flush is PG15+). Make the skip
+        // loud on stderr so a green result on PG14 is not mistaken for "scan proofs verified".
+        eprintln!(
+            "SKIP statements_scan_as_claimed: PostgreSQL {major} < 15 — pg_stat_force_next_flush \
+             unavailable, scan proofs NOT executed (run against PG15+ to verify)"
+        );
         return;
     }
     assert!(

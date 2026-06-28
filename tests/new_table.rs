@@ -48,6 +48,15 @@ fn empty_new_table_operations_are_dropped() {
         "CREATE TABLE foo (id int); CREATE INDEX i ON foo (id);",
         "add-index-non-concurrent"
     ));
+    // An inline CHECK on ADD COLUMN against a same-migration empty table has nothing to scan.
+    assert!(!fires(
+        "CREATE TABLE foo (id int); ALTER TABLE foo ADD COLUMN x int CHECK (x > 0);",
+        "add-check-without-not-valid"
+    ));
+    assert!(!fires(
+        "CREATE TABLE foo (id int); ALTER TABLE foo ADD COLUMN x int DEFAULT 5 CHECK (x > 0);",
+        "add-check-without-not-valid"
+    ));
 }
 
 #[test]
