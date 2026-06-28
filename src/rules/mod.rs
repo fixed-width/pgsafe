@@ -95,7 +95,7 @@ pub(crate) fn rule_ids() -> Vec<&'static str> {
 }
 
 /// All `AlterTableCmd`s in an `ALTER TABLE` statement (empty for any other node).
-fn alter_table_cmds(node: &NodeEnum) -> Vec<&AlterTableCmd> {
+pub(crate) fn alter_table_cmds(node: &NodeEnum) -> Vec<&AlterTableCmd> {
     let NodeEnum::AlterTableStmt(stmt) = node else {
         return Vec::new();
     };
@@ -152,7 +152,7 @@ pub(crate) fn defined_columns(node: &NodeEnum) -> Vec<&ColumnDef> {
 
 /// The base type name of a column — the last element of its `TypeName.names`, lowercased
 /// (e.g. `json`, `jsonb`, `int4`, `serial`, `varchar`), or `None` if absent.
-fn column_base_type(col: &ColumnDef) -> Option<String> {
+pub(crate) fn column_base_type(col: &ColumnDef) -> Option<String> {
     match col.type_name.as_ref()?.names.last()?.node.as_ref()? {
         NodeEnum::String(s) => Some(s.sval.to_ascii_lowercase()),
         _ => None,

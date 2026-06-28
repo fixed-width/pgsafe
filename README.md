@@ -130,6 +130,7 @@ pgsafe migrations/*.sql || exit 1
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
 | `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
 | `rename` | warning | Renaming a table, column, type, enum value, or other object breaks existing queries, views, and functions that reference the old name |
+| `require-not-null` | warning | **(opt-in)** A `CREATE TABLE` with a column left nullable — enable with `[rules] require-not-null = true` |
 | `require-primary-key` | warning | **(opt-in)** A `CREATE TABLE` the migration leaves without a primary key — enable with `[rules] require-primary-key = true` |
 | `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
 | `set-access-method` | error | `ALTER TABLE … SET ACCESS METHOD` (PG 15+) rewrites the entire table and rebuilds its indexes under an `ACCESS EXCLUSIVE` lock when the access method changes |
@@ -179,6 +180,11 @@ in its own migration, or using it only after the transaction commits, is not fla
 the migration leaves without a primary key (counting a PK added by a later `ALTER TABLE … ADD PRIMARY
 KEY` in the same migration; temp tables and partition children are exempt). Enable it with
 `[rules] require-primary-key = true` (or `= "error"`).
+
+`require-not-null` flags any column a `CREATE TABLE` leaves nullable. A primary-key, identity, or
+serial column counts as non-null, as does a column made `NOT NULL` by a later `ALTER TABLE … ALTER
+COLUMN … SET NOT NULL` in the same migration; temp tables and partition children are exempt. Enable it
+with `[rules] require-not-null = true` (or `= "error"`).
 
 `naming-convention` is a **parameterized** policy lint: configure a regex per identifier kind in a
 `[naming]` section and it flags any name a migration introduces (in `CREATE`/`ALTER`/`RENAME`) that
