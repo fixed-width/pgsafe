@@ -278,6 +278,11 @@ fn add_column_not_null_no_default() {
         "ALTER TABLE t ADD COLUMN c int PRIMARY KEY",
         "add-column-not-null-no-default"
     ));
+    // PRIMARY KEY WITH a default does not hit this rule (it has a default — a different hazard).
+    assert!(!fires(
+        "ALTER TABLE t ADD COLUMN c int PRIMARY KEY DEFAULT 0",
+        "add-column-not-null-no-default"
+    ));
 }
 
 // ── add-column-serial ─────────────────────────────────────────────────────────
