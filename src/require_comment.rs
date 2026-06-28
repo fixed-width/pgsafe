@@ -77,6 +77,8 @@ pub(crate) fn missing_comments(stmts: &[RawStmt]) -> Vec<(usize, String)> {
                 (rangevar_key(rv), true)
             }
             NodeEnum::AlterTableStmt(a) => {
+                // An ALTER's RangeVar carries no persistence flag, so a temp table's ADD COLUMN
+                // cannot be distinguished here (rare; suppress if needed).
                 let Some(rv) = a.relation.as_ref() else {
                     continue;
                 };
@@ -173,6 +175,25 @@ mod tests {
         let sql = "ALTER TABLE t ADD COLUMN secret text;\n\
                    COMMENT ON COLUMN t.secret IS 'the secret';";
         assert!(messages(sql).is_empty());
+    }
+
+    #[test]
+    fn alter_add_multiple_columns_yields_a_finding_each() {
+        assert_eq!(
+            messages("ALTER TABLE t ADD COLUMN a int, ADD COLUMN b text").len(),
+            2
+        );
+    }
+
+    #[test]
+    fn alter_added_column_needs_comment_even_when_table_is_documented() {
+        let sql = "CREATE TABLE t (id int);\n\
+                   COMMENT ON TABLE t IS 'the table';\n\
+                   COMMENT ON COLUMN t.id IS 'pk';\n\
+                   ALTER TABLE t ADD COLUMN secret text;";
+        let m = messages(sql);
+        assert_eq!(m.len(), 1);
+        assert!(m[0].contains("`t.secret`"));
     }
 
     #[test]
