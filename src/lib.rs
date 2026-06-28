@@ -12,11 +12,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod enum_value;
 mod fk_index;
+mod forbid_nullable_fk;
 mod forbidden_types;
 mod identifier;
 mod naming;
 mod newtable;
 mod output;
+mod require_columns;
+mod require_comment;
+mod require_if_exists;
 mod require_not_null;
 mod require_pk;
 mod rules;
@@ -183,6 +187,9 @@ pub struct LintOptions {
     /// Forbidden column types mapped to a suggested replacement (raw spellings). The
     /// `forbidden-column-type` rule runs only when this is non-empty. Default empty.
     pub forbidden_column_types: BTreeMap<String, String>,
+    /// Column names every `CREATE TABLE` must include (raw, folded names). The `require-columns` rule
+    /// runs only when this is non-empty. Default empty.
+    pub required_columns: BTreeSet<String>,
 }
 
 /// Error returned when `pgsafe` cannot process the provided SQL.
@@ -228,6 +235,10 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(require_not_null::ID);
     ids.push(naming::ID);
     ids.push(forbidden_types::ID);
+    ids.push(require_if_exists::ID);
+    ids.push(require_comment::ID);
+    ids.push(require_columns::ID);
+    ids.push(forbid_nullable_fk::ID);
     ids
 }
 
@@ -483,6 +494,95 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 severity: Severity::Warning,
                 message,
                 guidance: forbidden_types::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if options.enabled_rules.contains(require_if_exists::ID)
+        && !options.disabled_rules.contains(require_if_exists::ID)
+    {
+        for (i, message) in require_if_exists::missing_if_exists(stmts) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: require_if_exists::ID.to_string(),
+                severity: Severity::Warning,
+                message,
+                guidance: require_if_exists::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if options.enabled_rules.contains(require_comment::ID)
+        && !options.disabled_rules.contains(require_comment::ID)
+    {
+        for (i, message) in require_comment::missing_comments(stmts) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: require_comment::ID.to_string(),
+                severity: Severity::Warning,
+                message,
+                guidance: require_comment::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if !options.required_columns.is_empty() && !options.disabled_rules.contains(require_columns::ID)
+    {
+        for (i, message) in
+            require_columns::missing_required_columns(stmts, &options.required_columns)
+        {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: require_columns::ID.to_string(),
+                severity: Severity::Warning,
+                message,
+                guidance: require_columns::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if options.enabled_rules.contains(forbid_nullable_fk::ID)
+        && !options.disabled_rules.contains(forbid_nullable_fk::ID)
+    {
+        for (i, message) in forbid_nullable_fk::nullable_fk_columns(stmts) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: forbid_nullable_fk::ID.to_string(),
+                severity: Severity::Warning,
+                message,
+                guidance: forbid_nullable_fk::GUIDANCE.to_string(),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),

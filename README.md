@@ -123,6 +123,7 @@ pgsafe migrations/*.sql || exit 1
 | `drop-table` | warning | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
 | `enum-value-used-in-transaction` | warning | `ALTER TYPE … ADD VALUE` then using that value in the same transaction fails at runtime (`unsafe use of new value`) |
 | `fk-without-covering-index` | warning | A foreign key on a newly added column with no covering index makes every parent change scan and lock the child |
+| `forbid-nullable-fk` | warning | **(opt-in)** A nullable foreign-key column in a `CREATE TABLE` — enable with `[rules] forbid-nullable-fk = true` |
 | `forbidden-column-type` | warning | **(opt-in, `[forbidden-types]`)** A column whose type is in the configured forbidden set — e.g. ban `timestamp` in favor of `timestamptz` |
 | `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
 | `naming-convention` | warning | **(opt-in, `[naming]`)** An introduced name that doesn't match the configured regex for its kind (table/column/index/constraint/sequence/trigger/schema) |
@@ -131,6 +132,9 @@ pgsafe migrations/*.sql || exit 1
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
 | `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
 | `rename` | warning | Renaming a table, column, type, enum value, or other object breaks existing queries, views, and functions that reference the old name |
+| `require-columns` | warning | **(opt-in, `required-columns`)** A `CREATE TABLE` missing a configured required column (e.g. `created_at`) — counts a later `ADD COLUMN` |
+| `require-comment` | warning | **(opt-in)** A new table or column left without a `COMMENT` — enable with `[rules] require-comment = true` |
+| `require-if-exists` | warning | **(opt-in)** A `CREATE TABLE/INDEX/SEQUENCE/SCHEMA` without `IF NOT EXISTS`, or a `DROP` without `IF EXISTS` — enable with `[rules] require-if-exists = true` |
 | `require-not-null` | warning | **(opt-in)** A `CREATE TABLE` with a column left nullable — enable with `[rules] require-not-null = true` |
 | `require-primary-key` | warning | **(opt-in)** A `CREATE TABLE` the migration leaves without a primary key — enable with `[rules] require-primary-key = true` |
 | `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
@@ -210,6 +214,25 @@ timestamp = "timestamptz"   # require time zones
 char      = "text"
 money     = "numeric"
 ```
+
+`require-if-exists` enforces idempotent DDL: it flags a `CREATE TABLE`, `CREATE INDEX`, `CREATE
+SEQUENCE`, or `CREATE SCHEMA` written without `IF NOT EXISTS`, and any `DROP` written without `IF
+EXISTS`. Enable with `[rules] require-if-exists = true`.
+
+`require-comment` enforces documentation: every new table and every new column must have a `COMMENT`.
+A `COMMENT ON TABLE`/`COMMENT ON COLUMN` anywhere in the migration (cross-statement) satisfies it.
+Enable with `[rules] require-comment = true`.
+
+`require-columns` enforces that every `CREATE TABLE` includes a configured set of columns (a column
+added by a later `ALTER TABLE … ADD COLUMN` in the same migration counts). Configure the list:
+
+```toml
+required-columns = ["created_at", "updated_at"]
+```
+
+`forbid-nullable-fk` flags a foreign-key column a `CREATE TABLE` leaves nullable — inline `… REFERENCES`
+columns and the columns of a table-level `FOREIGN KEY (…)`. A column made `NOT NULL` (inline, via a
+primary key, or by a later `SET NOT NULL`) is not flagged. Enable with `[rules] forbid-nullable-fk = true`.
 
 ## Severity & gating
 
