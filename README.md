@@ -118,7 +118,7 @@ pgsafe migrations/*.sql || exit 1
 | `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
 | `detach-partition-non-concurrent` | error | `ALTER TABLE … DETACH PARTITION` takes `ACCESS EXCLUSIVE` on the parent and the partition, blocking the whole partitioned table; use `… DETACH PARTITION … CONCURRENTLY` (PG 14+) |
 | `drop-column` | warning | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |
-| `drop-constraint` | warning | `DROP CONSTRAINT` removes a foreign-key/check/unique integrity guarantee and can break logical-replication replica identity |
+| `drop-constraint` | warning | `DROP CONSTRAINT` removes a foreign-key/check/unique/primary-key integrity guarantee and can break logical-replication replica identity |
 | `drop-index-non-concurrent` | error | `DROP INDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on the table, blocking reads and writes while it runs |
 | `drop-table` | warning | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
 | `enum-value-used-in-transaction` | warning | `ALTER TYPE … ADD VALUE` then using that value in the same transaction fails at runtime (`unsafe use of new value`) |
@@ -127,9 +127,9 @@ pgsafe migrations/*.sql || exit 1
 | `forbidden-column-type` | warning | **(opt-in, `[forbidden-types]`)** A column whose type is in the configured forbidden set — e.g. ban `timestamp` in favor of `timestamptz` |
 | `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
 | `naming-convention` | warning | **(opt-in, `[naming]`)** An introduced name that doesn't match the configured regex for its kind (table/column/index/constraint/sequence/trigger/schema) |
-| `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
-| `prefer-jsonb` | warning | A `json` column has no equality/ordering operators (`SELECT DISTINCT`/`GROUP BY` fail); use `jsonb` |
-| `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
+| `prefer-bigint-primary-key` | warning | A small-integer primary key overflows (`smallint`/`smallserial` at ~32k rows, `int`/`serial` at ~2.1B); use `bigint`/`bigserial`/identity |
+| `prefer-jsonb` | warning | A `json` column has no equality/ordering operators (`SELECT DISTINCT`, `GROUP BY`, `UNION`, `ORDER BY` fail); use `jsonb` |
+| `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds (`WITH NO DATA`, which only empties the view, is not flagged) |
 | `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
 | `rename` | warning | Renaming a table, column, type, enum value, or other object breaks existing queries, views, and functions that reference the old name |
 | `require-columns` | warning | **(opt-in, `required-columns`)** A `CREATE TABLE` missing a configured required column (e.g. `created_at`) — counts a later `ADD COLUMN` |
@@ -137,7 +137,7 @@ pgsafe migrations/*.sql || exit 1
 | `require-if-exists` | warning | **(opt-in)** A `CREATE TABLE/INDEX/SEQUENCE/SCHEMA` without `IF NOT EXISTS`, or a `DROP` without `IF EXISTS` — enable with `[rules] require-if-exists = true` |
 | `require-not-null` | warning | **(opt-in)** A `CREATE TABLE` with a column left nullable — enable with `[rules] require-not-null = true` |
 | `require-primary-key` | warning | **(opt-in)** A `CREATE TABLE` the migration leaves without a primary key — enable with `[rules] require-primary-key = true` |
-| `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
+| `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP TABLE`, non-`CONCURRENTLY` `DROP INDEX`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
 | `set-access-method` | error | `ALTER TABLE … SET ACCESS METHOD` (PG 15+) rewrites the entire table and rebuilds its indexes under an `ACCESS EXCLUSIVE` lock when the access method changes |
 | `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
 | `set-not-null` | error | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
@@ -232,8 +232,9 @@ required-columns = ["created_at", "updated_at"]
 ```
 
 `forbid-nullable-fk` flags a foreign-key column a `CREATE TABLE` leaves nullable — inline `… REFERENCES`
-columns and the columns of a table-level `FOREIGN KEY (…)`. A column made `NOT NULL` (inline, via a
-primary key, or by a later `SET NOT NULL`) is not flagged. Enable with `[rules] forbid-nullable-fk = true`.
+columns and the columns of a table-level `FOREIGN KEY (…)`. A column that is `NOT NULL` (inline, via a
+primary key, an identity column, a serial type, or a later `SET NOT NULL`) is not flagged. Enable with
+`[rules] forbid-nullable-fk = true`.
 
 ## Severity & gating
 
