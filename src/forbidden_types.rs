@@ -41,7 +41,7 @@ pub(crate) fn forbidden_violations(
     forbidden: &BTreeMap<String, String>,
 ) -> Vec<(usize, String)> {
     // canonical leaf -> (configured spelling, replacement). Built once. A spelling that fails to
-    // canonicalize is skipped (config validation already rejects those).
+    // canonicalize is skipped (skipped silently — an unrecognized type matches nothing).
     let lookup: BTreeMap<String, (&str, &str)> = forbidden
         .iter()
         .filter_map(|(ty, repl)| canonical_type(ty).map(|c| (c, (ty.as_str(), repl.as_str()))))

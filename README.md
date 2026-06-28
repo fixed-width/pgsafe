@@ -123,6 +123,7 @@ pgsafe migrations/*.sql || exit 1
 | `drop-table` | warning | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
 | `enum-value-used-in-transaction` | warning | `ALTER TYPE … ADD VALUE` then using that value in the same transaction fails at runtime (`unsafe use of new value`) |
 | `fk-without-covering-index` | warning | A foreign key on a newly added column with no covering index makes every parent change scan and lock the child |
+| `forbidden-column-type` | warning | **(opt-in, `[forbidden-types]`)** A column whose type is in the configured forbidden set — e.g. ban `timestamp` in favor of `timestamptz` |
 | `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
 | `naming-convention` | warning | **(opt-in, `[naming]`)** An introduced name that doesn't match the configured regex for its kind (table/column/index/constraint/sequence/trigger/schema) |
 | `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
@@ -194,6 +195,20 @@ doesn't match. A malformed pattern is a config error.
 [naming]
 table  = "^[a-z][a-z0-9_]*$"   # snake_case
 index  = "^(ix|uq)_"
+```
+
+`forbidden-column-type` is a **parameterized** policy lint: configure a `[forbidden-types]` map of
+disallowed type → suggested replacement, and it flags any column a migration introduces (in `CREATE
+TABLE` or `ADD COLUMN`) whose type is forbidden. Types are matched through the PostgreSQL parser, so
+`char` matches `char(10)`/`character`, and `timestamp` is distinct from `timestamptz`. Extension types
+(`citext`, `hstore`, …) work too. A type the parser doesn't recognize simply matches nothing, so check
+spelling — a misspelled type is silently inert rather than an error.
+
+```toml
+[forbidden-types]
+timestamp = "timestamptz"   # require time zones
+char      = "text"
+money     = "numeric"
 ```
 
 ## Severity & gating

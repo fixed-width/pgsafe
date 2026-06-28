@@ -101,6 +101,8 @@ struct RawConfig {
     ignore: Vec<RawIgnore>,
     #[serde(default)]
     naming: NamingConfig,
+    #[serde(default, rename = "forbidden-types")]
+    forbidden_types: BTreeMap<String, String>,
 }
 
 /// A validated, compiled config ready for per-file resolution.
@@ -116,6 +118,7 @@ pub(crate) struct Config {
     enabled: BTreeSet<String>,             // global `[rules] = true` / `= "sev"`
     ignores: Vec<(globset::GlobMatcher, BTreeSet<String>)>, // compiled glob -> ids ("*" expanded)
     naming: BTreeMap<NameKind, String>,
+    forbidden_types: BTreeMap<String, String>,
 }
 
 /// Walk up from `start` to the first directory holding a candidate config file,
@@ -240,6 +243,7 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         enabled,
         ignores,
         naming,
+        forbidden_types: raw.forbidden_types,
     })
 }
 
@@ -269,6 +273,11 @@ impl Config {
     /// Per-kind naming-convention patterns (global).
     pub(crate) fn naming(&self) -> &BTreeMap<NameKind, String> {
         &self.naming
+    }
+
+    /// Forbidden column types → suggested replacement (global).
+    pub(crate) fn forbidden_types(&self) -> &BTreeMap<String, String> {
+        &self.forbidden_types
     }
 }
 
@@ -466,6 +475,23 @@ mod tests {
     #[test]
     fn naming_unknown_kind_is_a_config_error() {
         assert!(from_toml_str("[naming]\ntabel = \"^t_\"\n", KNOWN).is_err());
+    }
+
+    #[test]
+    fn forbidden_types_section_compiles() {
+        let cfg = from_toml_str("[forbidden-types]\ntimestamp = \"timestamptz\"\n", KNOWN).unwrap();
+        assert_eq!(
+            cfg.forbidden_types().get("timestamp").map(String::as_str),
+            Some("timestamptz")
+        );
+    }
+
+    #[test]
+    fn forbidden_types_unknown_type_compiles_without_error() {
+        // No type-existence validation: an unrecognized type is carried verbatim (it is inert at
+        // match time, never a config error).
+        let cfg = from_toml_str("[forbidden-types]\nnotatype = \"text\"\n", KNOWN).unwrap();
+        assert!(cfg.forbidden_types().contains_key("notatype"));
     }
 
     #[test]
