@@ -15,6 +15,7 @@ mod fk_index;
 mod identifier;
 mod newtable;
 mod output;
+mod require_pk;
 mod rules;
 mod suppression;
 mod timeout;
@@ -131,6 +132,9 @@ pub struct LintOptions {
     /// Rule ids that must not run for this input (their findings — and, for synthesized rules,
     /// their syntheses — are skipped). Default empty.
     pub disabled_rules: BTreeSet<String>,
+    /// Rule ids explicitly enabled in config. Required for opt-in (default-off) policy rules to run;
+    /// has no effect on rules that are on by default. Default empty.
+    pub enabled_rules: BTreeSet<String>,
     /// Per-rule severity overrides applied to the findings this run emits, keyed by rule id.
     /// Default empty.
     pub severity_overrides: BTreeMap<String, Severity>,
@@ -165,7 +169,8 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 
 /// Every lint-rule id: the registered rules plus the engine-synthesized ones
 /// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`,
-/// `fk-without-covering-index`, `enum-value-used-in-transaction`).
+/// `fk-without-covering-index`, `enum-value-used-in-transaction`,
+/// `require-primary-key`).
 /// NOT the `suppression-*` hygiene ids.
 pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     let mut ids = rules::rule_ids();
@@ -174,6 +179,7 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(identifier::ID);
     ids.push(fk_index::ID);
     ids.push(enum_value::ID);
+    ids.push(require_pk::ID);
     ids
 }
 
@@ -341,6 +347,28 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 severity: Severity::Warning,
                 message: enum_value::MESSAGE.to_string(),
                 guidance: enum_value::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if options.enabled_rules.contains(require_pk::ID)
+        && !options.disabled_rules.contains(require_pk::ID)
+    {
+        for i in require_pk::tables_without_primary_key(stmts) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: require_pk::ID.to_string(),
+                severity: Severity::Warning,
+                message: require_pk::MESSAGE.to_string(),
+                guidance: require_pk::GUIDANCE.to_string(),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),

@@ -135,6 +135,7 @@ pgsafe migrations/*.sql || exit 1
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
 | `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
 | `rename` | warning | Renaming a table, column, type, enum value, or other object breaks existing queries, views, and functions that reference the old name |
+| `require-primary-key` | warning | **(opt-in)** A `CREATE TABLE` the migration leaves without a primary key — enable with `[rules] require-primary-key = true` |
 | `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
 | `set-access-method` | error | `ALTER TABLE … SET ACCESS METHOD` (PG 15+) rewrites the entire table and rebuilds its indexes under an `ACCESS EXCLUSIVE` lock when the access method changes |
 | `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
@@ -177,6 +178,12 @@ an enum value. (`ALTER TYPE … ADD VALUE` is a different operation and is not f
 transaction that added it, so it flags `ALTER TYPE … ADD VALUE 'v'` when `'v'` is used in a later
 statement of the same transaction (`--in-transaction` covers tool-wrapped migrations). Adding the value
 in its own migration, or using it only after the transaction commits, is not flagged.
+
+**Policy lints (opt-in).** Some rules enforce team conventions rather than flag a hazard, so they are
+**off by default** and enabled per-project in the config: `require-primary-key` flags a `CREATE TABLE`
+the migration leaves without a primary key (counting a PK added by a later `ALTER TABLE … ADD PRIMARY
+KEY` in the same migration; temp tables and partition children are exempt). Enable it with
+`[rules] require-primary-key = true` (or `= "error"`).
 
 ## Severity & gating
 
