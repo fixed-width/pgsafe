@@ -124,6 +124,7 @@ pgsafe migrations/*.sql || exit 1
 | `enum-value-used-in-transaction` | warning | `ALTER TYPE … ADD VALUE` then using that value in the same transaction fails at runtime (`unsafe use of new value`) |
 | `fk-without-covering-index` | warning | A foreign key on a newly added column with no covering index makes every parent change scan and lock the child |
 | `forbidden-column-type` | warning | **(opt-in, `[forbidden-types]`)** A column whose type is in the configured forbidden set — e.g. ban `timestamp` in favor of `timestamptz` |
+| `require-if-exists` | warning | **(opt-in)** A `CREATE TABLE/INDEX/SEQUENCE/SCHEMA` without `IF NOT EXISTS`, or a `DROP` without `IF EXISTS` — enable with `[rules] require-if-exists = true` |
 | `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
 | `naming-convention` | warning | **(opt-in, `[naming]`)** An introduced name that doesn't match the configured regex for its kind (table/column/index/constraint/sequence/trigger/schema) |
 | `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
@@ -210,6 +211,10 @@ timestamp = "timestamptz"   # require time zones
 char      = "text"
 money     = "numeric"
 ```
+
+`require-if-exists` enforces idempotent DDL: it flags a `CREATE TABLE`, `CREATE INDEX`, `CREATE
+SEQUENCE`, or `CREATE SCHEMA` written without `IF NOT EXISTS`, and any `DROP` written without `IF
+EXISTS`. Enable with `[rules] require-if-exists = true`.
 
 ## Severity & gating
 
