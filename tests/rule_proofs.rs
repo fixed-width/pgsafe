@@ -544,15 +544,28 @@ struct FailureCase {
 }
 
 fn failure_cases() -> Vec<FailureCase> {
-    vec![FailureCase {
-        rule: "add-column-not-null-no-default",
-        table: "proof_nn_fail",
-        setup: "CREATE TABLE proof_nn_fail (id int); \
-                INSERT INTO proof_nn_fail SELECT g FROM generate_series(1, 3) g;",
-        ddl: "ALTER TABLE proof_nn_fail ADD COLUMN x int NOT NULL",
-        sqlstate: "23502",
-        pg: 14..=18,
-    }]
+    vec![
+        FailureCase {
+            rule: "add-column-not-null-no-default",
+            table: "proof_nn_fail",
+            setup: "CREATE TABLE proof_nn_fail (id int); \
+                    INSERT INTO proof_nn_fail SELECT g FROM generate_series(1, 3) g;",
+            ddl: "ALTER TABLE proof_nn_fail ADD COLUMN x int NOT NULL",
+            sqlstate: "23502",
+            pg: 14..=18,
+        },
+        FailureCase {
+            rule: "enum-value-used-in-transaction",
+            table: "proof_enum",
+            setup: "DROP TYPE IF EXISTS proof_enum_t CASCADE; \
+                    CREATE TYPE proof_enum_t AS ENUM ('a'); \
+                    CREATE TABLE proof_enum (m proof_enum_t);",
+            ddl: "BEGIN; ALTER TYPE proof_enum_t ADD VALUE 'b'; \
+                  INSERT INTO proof_enum VALUES ('b'); COMMIT;",
+            sqlstate: "55P04",
+            pg: 14..=18,
+        },
+    ]
 }
 
 #[test]
@@ -589,6 +602,9 @@ fn statements_fail_as_claimed() {
                 .map(|c| c.code().to_string())
                 .unwrap_or_else(|| "(no sqlstate)".to_string()),
         };
+        // A failing ddl that opened an explicit transaction leaves it aborted; roll back so the
+        // cleanup DROP below can run. Harmless no-op when there is no open transaction.
+        client.batch_execute("ROLLBACK").ok();
         let ok = got == case.sqlstate;
         println!(
             "  {} {:<34} sqlstate={}",
