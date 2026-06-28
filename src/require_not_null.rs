@@ -32,7 +32,7 @@ const SERIAL_TYPES: &[&str] = &[
 
 /// `(table_key, column_name)` pairs made non-null by an `ALTER TABLE … ALTER COLUMN … SET NOT NULL`
 /// anywhere in the migration.
-fn columns_set_not_null(stmts: &[RawStmt]) -> BTreeSet<(String, String)> {
+pub(crate) fn columns_set_not_null(stmts: &[RawStmt]) -> BTreeSet<(String, String)> {
     let mut out = BTreeSet::new();
     for raw in stmts {
         let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
@@ -56,7 +56,7 @@ fn columns_set_not_null(stmts: &[RawStmt]) -> BTreeSet<(String, String)> {
 
 /// The names of columns covered by a primary key declared in this statement — an inline column
 /// `PRIMARY KEY` and a table-level `PRIMARY KEY (…)` (a composite PK covers each key column).
-fn pk_column_names(node: &NodeEnum) -> BTreeSet<String> {
+pub(crate) fn pk_column_names(node: &NodeEnum) -> BTreeSet<String> {
     let mut names = BTreeSet::new();
     for col in defined_columns(node) {
         if column_has_constraint(col, ConstrType::ConstrPrimary) {
@@ -77,7 +77,7 @@ fn pk_column_names(node: &NodeEnum) -> BTreeSet<String> {
 
 /// Whether a column is guaranteed non-null by its own definition, this statement's primary key, or a
 /// later `SET NOT NULL` on its table.
-fn column_satisfied(
+pub(crate) fn column_satisfied(
     col: &ColumnDef,
     table: &str,
     pk_names: &BTreeSet<String>,

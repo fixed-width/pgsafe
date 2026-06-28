@@ -123,6 +123,7 @@ pgsafe migrations/*.sql || exit 1
 | `drop-table` | warning | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
 | `enum-value-used-in-transaction` | warning | `ALTER TYPE … ADD VALUE` then using that value in the same transaction fails at runtime (`unsafe use of new value`) |
 | `fk-without-covering-index` | warning | A foreign key on a newly added column with no covering index makes every parent change scan and lock the child |
+| `forbid-nullable-fk` | warning | **(opt-in)** A nullable foreign-key column in a `CREATE TABLE` — enable with `[rules] forbid-nullable-fk = true` |
 | `forbidden-column-type` | warning | **(opt-in, `[forbidden-types]`)** A column whose type is in the configured forbidden set — e.g. ban `timestamp` in favor of `timestamptz` |
 | `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
 | `naming-convention` | warning | **(opt-in, `[naming]`)** An introduced name that doesn't match the configured regex for its kind (table/column/index/constraint/sequence/trigger/schema) |
@@ -228,6 +229,10 @@ added by a later `ALTER TABLE … ADD COLUMN` in the same migration counts). Con
 ```toml
 required-columns = ["created_at", "updated_at"]
 ```
+
+`forbid-nullable-fk` flags a foreign-key column a `CREATE TABLE` leaves nullable — inline `… REFERENCES`
+columns and the columns of a table-level `FOREIGN KEY (…)`. A column made `NOT NULL` (inline, via a
+primary key, or by a later `SET NOT NULL`) is not flagged. Enable with `[rules] forbid-nullable-fk = true`.
 
 ## Severity & gating
 

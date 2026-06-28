@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod enum_value;
 mod fk_index;
+mod forbid_nullable_fk;
 mod forbidden_types;
 mod identifier;
 mod naming;
@@ -237,6 +238,7 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(require_if_exists::ID);
     ids.push(require_comment::ID);
     ids.push(require_columns::ID);
+    ids.push(forbid_nullable_fk::ID);
     ids
 }
 
@@ -559,6 +561,28 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 severity: Severity::Warning,
                 message,
                 guidance: require_columns::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if options.enabled_rules.contains(forbid_nullable_fk::ID)
+        && !options.disabled_rules.contains(forbid_nullable_fk::ID)
+    {
+        for (i, message) in forbid_nullable_fk::nullable_fk_columns(stmts) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: forbid_nullable_fk::ID.to_string(),
+                severity: Severity::Warning,
+                message,
+                guidance: forbid_nullable_fk::GUIDANCE.to_string(),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),
