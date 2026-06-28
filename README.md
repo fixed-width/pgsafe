@@ -202,9 +202,10 @@ ignored, so a typo can never leave a real hazard un-suppressed:
 
 ## Configuration
 
-Drop a `.pgsafe.toml` at your repo root to set defaults, turn rules off, change a rule's
+Drop a `pgsafe.toml` at your repo root to set defaults, turn rules off, change a rule's
 severity, or ignore findings by path. pgsafe walks up from the current directory to the
-nearest `.pgsafe.toml` (stopping at the `.git` boundary). Every key is optional.
+nearest config file (stopping at the `.git` boundary). The hidden name `.pgsafe.toml` also
+works; if a directory holds both, the plain `pgsafe.toml` wins. Every key is optional.
 
 ```toml
 # Default flags (an explicit CLI flag still wins over these).
@@ -226,7 +227,7 @@ rules = ["drop-table"]       # ignore only these rules here
 ```
 
 **Precedence:** an explicit CLI flag beats the config file, which beats the built-in default.
-**Discovery:** `--config <path>` uses an exact file; `--no-config` ignores any `.pgsafe.toml`.
+**Discovery:** `--config <path>` uses an exact file; `--no-config` ignores any config file.
 **Validation is strict:** an unknown key, an unknown rule id, a bad value, or a bad glob fails
 the run (exit 2) rather than being silently ignored — so a typo can't quietly disable a check.
 
@@ -243,7 +244,7 @@ pgsafe --since db/migrate/0042_last_legacy.sql db/migrate/*.sql
 
 Set the cutoff **once** when you adopt pgsafe — every new migration sorts after it and is linted,
 every legacy one before it is skipped, and you never have to bump it. You can also set it in
-`.pgsafe.toml` so CI just runs `pgsafe db/migrate/*.sql`:
+`pgsafe.toml` so CI just runs `pgsafe db/migrate/*.sql`:
 
 ```toml
 since = "db/migrate/0042_last_legacy.sql"

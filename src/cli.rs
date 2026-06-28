@@ -31,7 +31,7 @@ pub struct CommonArgs {
     /// Use this exact config file (skips discovery).
     #[arg(long, value_name = "PATH", conflicts_with = "no_config")]
     pub config: Option<PathBuf>,
-    /// Ignore any `.pgsafe.toml`; use built-in defaults + CLI flags only.
+    /// Ignore any `pgsafe.toml` / `.pgsafe.toml`; use built-in defaults + CLI flags only.
     #[arg(long)]
     pub no_config: bool,
     /// Lint only the `.sql` files added/modified versus this git ref (e.g. `origin/main`).
@@ -39,7 +39,7 @@ pub struct CommonArgs {
     #[arg(long, value_name = "REF")]
     pub git_diff: Option<String>,
     /// Lint only migration files whose path sorts after this cutoff (the last legacy migration).
-    /// Also settable as `since = "..."` in `.pgsafe.toml`; this flag overrides it.
+    /// Also settable as `since = "..."` in the config file; this flag overrides it.
     #[arg(long, value_name = "CUTOFF", conflicts_with = "git_diff")]
     pub since: Option<String>,
 }
@@ -228,7 +228,7 @@ fn select_inputs(
             let effective_since = args.since.clone().or(config.since.clone());
             if effective_since.is_some() && args.paths.iter().any(|p| p == "-") {
                 return Err(
-                    "`-` (stdin) cannot be combined with a `since` cutoff (--since or .pgsafe.toml)"
+                    "`-` (stdin) cannot be combined with a `since` cutoff (--since or the config file)"
                         .to_string(),
                 );
             }
