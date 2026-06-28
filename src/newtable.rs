@@ -11,7 +11,7 @@ use pg_query::NodeEnum;
 use crate::Finding;
 
 /// `schemaname.relname`, or just `relname` when unqualified.
-fn rangevar_key(rv: &RangeVar) -> String {
+pub(crate) fn rangevar_key(rv: &RangeVar) -> String {
     if rv.schemaname.is_empty() {
         rv.relname.clone()
     } else {
@@ -40,11 +40,12 @@ fn populated_table_key(node: &NodeEnum) -> Option<String> {
     }
 }
 
-/// Table an `ALTER TABLE` / `CREATE INDEX` operates on.
+/// Table an `ALTER TABLE`, `CREATE INDEX`, or `CREATE TRIGGER` operates on.
 fn target_table_key(node: &NodeEnum) -> Option<String> {
     match node {
         NodeEnum::AlterTableStmt(a) => a.relation.as_ref().map(rangevar_key),
         NodeEnum::IndexStmt(i) => i.relation.as_ref().map(rangevar_key),
+        NodeEnum::CreateTrigStmt(t) => t.relation.as_ref().map(rangevar_key),
         _ => None,
     }
 }
@@ -119,6 +120,13 @@ mod tests {
         );
         assert_eq!(
             target_table_key(&first_node("CREATE INDEX i ON foo (x)")).as_deref(),
+            Some("foo")
+        );
+        assert_eq!(
+            target_table_key(&first_node(
+                "CREATE TRIGGER trg AFTER INSERT ON foo FOR EACH ROW EXECUTE FUNCTION f()"
+            ))
+            .as_deref(),
             Some("foo")
         );
         assert_eq!(
