@@ -1,4 +1,4 @@
-//! `.pgsafe.toml` config: discovery, parsing, strict validation, and per-file
+//! `pgsafe.toml` (or `.pgsafe.toml`) config: discovery, parsing, strict validation, and per-file
 //! resolution into the rule settings the engine consumes. Only built with the
 //! `cli` feature. The `Config` type is a format-neutral serde target; the loader
 //! dispatches on file extension so a future YAML format is one match arm away.
@@ -12,7 +12,11 @@ use serde::Deserialize;
 use crate::{FailOn, Format, Severity};
 
 /// The candidate config filenames, in priority order (v1: TOML only).
-const CANDIDATES: &[&str] = &[".pgsafe.toml"];
+/// Config file names discovery looks for, in precedence order: the plain
+/// `pgsafe.toml` first (preferred — dotfiles are easy to overlook and many tools
+/// skip them), then the hidden `.pgsafe.toml`. If a directory holds both, the
+/// non-dotfile wins.
+const CANDIDATES: &[&str] = &["pgsafe.toml", ".pgsafe.toml"];
 
 /// A config problem. Rendered by the CLI as `error: {0}` and mapped to exit 2.
 #[derive(Debug)]
@@ -338,5 +342,31 @@ mod tests {
         let sub = other.path().join("sub");
         std::fs::create_dir_all(&sub).unwrap();
         assert_eq!(discover(&sub), None);
+    }
+
+    #[test]
+    fn discover_finds_the_non_dotfile_name() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".git")).unwrap();
+        std::fs::write(root.path().join("pgsafe.toml"), "fail_on = \"error\"\n").unwrap();
+        let deep = root.path().join("db/migrations");
+        std::fs::create_dir_all(&deep).unwrap();
+        assert_eq!(
+            discover(&deep).as_deref(),
+            Some(root.path().join("pgsafe.toml").as_path())
+        );
+    }
+
+    #[test]
+    fn discover_prefers_the_non_dotfile_when_both_exist() {
+        // A directory holding both names is ambiguous; the visible `pgsafe.toml` wins.
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join(".git")).unwrap();
+        std::fs::write(root.path().join("pgsafe.toml"), "fail_on = \"error\"\n").unwrap();
+        std::fs::write(root.path().join(".pgsafe.toml"), "fail_on = \"never\"\n").unwrap();
+        assert_eq!(
+            discover(root.path()).as_deref(),
+            Some(root.path().join("pgsafe.toml").as_path())
+        );
     }
 }
