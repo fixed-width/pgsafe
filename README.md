@@ -10,23 +10,17 @@ It requires no database connection and no network access.
 
 ### Download a prebuilt binary
 
-Each [release](https://github.com/fixed-width/pgsafe/releases/latest) attaches static Linux and macOS
-binaries. Download the archive for your platform, verify its checksum, and extract:
+Each [release](https://github.com/fixed-width/pgsafe/releases/latest) attaches static, self-contained
+Linux and macOS binaries. To install:
 
-```sh
-# Targets: x86_64-unknown-linux-musl  aarch64-unknown-linux-musl
-#          x86_64-apple-darwin        aarch64-apple-darwin
-TARGET=x86_64-unknown-linux-musl
-VERSION=v0.4.1   # set to the latest release tag
-BASE="https://github.com/fixed-width/pgsafe/releases/download/$VERSION"
-curl -fsSLO "$BASE/pgsafe-$TARGET.tar.gz"
-curl -fsSLO "$BASE/pgsafe-$TARGET.tar.gz.sha256"
-# verify the checksum (sha256sum on Linux, shasum on macOS):
-command -v sha256sum >/dev/null && sha256sum -c "pgsafe-$TARGET.tar.gz.sha256" \
-  || shasum -a 256 -c "pgsafe-$TARGET.tar.gz.sha256"
-tar xzf "pgsafe-$TARGET.tar.gz"
-./pgsafe --version
-```
+1. From the [latest release](https://github.com/fixed-width/pgsafe/releases/latest), download the
+   archive for your platform:
+   - Linux: `pgsafe-x86_64-unknown-linux-musl.tar.gz` or `pgsafe-aarch64-unknown-linux-musl.tar.gz`
+   - macOS: `pgsafe-x86_64-apple-darwin.tar.gz` or `pgsafe-aarch64-apple-darwin.tar.gz`
+2. Verify it against the matching `.sha256` file attached to the release.
+3. Extract the archive and move the `pgsafe` binary onto your `PATH`.
+
+Then `pgsafe --version` confirms the install.
 
 ### Build from source
 
