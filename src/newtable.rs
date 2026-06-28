@@ -19,6 +19,23 @@ pub(crate) fn rangevar_key(rv: &RangeVar) -> String {
     }
 }
 
+/// The `RangeVar` of a `CREATE TABLE` the schema-design and policy lints care about: a persistent,
+/// non-partition-child table. `None` for any other node, a `PARTITION OF` child (it inherits the
+/// parent's columns), or a temporary table.
+pub(crate) fn lintable_create_relation(node: &NodeEnum) -> Option<&RangeVar> {
+    let NodeEnum::CreateStmt(c) = node else {
+        return None;
+    };
+    if c.partbound.is_some() {
+        return None;
+    }
+    let rv = c.relation.as_ref()?;
+    if rv.relpersistence == "t" {
+        return None;
+    }
+    Some(rv)
+}
+
 /// Table created by a bare `CREATE TABLE` (`CreateStmt`). `CREATE TABLE AS`
 /// (`CreateTableAsStmt`) is intentionally excluded — it is populated.
 fn created_table_key(node: &NodeEnum) -> Option<String> {

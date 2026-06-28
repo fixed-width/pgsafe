@@ -246,6 +246,37 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids
 }
 
+/// Push one engine-synthesized rule's hits as [`Finding`]s. Each hit is `(statement_index, message,
+/// guidance)`; `rule_id` and `severity` are constant for the rule. Centralizes the location / snippet
+/// / `Finding` construction shared by every synthesized block in [`lint_sql`].
+fn push_synthesized(
+    findings: &mut Vec<Finding>,
+    sql: &str,
+    geoms: &[suppression::StatementGeom],
+    rule_id: &str,
+    severity: Severity,
+    hits: impl IntoIterator<Item = (usize, String, String)>,
+) {
+    for (i, message, guidance) in hits {
+        let g = &geoms[i];
+        let (line, column) = line_col(sql, g.start);
+        findings.push(Finding {
+            rule_id: rule_id.to_string(),
+            severity,
+            message,
+            guidance,
+            statement_index: i,
+            location: Location {
+                byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                line,
+                column,
+            },
+            snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+            suppression: None,
+        });
+    }
+}
+
 /// Lint `sql` under `options`, returning findings in source order.
 ///
 /// The SQL is parsed with the real PostgreSQL parser, so `sql` must be valid
@@ -306,297 +337,213 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
         }
     }
     if !options.disabled_rules.contains(timeout::ID) {
-        for i in timeout::require_timeout_indices(stmts, options.assume_in_transaction) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: timeout::ID.to_string(),
-                severity: Severity::Warning,
-                message: timeout::MESSAGE.to_string(),
-                guidance: timeout::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            timeout::ID,
+            Severity::Warning,
+            timeout::require_timeout_indices(stmts, options.assume_in_transaction)
+                .into_iter()
+                .map(|i| {
+                    (
+                        i,
+                        timeout::MESSAGE.to_string(),
+                        timeout::GUIDANCE.to_string(),
+                    )
+                }),
+        );
     }
     let (mut findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);
     if !options.disabled_rules.contains(txn::ID) {
-        for i in txn::concurrently_in_transaction_indices(stmts, options.assume_in_transaction) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: txn::ID.to_string(),
-                severity: Severity::Error,
-                message: txn::MESSAGE.to_string(),
-                guidance: txn::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            txn::ID,
+            Severity::Error,
+            txn::concurrently_in_transaction_indices(stmts, options.assume_in_transaction)
+                .into_iter()
+                .map(|i| (i, txn::MESSAGE.to_string(), txn::GUIDANCE.to_string())),
+        );
     }
     if !options.disabled_rules.contains(identifier::ID) {
-        for (off, name, len) in identifier::long_identifiers(sql) {
-            let Some(i) = geoms.iter().position(|g| off >= g.start && off < g.end) else {
-                continue;
-            };
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: identifier::ID.to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "Identifier `{name}` is {len} bytes; PostgreSQL truncates identifiers to 63 \
-                     bytes, so two names sharing a 63-byte prefix silently collide."
-                ),
-                guidance: "Shorten the identifier to 63 bytes or fewer so PostgreSQL does not \
-                           silently truncate it."
-                    .into(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            identifier::ID,
+            Severity::Warning,
+            identifier::long_identifiers(sql).into_iter().filter_map(|(off, name, len)| {
+                let i = geoms.iter().position(|g| off >= g.start && off < g.end)?;
+                Some((
+                    i,
+                    format!(
+                        "Identifier `{name}` is {len} bytes; PostgreSQL truncates identifiers to 63 \
+                         bytes, so two names sharing a 63-byte prefix silently collide."
+                    ),
+                    "Shorten the identifier to 63 bytes or fewer so PostgreSQL does not silently \
+                     truncate it."
+                        .to_string(),
+                ))
+            }),
+        );
     }
     if !options.disabled_rules.contains(fk_index::ID) {
-        for (i, table, col) in fk_index::fk_without_index(stmts) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: fk_index::ID.to_string(),
-                severity: Severity::Warning,
-                message: format!(
-                    "Foreign key on `{table}` column `{col}` has no covering index; referential \
-                     checks and ON DELETE/UPDATE actions on the parent scan and lock the child on \
-                     every change."
-                ),
-                guidance: format!(
-                    "Add a covering index on the referencing column, e.g. \
-                     `CREATE INDEX CONCURRENTLY ON {table} ({col});`."
-                ),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            fk_index::ID,
+            Severity::Warning,
+            fk_index::fk_without_index(stmts).into_iter().map(|(i, table, col)| {
+                (
+                    i,
+                    format!(
+                        "Foreign key on `{table}` column `{col}` has no covering index; referential \
+                         checks and ON DELETE/UPDATE actions on the parent scan and lock the child on \
+                         every change."
+                    ),
+                    format!(
+                        "Add a covering index on the referencing column, e.g. \
+                         `CREATE INDEX CONCURRENTLY ON {table} ({col});`."
+                    ),
+                )
+            }),
+        );
     }
     if !options.disabled_rules.contains(enum_value::ID) {
-        for i in enum_value::unsafe_enum_value_indices(sql, stmts, options.assume_in_transaction) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: enum_value::ID.to_string(),
-                severity: Severity::Warning,
-                message: enum_value::MESSAGE.to_string(),
-                guidance: enum_value::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            enum_value::ID,
+            Severity::Warning,
+            enum_value::unsafe_enum_value_indices(sql, stmts, options.assume_in_transaction)
+                .into_iter()
+                .map(|i| {
+                    (
+                        i,
+                        enum_value::MESSAGE.to_string(),
+                        enum_value::GUIDANCE.to_string(),
+                    )
+                }),
+        );
     }
     if options.enabled_rules.contains(require_pk::ID)
         && !options.disabled_rules.contains(require_pk::ID)
     {
-        for i in require_pk::tables_without_primary_key(stmts) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: require_pk::ID.to_string(),
-                severity: Severity::Warning,
-                message: require_pk::MESSAGE.to_string(),
-                guidance: require_pk::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            require_pk::ID,
+            Severity::Warning,
+            require_pk::tables_without_primary_key(stmts)
+                .into_iter()
+                .map(|i| {
+                    (
+                        i,
+                        require_pk::MESSAGE.to_string(),
+                        require_pk::GUIDANCE.to_string(),
+                    )
+                }),
+        );
     }
     if options.enabled_rules.contains(require_not_null::ID)
         && !options.disabled_rules.contains(require_not_null::ID)
     {
-        for (i, message) in require_not_null::nullable_columns(stmts) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: require_not_null::ID.to_string(),
-                severity: Severity::Warning,
-                message,
-                guidance: require_not_null::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            require_not_null::ID,
+            Severity::Warning,
+            require_not_null::nullable_columns(stmts)
+                .into_iter()
+                .map(|(i, message)| (i, message, require_not_null::GUIDANCE.to_string())),
+        );
     }
     if !options.naming_patterns.is_empty() && !options.disabled_rules.contains(naming::ID) {
-        for (i, message) in naming::naming_violations(stmts, &options.naming_patterns) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: naming::ID.to_string(),
-                severity: Severity::Warning,
-                message,
-                guidance: naming::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            naming::ID,
+            Severity::Warning,
+            naming::naming_violations(stmts, &options.naming_patterns)
+                .into_iter()
+                .map(|(i, message)| (i, message, naming::GUIDANCE.to_string())),
+        );
     }
     if !options.forbidden_column_types.is_empty()
         && !options.disabled_rules.contains(forbidden_types::ID)
     {
-        for (i, message) in
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            forbidden_types::ID,
+            Severity::Warning,
             forbidden_types::forbidden_violations(stmts, &options.forbidden_column_types)
-        {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: forbidden_types::ID.to_string(),
-                severity: Severity::Warning,
-                message,
-                guidance: forbidden_types::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+                .into_iter()
+                .map(|(i, message)| (i, message, forbidden_types::GUIDANCE.to_string())),
+        );
     }
     if options.enabled_rules.contains(require_if_exists::ID)
         && !options.disabled_rules.contains(require_if_exists::ID)
     {
-        for (i, message) in require_if_exists::missing_if_exists(stmts) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: require_if_exists::ID.to_string(),
-                severity: Severity::Warning,
-                message,
-                guidance: require_if_exists::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            require_if_exists::ID,
+            Severity::Warning,
+            require_if_exists::missing_if_exists(stmts)
+                .into_iter()
+                .map(|(i, message)| (i, message, require_if_exists::GUIDANCE.to_string())),
+        );
     }
     if options.enabled_rules.contains(require_comment::ID)
         && !options.disabled_rules.contains(require_comment::ID)
     {
-        for (i, message) in require_comment::missing_comments(stmts) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: require_comment::ID.to_string(),
-                severity: Severity::Warning,
-                message,
-                guidance: require_comment::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            require_comment::ID,
+            Severity::Warning,
+            require_comment::missing_comments(stmts)
+                .into_iter()
+                .map(|(i, message)| (i, message, require_comment::GUIDANCE.to_string())),
+        );
     }
     if !options.required_columns.is_empty() && !options.disabled_rules.contains(require_columns::ID)
     {
-        for (i, message) in
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            require_columns::ID,
+            Severity::Warning,
             require_columns::missing_required_columns(stmts, &options.required_columns)
-        {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: require_columns::ID.to_string(),
-                severity: Severity::Warning,
-                message,
-                guidance: require_columns::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+                .into_iter()
+                .map(|(i, message)| (i, message, require_columns::GUIDANCE.to_string())),
+        );
     }
     if options.enabled_rules.contains(forbid_nullable_fk::ID)
         && !options.disabled_rules.contains(forbid_nullable_fk::ID)
     {
-        for (i, message) in forbid_nullable_fk::nullable_fk_columns(stmts) {
-            let g = &geoms[i];
-            let (line, column) = line_col(sql, g.start);
-            findings.push(Finding {
-                rule_id: forbid_nullable_fk::ID.to_string(),
-                severity: Severity::Warning,
-                message,
-                guidance: forbid_nullable_fk::GUIDANCE.to_string(),
-                statement_index: i,
-                location: Location {
-                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
-                    line,
-                    column,
-                },
-                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
-                suppression: None,
-            });
-        }
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            forbid_nullable_fk::ID,
+            Severity::Warning,
+            forbid_nullable_fk::nullable_fk_columns(stmts)
+                .into_iter()
+                .map(|(i, message)| (i, message, forbid_nullable_fk::GUIDANCE.to_string())),
+        );
     }
     if !options.severity_overrides.is_empty() {
         for f in &mut findings {

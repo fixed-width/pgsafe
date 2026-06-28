@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{ConstrType, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::rangevar_key;
+use crate::newtable::{lintable_create_relation, rangevar_key};
 use crate::rules::{column_has_constraint, defined_columns, defined_table_constraints};
 
 pub(crate) const ID: &str = "require-primary-key";
@@ -43,17 +43,7 @@ fn introduces_primary_key(node: &NodeEnum) -> bool {
 /// The table key of a `CREATE TABLE` that needs a primary key under this policy: a persistent
 /// (non-temp) table that is not a partition child (`PARTITION OF`). `None` otherwise.
 fn create_needing_pk(node: &NodeEnum) -> Option<String> {
-    let NodeEnum::CreateStmt(c) = node else {
-        return None;
-    };
-    if c.partbound.is_some() {
-        return None; // a PARTITION OF child inherits the parent's primary key
-    }
-    let rv = c.relation.as_ref()?;
-    if rv.relpersistence == "t" {
-        return None; // temporary table
-    }
-    Some(rangevar_key(rv))
+    lintable_create_relation(node).map(rangevar_key)
 }
 
 /// Indices of `CREATE TABLE` statements the migration leaves without a primary key.
