@@ -107,36 +107,36 @@ pgsafe migrations/*.sql || exit 1
 
 | Rule ID | Severity | Description |
 |---------|----------|-------------|
-| `add-index-non-concurrent` | error | `CREATE INDEX` without `CONCURRENTLY` blocks all writes for the duration of the build |
-| `add-fk-without-not-valid` | error | Adding a foreign key without `NOT VALID` scans and locks both tables |
 | `add-check-without-not-valid` | error | Adding a `CHECK` constraint without `NOT VALID` scans the whole table under a lock |
-| `set-not-null` | error | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
+| `add-column-generated-stored` | error | Adding a `GENERATED ALWAYS AS (…) STORED` column computes the value for every existing row, rewriting the table under an `ACCESS EXCLUSIVE` lock |
+| `add-column-identity` | error | Adding a `GENERATED … AS IDENTITY` column creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
+| `add-column-not-null-no-default` | error | `ADD COLUMN ... NOT NULL` with no `DEFAULT` fails immediately on any non-empty table — it cannot fill existing rows |
+| `add-column-serial` | error | Adding a `serial`/`bigserial` column creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
+| `add-column-volatile-default` | error | Adding a column with a volatile `DEFAULT` (e.g. `random()`, `gen_random_uuid()`) rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
+| `add-exclusion-constraint` | error | Adding an `EXCLUDE` constraint builds an index under an `ACCESS EXCLUSIVE` lock, scanning the whole table |
+| `add-fk-without-not-valid` | error | Adding a foreign key without `NOT VALID` scans and locks both tables |
+| `add-index-non-concurrent` | error | `CREATE INDEX` without `CONCURRENTLY` blocks all writes for the duration of the build |
+| `add-primary-key-without-index` | error | Adding a `PRIMARY KEY` inline builds its unique index (and may scan for `NOT NULL`) under an `ACCESS EXCLUSIVE` lock |
+| `add-trigger` | warning | `CREATE TRIGGER` takes a `SHARE ROW EXCLUSIVE` lock and changes behavior for every subsequent write to the table |
+| `add-unique-constraint` | error | Adding a `UNIQUE` constraint inline builds its underlying index while holding `ACCESS EXCLUSIVE` on the table for the whole build |
 | `alter-column-type` | error | `ALTER COLUMN ... TYPE` usually rewrites the whole table and rebuilds indexes under a lock |
-| `rename` | warning | Renaming a table or column breaks existing queries and ORM mappings that reference the old name |
+| `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
+| `drop-column` | warning | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |
+| `drop-constraint` | warning | `DROP CONSTRAINT` removes a foreign-key/check/unique integrity guarantee and can break logical-replication replica identity |
 | `drop-index-non-concurrent` | error | `DROP INDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on the table, blocking reads and writes while it runs |
 | `drop-table` | warning | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
-| `drop-column` | warning | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |
+| `fk-without-covering-index` | warning | A foreign key on a newly added column with no covering index makes every parent change scan and lock the child |
+| `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
+| `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
+| `prefer-jsonb` | warning | A `json` column has no equality/ordering operators (`SELECT DISTINCT`/`GROUP BY` fail); use `jsonb` |
+| `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
+| `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
+| `rename` | warning | Renaming a table or column breaks existing queries and ORM mappings that reference the old name |
+| `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
+| `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
+| `set-not-null` | error | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
 | `truncate` | warning | `TRUNCATE` takes an `ACCESS EXCLUSIVE` lock and irreversibly removes all rows; with `CASCADE` the lock propagates to every FK-referencing table |
 | `vacuum-full-cluster` | error | `VACUUM FULL` and `CLUSTER` rewrite the entire table under an `ACCESS EXCLUSIVE` lock — minutes to hours of blocked reads and writes, plus 2× disk |
-| `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
-| `add-unique-constraint` | error | Adding a `UNIQUE` constraint inline builds its underlying index while holding `ACCESS EXCLUSIVE` on the table for the whole build |
-| `add-primary-key-without-index` | error | Adding a `PRIMARY KEY` inline builds its unique index (and may scan for `NOT NULL`) under an `ACCESS EXCLUSIVE` lock |
-| `add-column-not-null-no-default` | error | `ADD COLUMN ... NOT NULL` with no `DEFAULT` fails immediately on any non-empty table — it cannot fill existing rows |
-| `add-column-volatile-default` | error | Adding a column with a volatile `DEFAULT` (e.g. `random()`, `gen_random_uuid()`) rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
-| `add-column-serial` | error | Adding a `serial`/`bigserial` column creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
-| `add-column-identity` | error | Adding a `GENERATED … AS IDENTITY` column creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock |
-| `add-column-generated-stored` | error | Adding a `GENERATED ALWAYS AS (…) STORED` column computes the value for every existing row, rewriting the table under an `ACCESS EXCLUSIVE` lock |
-| `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
-| `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
-| `add-exclusion-constraint` | error | Adding an `EXCLUDE` constraint builds an index under an `ACCESS EXCLUSIVE` lock, scanning the whole table |
-| `prefer-jsonb` | warning | A `json` column has no equality/ordering operators (`SELECT DISTINCT`/`GROUP BY` fail); use `jsonb` |
-| `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
-| `drop-constraint` | warning | `DROP CONSTRAINT` removes a foreign-key/check/unique integrity guarantee and can break logical-replication replica identity |
-| `add-trigger` | warning | `CREATE TRIGGER` takes a `SHARE ROW EXCLUSIVE` lock and changes behavior for every subsequent write to the table |
-| `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
-| `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
-| `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
-| `fk-without-covering-index` | warning | A foreign key on a newly added column with no covering index makes every parent change scan and lock the child |
 
 By default `concurrently-in-transaction` detects explicit `BEGIN … COMMIT` blocks in the SQL.
 Pass `--in-transaction` to also flag `CONCURRENTLY` operations when the transaction is applied
@@ -147,10 +147,8 @@ or `SET statement_timeout`) earlier in the file satisfies it for the statements 
 or a value of `0` turns it back off. A blocking-lock operation against a table created empty earlier in
 the same migration is not flagged.
 
-`identifier-too-long` checks the raw SQL (via the scanner, since the parser truncates over-long names
-to 63 bytes before the linter sees them): it flags any identifier — table, column, constraint, index,
-or trigger name, a rename target, or a reference — written longer than 63 bytes, which PostgreSQL
-silently truncates.
+`identifier-too-long` flags any identifier — table, column, constraint, index, or trigger name, a
+rename target, or a reference — written longer than 63 bytes, which PostgreSQL silently truncates.
 
 `fk-without-covering-index` is cross-statement and scoped to new columns: it flags a foreign key on a
 column the migration creates or adds when no index built anywhere in the migration leads with that
@@ -234,7 +232,7 @@ the run (exit 2) rather than being silently ignored — so a typo can't quietly 
 ## Linting only new migrations
 
 To adopt pgsafe on a repo full of existing migrations without fixing them all first, lint only
-the migrations added after a cutoff. Migrations run in lexicographic filename order, so this is a
+the migrations added after a cutoff. They usually run in lexicographic filename order, so this is a
 simple, git-free path comparison that works on any CI with any checkout depth.
 
 ```sh
