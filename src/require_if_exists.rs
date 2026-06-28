@@ -1,8 +1,9 @@
 //! Policy lint (opt-in, off by default): flag DDL that omits IF [NOT] EXISTS — a
-//! CREATE TABLE/INDEX/SEQUENCE/SCHEMA without IF NOT EXISTS, or a DROP without IF EXISTS. Idempotent,
-//! re-runnable migrations guard their DDL this way. Engine-synthesized; not a registered `Rule`.
+//! CREATE TABLE/INDEX/SEQUENCE/SCHEMA/MATERIALIZED VIEW/TABLE-AS without IF NOT EXISTS, or a DROP
+//! without IF EXISTS. Idempotent, re-runnable migrations guard their DDL this way. Engine-synthesized;
+//! not a registered `Rule`.
 
-use pg_query::protobuf::RawStmt;
+use pg_query::protobuf::{ObjectType, RawStmt};
 use pg_query::NodeEnum;
 
 pub(crate) const ID: &str = "require-if-exists";
@@ -28,6 +29,19 @@ pub(crate) fn missing_if_exists(stmts: &[RawStmt]) -> Vec<(usize, String)> {
             }
             NodeEnum::CreateSchemaStmt(s) if !s.if_not_exists => {
                 Some("CREATE SCHEMA without IF NOT EXISTS is not idempotent — it errors if the schema already exists.")
+            }
+            // CREATE MATERIALIZED VIEW and CREATE TABLE … AS both parse as CreateTableAsStmt and both
+            // accept IF NOT EXISTS; the objtype distinguishes them. SELECT INTO can lower to this node
+            // too but has no IF NOT EXISTS syntax, so `is_select_into` is excluded.
+            NodeEnum::CreateTableAsStmt(c) if !c.if_not_exists && !c.is_select_into => {
+                match ObjectType::try_from(c.objtype) {
+                    Ok(ObjectType::ObjectMatview) => Some(
+                        "CREATE MATERIALIZED VIEW without IF NOT EXISTS is not idempotent — it errors if the materialized view already exists.",
+                    ),
+                    _ => Some(
+                        "CREATE TABLE AS without IF NOT EXISTS is not idempotent — it errors if the table already exists.",
+                    ),
+                }
             }
             NodeEnum::DropStmt(d) if !d.missing_ok => {
                 Some("DROP without IF EXISTS is not idempotent — it errors if the object does not exist.")
@@ -57,6 +71,14 @@ mod tests {
         missing_if_exists(&pg_query::parse(sql).unwrap().protobuf.stmts).len()
     }
 
+    fn message(sql: &str) -> String {
+        missing_if_exists(&pg_query::parse(sql).unwrap().protobuf.stmts)
+            .into_iter()
+            .map(|(_, m)| m)
+            .next()
+            .expect("expected a finding")
+    }
+
     #[test]
     fn create_table_without_guard_is_flagged() {
         assert_eq!(flagged("CREATE TABLE t (id int)"), 1);
@@ -80,6 +102,37 @@ mod tests {
     #[test]
     fn create_schema_without_guard_is_flagged() {
         assert_eq!(flagged("CREATE SCHEMA app"), 1);
+    }
+
+    #[test]
+    fn create_materialized_view_without_guard_is_flagged() {
+        assert_eq!(flagged("CREATE MATERIALIZED VIEW m AS SELECT 1"), 1);
+        assert!(message("CREATE MATERIALIZED VIEW m AS SELECT 1").contains("MATERIALIZED VIEW"));
+    }
+
+    #[test]
+    fn create_materialized_view_with_guard_is_not_flagged() {
+        assert_eq!(
+            flagged("CREATE MATERIALIZED VIEW IF NOT EXISTS m AS SELECT 1"),
+            0
+        );
+    }
+
+    #[test]
+    fn create_table_as_without_guard_is_flagged() {
+        assert_eq!(flagged("CREATE TABLE t AS SELECT 1"), 1);
+        assert!(message("CREATE TABLE t AS SELECT 1").contains("CREATE TABLE AS"));
+    }
+
+    #[test]
+    fn create_table_as_with_guard_is_not_flagged() {
+        assert_eq!(flagged("CREATE TABLE IF NOT EXISTS t AS SELECT 1"), 0);
+    }
+
+    #[test]
+    fn select_into_is_not_flagged() {
+        // SELECT … INTO has no IF NOT EXISTS syntax, so it must not be flagged (would be unfixable).
+        assert_eq!(flagged("SELECT 1 INTO t"), 0);
     }
 
     #[test]
