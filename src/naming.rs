@@ -198,6 +198,19 @@ mod tests {
     }
 
     #[test]
+    fn alter_add_column_name_is_checked() {
+        // a column name introduced by ALTER TABLE ... ADD COLUMN is checked.
+        assert_eq!(
+            violations(
+                "ALTER TABLE t ADD COLUMN \"BadCol\" text",
+                &[(NameKind::Column, "^[a-z][a-z0-9_]*$")]
+            )
+            .len(),
+            1
+        );
+    }
+
+    #[test]
     fn kind_without_a_pattern_is_not_checked() {
         // only a column pattern is set; the bad table name is not checked.
         assert!(violations(
