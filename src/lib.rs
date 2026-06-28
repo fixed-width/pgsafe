@@ -131,6 +131,9 @@ pub struct LintOptions {
     /// Rule ids that must not run for this input (their findings — and, for synthesized rules,
     /// their syntheses — are skipped). Default empty.
     pub disabled_rules: BTreeSet<String>,
+    /// Rule ids explicitly enabled in config. Required for opt-in (default-off) policy rules to run;
+    /// has no effect on rules that are on by default. Default empty.
+    pub enabled_rules: BTreeSet<String>,
     /// Per-rule severity overrides applied to the findings this run emits, keyed by rule id.
     /// Default empty.
     pub severity_overrides: BTreeMap<String, Severity>,

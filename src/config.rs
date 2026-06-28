@@ -98,6 +98,7 @@ pub(crate) struct Config {
     pub since: Option<String>,
     disabled: BTreeSet<String>,            // global `[rules] = false`
     overrides: BTreeMap<String, Severity>, // global `[rules] = "sev"`
+    enabled: BTreeSet<String>,             // global `[rules] = true` / `= "sev"`
     ignores: Vec<(globset::GlobMatcher, BTreeSet<String>)>, // compiled glob -> ids ("*" expanded)
 }
 
@@ -151,17 +152,21 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
 
     let mut disabled = BTreeSet::new();
     let mut overrides = BTreeMap::new();
+    let mut enabled = BTreeSet::new();
     for (id, setting) in &raw.rules {
         if !is_known(id) {
             return Err(ConfigError(format!("[rules] targets unknown rule `{id}`")));
         }
         match setting {
-            RuleSetting::Enabled(true) => {} // explicit enable: no-op
+            RuleSetting::Enabled(true) => {
+                enabled.insert(id.clone());
+            }
             RuleSetting::Enabled(false) => {
                 disabled.insert(id.clone());
             }
             RuleSetting::Severity(s) => {
                 overrides.insert(id.clone(), *s);
+                enabled.insert(id.clone());
             }
         }
     }
@@ -195,6 +200,7 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         since: raw.since,
         disabled,
         overrides,
+        enabled,
         ignores,
     })
 }
@@ -215,6 +221,11 @@ impl Config {
     /// Global severity overrides (same for every file).
     pub(crate) fn overrides(&self) -> &BTreeMap<String, Severity> {
         &self.overrides
+    }
+
+    /// Rule ids explicitly enabled in config (global). Opt-in rules run only when their id is here.
+    pub(crate) fn enabled(&self) -> &BTreeSet<String> {
+        &self.enabled
     }
 }
 
@@ -322,6 +333,30 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.0.contains("typo-rule"));
+    }
+
+    #[test]
+    fn rules_true_enables_a_rule() {
+        let cfg = from_toml_str("[rules]\ndrop-table = true\n", KNOWN).unwrap();
+        assert!(cfg.enabled().contains("drop-table"));
+        assert!(!cfg.disabled_for("any.sql").contains("drop-table"));
+    }
+
+    #[test]
+    fn rules_severity_enables_and_overrides() {
+        let cfg = from_toml_str("[rules]\ndrop-table = \"error\"\n", KNOWN).unwrap();
+        assert!(cfg.enabled().contains("drop-table"));
+        assert_eq!(
+            cfg.overrides().get("drop-table"),
+            Some(&crate::Severity::Error)
+        );
+    }
+
+    #[test]
+    fn rules_false_disables_not_enables() {
+        let cfg = from_toml_str("[rules]\ndrop-table = false\n", KNOWN).unwrap();
+        assert!(!cfg.enabled().contains("drop-table"));
+        assert!(cfg.disabled_for("any.sql").contains("drop-table"));
     }
 
     #[test]

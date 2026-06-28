@@ -84,6 +84,7 @@ impl ResolvedRun {
         LintOptions {
             assume_in_transaction: self.assume_in_transaction,
             disabled_rules: self.config.disabled_for(&rel),
+            enabled_rules: self.config.enabled().clone(),
             severity_overrides: self.config.overrides().clone(),
             ..LintOptions::default()
         }
