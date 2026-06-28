@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod enum_value;
 mod fk_index;
 mod identifier;
 mod newtable;
@@ -164,7 +165,7 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 
 /// Every lint-rule id: the registered rules plus the engine-synthesized ones
 /// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`,
-/// `fk-without-covering-index`).
+/// `fk-without-covering-index`, `enum-value-used-in-transaction`).
 /// NOT the `suppression-*` hygiene ids.
 pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     let mut ids = rules::rule_ids();
@@ -172,6 +173,7 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(timeout::ID);
     ids.push(identifier::ID);
     ids.push(fk_index::ID);
+    ids.push(enum_value::ID);
     ids
 }
 
@@ -319,6 +321,26 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     "Add a covering index on the referencing column, e.g. \
                      `CREATE INDEX CONCURRENTLY ON {table} ({col});`."
                 ),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if !options.disabled_rules.contains(enum_value::ID) {
+        for i in enum_value::unsafe_enum_value_indices(sql, stmts, options.assume_in_transaction) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: enum_value::ID.to_string(),
+                severity: Severity::Warning,
+                message: enum_value::MESSAGE.to_string(),
+                guidance: enum_value::GUIDANCE.to_string(),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),

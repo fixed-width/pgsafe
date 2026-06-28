@@ -127,6 +127,7 @@ pgsafe migrations/*.sql || exit 1
 | `drop-constraint` | warning | `DROP CONSTRAINT` removes a foreign-key/check/unique integrity guarantee and can break logical-replication replica identity |
 | `drop-index-non-concurrent` | error | `DROP INDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on the table, blocking reads and writes while it runs |
 | `drop-table` | warning | `DROP TABLE` permanently and irreversibly removes the table and all its data; in-flight queries against it fail immediately |
+| `enum-value-used-in-transaction` | warning | `ALTER TYPE … ADD VALUE` then using that value in the same transaction fails at runtime (`unsafe use of new value`) |
 | `fk-without-covering-index` | warning | A foreign key on a newly added column with no covering index makes every parent change scan and lock the child |
 | `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
 | `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
@@ -171,6 +172,11 @@ method, so it flags every `SET ACCESS METHOD` (setting it to the table's current
 
 `rename` also covers the `ALTER TYPE … RENAME` forms — renaming a type, a composite-type attribute, or
 an enum value. (`ALTER TYPE … ADD VALUE` is a different operation and is not flagged.)
+
+`enum-value-used-in-transaction` is cross-statement: a newly added enum value cannot be used in the
+transaction that added it, so it flags `ALTER TYPE … ADD VALUE 'v'` when `'v'` is used in a later
+statement of the same transaction (`--in-transaction` covers tool-wrapped migrations). Adding the value
+in its own migration, or using it only after the transaction commits, is not flagged.
 
 ## Severity & gating
 
