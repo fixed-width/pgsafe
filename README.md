@@ -157,6 +157,13 @@ column the migration creates or adds when no index built anywhere in the migrati
 column. A `CREATE INDEX` on the column (in any statement) clears it. Foreign keys on pre-existing
 columns are out of scope for the static linter.
 
+The partition rules cover the two `ALTER TABLE … PARTITION` hazards. `detach-partition-non-concurrent`
+flags a `DETACH PARTITION` that lacks `CONCURRENTLY` — it takes `ACCESS EXCLUSIVE` on the whole
+partitioned table; the PG 14+ `CONCURRENTLY` form takes only `SHARE UPDATE EXCLUSIVE`. `attach-partition`
+flags `ATTACH PARTITION`, which locks the table being attached (`ACCESS EXCLUSIVE`) and scans it to
+validate the partition bound; adding a matching, already-validated `CHECK` constraint first lets the
+attach skip the scan. An attach of a child created empty earlier in the same migration is not flagged.
+
 ## Severity & gating
 
 Each rule is `error` or `warning`:
