@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::{RangeVar, RawStmt};
+use pg_query::protobuf::{AlterTableType, RangeVar, RawStmt};
 use pg_query::NodeEnum;
 
 use crate::Finding;
@@ -40,8 +40,32 @@ fn populated_table_key(node: &NodeEnum) -> Option<String> {
     }
 }
 
-/// Table an `ALTER TABLE`, `CREATE INDEX`, or `CREATE TRIGGER` operates on.
+/// For an `ALTER TABLE … ATTACH PARTITION child …`, the child being attached — whose emptiness, not
+/// the parent's, determines whether the validation scan is trivial. `None` for any other node.
+fn attach_partition_child(node: &NodeEnum) -> Option<String> {
+    let NodeEnum::AlterTableStmt(a) = node else {
+        return None;
+    };
+    a.cmds.iter().find_map(|n| {
+        let NodeEnum::AlterTableCmd(cmd) = n.node.as_ref()? else {
+            return None;
+        };
+        if AlterTableType::try_from(cmd.subtype) != Ok(AlterTableType::AtAttachPartition) {
+            return None;
+        }
+        match cmd.def.as_ref()?.node.as_ref()? {
+            NodeEnum::PartitionCmd(pc) => pc.name.as_ref().map(rangevar_key),
+            _ => None,
+        }
+    })
+}
+
+/// Table an `ALTER TABLE`, `CREATE INDEX`, or `CREATE TRIGGER` operates on. For an
+/// `ALTER TABLE … ATTACH PARTITION`, the operated-on table is the partition child.
 fn target_table_key(node: &NodeEnum) -> Option<String> {
+    if let Some(child) = attach_partition_child(node) {
+        return Some(child);
+    }
     match node {
         NodeEnum::AlterTableStmt(a) => a.relation.as_ref().map(rangevar_key),
         NodeEnum::IndexStmt(i) => i.relation.as_ref().map(rangevar_key),
@@ -128,6 +152,13 @@ mod tests {
             ))
             .as_deref(),
             Some("foo")
+        );
+        assert_eq!(
+            target_table_key(&first_node(
+                "ALTER TABLE parent ATTACH PARTITION child FOR VALUES FROM (0) TO (100)"
+            ))
+            .as_deref(),
+            Some("child")
         );
         assert_eq!(
             populated_table_key(&first_node("INSERT INTO foo VALUES (1)")).as_deref(),

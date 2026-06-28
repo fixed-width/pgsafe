@@ -344,6 +344,33 @@ fn cases() -> Vec<ProofCase> {
             also_watch: Some(("proof_fk_parent", "ShareRowExclusiveLock")),
             pg: 14..=18,
         },
+        ProofCase {
+            rule: "detach-partition-non-concurrent",
+            table: "proof_detach",
+            watch: "proof_detach",
+            setup: "CREATE TABLE proof_detach (id int) PARTITION BY RANGE (id); \
+                    CREATE TABLE proof_detach_p1 PARTITION OF proof_detach FOR VALUES FROM (0) TO (100); \
+                    INSERT INTO proof_detach_p1 SELECT g FROM generate_series(0, 99) g;",
+            ddl: "ALTER TABLE proof_detach DETACH PARTITION proof_detach_p1",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: Some(("proof_detach_p1", "AccessExclusiveLock")),
+            pg: 14..=18,
+        },
+        ProofCase {
+            rule: "attach-partition",
+            table: "proof_attach, proof_attach_child",
+            watch: "proof_attach_child",
+            setup: "CREATE TABLE proof_attach (id int) PARTITION BY RANGE (id); \
+                    CREATE TABLE proof_attach_child (id int); \
+                    INSERT INTO proof_attach_child SELECT g FROM generate_series(100, 199) g;",
+            ddl: "ALTER TABLE proof_attach ATTACH PARTITION proof_attach_child \
+                  FOR VALUES FROM (100) TO (200)",
+            expect_lock: "AccessExclusiveLock",
+            expect_rewrite: RewriteOutcome::Unchanged,
+            also_watch: Some(("proof_attach", "ShareUpdateExclusiveLock")),
+            pg: 14..=18,
+        },
     ]
 }
 

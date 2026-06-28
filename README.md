@@ -120,7 +120,9 @@ pgsafe migrations/*.sql || exit 1
 | `add-trigger` | warning | `CREATE TRIGGER` takes a `SHARE ROW EXCLUSIVE` lock and changes behavior for every subsequent write to the table |
 | `add-unique-constraint` | error | Adding a `UNIQUE` constraint inline builds its underlying index while holding `ACCESS EXCLUSIVE` on the table for the whole build |
 | `alter-column-type` | error | `ALTER COLUMN ... TYPE` usually rewrites the whole table under a lock; even a no-rewrite change (e.g. `varchar`→`text` or a precision widen) invalidates cached query plans and prepared statements (`cached plan must not change result type`) |
+| `attach-partition` | warning | `ALTER TABLE … ATTACH PARTITION` locks the table being attached (`ACCESS EXCLUSIVE`) and scans it to validate the partition bound; add a matching validated `CHECK` first to skip the scan |
 | `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
+| `detach-partition-non-concurrent` | error | `ALTER TABLE … DETACH PARTITION` takes `ACCESS EXCLUSIVE` on the parent and the partition, blocking the whole partitioned table; use `… DETACH PARTITION … CONCURRENTLY` (PG 14+) |
 | `drop-column` | warning | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |
 | `drop-constraint` | warning | `DROP CONSTRAINT` removes a foreign-key/check/unique integrity guarantee and can break logical-replication replica identity |
 | `drop-index-non-concurrent` | error | `DROP INDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on the table, blocking reads and writes while it runs |
@@ -154,6 +156,13 @@ rename target, or a reference — written longer than 63 bytes, which PostgreSQL
 column the migration creates or adds when no index built anywhere in the migration leads with that
 column. A `CREATE INDEX` on the column (in any statement) clears it. Foreign keys on pre-existing
 columns are out of scope for the static linter.
+
+The partition rules cover the two `ALTER TABLE … PARTITION` hazards. `detach-partition-non-concurrent`
+flags a `DETACH PARTITION` that lacks `CONCURRENTLY` — it takes `ACCESS EXCLUSIVE` on the whole
+partitioned table; the PG 14+ `CONCURRENTLY` form takes only `SHARE UPDATE EXCLUSIVE`. `attach-partition`
+flags `ATTACH PARTITION`, which locks the table being attached (`ACCESS EXCLUSIVE`) and scans it to
+validate the partition bound; adding a matching, already-validated `CHECK` constraint first lets the
+attach skip the scan. An attach of a child created empty earlier in the same migration is not flagged.
 
 ## Severity & gating
 
