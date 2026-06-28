@@ -133,7 +133,7 @@ pgsafe migrations/*.sql || exit 1
 | `prefer-jsonb` | warning | A `json` column has no equality/ordering operators (`SELECT DISTINCT`/`GROUP BY` fail); use `jsonb` |
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
 | `reindex-non-concurrent` | error | `REINDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on each index it rebuilds, blocking writes (and reads through that index) |
-| `rename` | warning | Renaming a table or column breaks existing queries and ORM mappings that reference the old name |
+| `rename` | warning | Renaming a table, column, type, enum value, or other object breaks existing queries, views, and functions that reference the old name |
 | `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
 | `set-access-method` | error | `ALTER TABLE … SET ACCESS METHOD` (PG 15+) rewrites the entire table and rebuilds its indexes under an `ACCESS EXCLUSIVE` lock when the access method changes |
 | `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
@@ -168,6 +168,9 @@ attach skip the scan. An attach of a child created empty earlier in the same mig
 `set-access-method` flags `ALTER TABLE … SET ACCESS METHOD` (PG 15+): changing a table's access method
 rewrites the whole table under an `ACCESS EXCLUSIVE` lock. The linter can't see the current access
 method, so it flags every `SET ACCESS METHOD` (setting it to the table's current method is a no-op).
+
+`rename` also covers the `ALTER TYPE … RENAME` forms — renaming a type, a composite-type attribute, or
+an enum value. (`ALTER TYPE … ADD VALUE` is a different operation and is not flagged.)
 
 ## Severity & gating
 

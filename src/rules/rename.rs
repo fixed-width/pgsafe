@@ -12,23 +12,28 @@ impl Rule for Rename {
     }
 
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>) {
-        let NodeEnum::RenameStmt(stmt) = node else {
-            return;
-        };
-        let kind = match ObjectType::try_from(stmt.rename_type) {
-            Ok(ObjectType::ObjectTable) => "table",
-            Ok(ObjectType::ObjectColumn) => "column",
-            Ok(ObjectType::ObjectIndex) => "index",
-            Ok(ObjectType::ObjectTabconstraint) => "constraint",
-            Ok(ObjectType::ObjectView) => "view",
-            Ok(ObjectType::ObjectMatview) => "materialized view",
-            Ok(ObjectType::ObjectSequence) => "sequence",
-            Ok(ObjectType::ObjectSchema) => "schema",
+        let kind = match node {
+            NodeEnum::RenameStmt(stmt) => match ObjectType::try_from(stmt.rename_type) {
+                Ok(ObjectType::ObjectTable) => "table",
+                Ok(ObjectType::ObjectColumn) => "column",
+                Ok(ObjectType::ObjectIndex) => "index",
+                Ok(ObjectType::ObjectTabconstraint) => "constraint",
+                Ok(ObjectType::ObjectView) => "view",
+                Ok(ObjectType::ObjectMatview) => "materialized view",
+                Ok(ObjectType::ObjectSequence) => "sequence",
+                Ok(ObjectType::ObjectSchema) => "schema",
+                Ok(ObjectType::ObjectType) => "type",
+                Ok(ObjectType::ObjectAttribute) => "type attribute",
+                _ => return,
+            },
+            // ALTER TYPE ... RENAME VALUE 'old' TO 'new' renames an enum label. ADD VALUE leaves
+            // old_val empty and is a different operation, not a rename.
+            NodeEnum::AlterEnumStmt(stmt) if !stmt.old_val.is_empty() => "enum value",
             _ => return,
         };
         out.push(RuleHit {
             message: format!(
-                "Renaming a {kind} breaks every application query, view, and function that \
+                "Renaming this {kind} breaks every application query, view, and function that \
                  references the old name."
             ),
             guidance: "Avoid renames in a rolling deploy. Prefer expand/contract: add the new name, \
@@ -95,5 +100,43 @@ mod tests {
         )
         .unwrap();
         assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_type_rename() {
+        let findings =
+            lint_sql("ALTER TYPE mood RENAME TO feeling", &LintOptions::default()).unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_type_attribute_rename() {
+        let findings = lint_sql(
+            "ALTER TYPE pt RENAME ATTRIBUTE x TO y",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn flags_enum_value_rename() {
+        let findings = lint_sql(
+            "ALTER TYPE mood RENAME VALUE 'happy' TO 'glad'",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        assert!(findings.iter().any(|f| f.rule_id == "rename"));
+    }
+
+    #[test]
+    fn ignores_enum_add_value() {
+        // ADD VALUE is not a rename (empty old_val) and must not fire.
+        let findings = lint_sql(
+            "ALTER TYPE mood ADD VALUE 'excited'",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        assert!(findings.iter().all(|f| f.rule_id != "rename"));
     }
 }
