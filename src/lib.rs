@@ -63,6 +63,42 @@ pub struct Location {
     pub column: u32,
 }
 
+/// The kind of identifier a naming-convention pattern applies to.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NameKind {
+    /// A table.
+    Table,
+    /// A column.
+    Column,
+    /// An index.
+    Index,
+    /// A constraint.
+    Constraint,
+    /// A sequence.
+    Sequence,
+    /// A trigger.
+    Trigger,
+    /// A schema.
+    Schema,
+}
+
+impl NameKind {
+    /// The lowercase config-key / display name (`"table"`, `"column"`, …).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NameKind::Table => "table",
+            NameKind::Column => "column",
+            NameKind::Index => "index",
+            NameKind::Constraint => "constraint",
+            NameKind::Sequence => "sequence",
+            NameKind::Trigger => "trigger",
+            NameKind::Schema => "schema",
+        }
+    }
+}
+
 impl std::fmt::Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -138,6 +174,9 @@ pub struct LintOptions {
     /// Per-rule severity overrides applied to the findings this run emits, keyed by rule id.
     /// Default empty.
     pub severity_overrides: BTreeMap<String, Severity>,
+    /// Per-kind naming-convention patterns (raw regex strings). The `naming-convention` rule runs only
+    /// when this is non-empty. Default empty.
+    pub naming_patterns: BTreeMap<NameKind, String>,
 }
 
 /// Error returned when `pgsafe` cannot process the provided SQL.

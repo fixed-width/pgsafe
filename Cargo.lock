@@ -927,6 +927,7 @@ dependencies = [
  "pg_query",
  "postgres",
  "predicates",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
