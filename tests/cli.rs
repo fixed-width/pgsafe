@@ -347,3 +347,13 @@ fn fail_on_error_gates_on_a_hygiene_error_but_not_on_unused() {
         .success()
         .stdout(predicate::str::contains("suppression-unused"));
 }
+
+#[test]
+fn version_flag_prints_the_crate_version() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
+}

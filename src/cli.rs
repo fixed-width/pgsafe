@@ -49,6 +49,7 @@ pub struct CommonArgs {
 #[derive(clap::Parser)]
 #[command(
     name = "pgsafe",
+    version,
     about = "Lint PostgreSQL DDL migrations for unsafe operations"
 )]
 pub struct Cli {
