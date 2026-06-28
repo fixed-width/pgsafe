@@ -20,7 +20,6 @@ pub(crate) trait Rule: Send + Sync {
     fn check(&self, node: &NodeEnum, out: &mut Vec<RuleHit>);
 }
 
-mod add_trigger;
 mod add_check_without_not_valid;
 mod add_column_generated_stored;
 mod add_column_identity;
@@ -31,6 +30,7 @@ mod add_exclusion_constraint;
 mod add_fk_without_not_valid;
 mod add_index_non_concurrent;
 mod add_primary_key_without_index;
+mod add_trigger;
 mod add_unique_constraint;
 mod alter_column_type;
 mod drop_column;

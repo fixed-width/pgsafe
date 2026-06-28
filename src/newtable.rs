@@ -40,7 +40,7 @@ fn populated_table_key(node: &NodeEnum) -> Option<String> {
     }
 }
 
-/// Table an `ALTER TABLE` / `CREATE INDEX` operates on.
+/// Table an `ALTER TABLE`, `CREATE INDEX`, or `CREATE TRIGGER` operates on.
 fn target_table_key(node: &NodeEnum) -> Option<String> {
     match node {
         NodeEnum::AlterTableStmt(a) => a.relation.as_ref().map(rangevar_key),
