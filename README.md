@@ -219,9 +219,10 @@ money     = "numeric"
 SEQUENCE`, or `CREATE SCHEMA` written without `IF NOT EXISTS`, and any `DROP` written without `IF
 EXISTS`. Enable with `[rules] require-if-exists = true`.
 
-`require-comment` enforces documentation: every new table and every new column must have a `COMMENT`.
-A `COMMENT ON TABLE`/`COMMENT ON COLUMN` anywhere in the migration (cross-statement) satisfies it.
-Enable with `[rules] require-comment = true`.
+`require-comment` enforces documentation: every new table and every new column — whether introduced by
+`CREATE TABLE` or by `ALTER TABLE … ADD COLUMN` — must have a `COMMENT`. A `COMMENT ON TABLE`/`COMMENT ON
+COLUMN` anywhere in the migration (cross-statement) satisfies it. Enable with
+`[rules] require-comment = true`.
 
 `require-columns` enforces that every `CREATE TABLE` includes a configured set of columns (a column
 added by a later `ALTER TABLE … ADD COLUMN` in the same migration counts). Configure the list:

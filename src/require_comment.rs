@@ -60,20 +60,33 @@ pub(crate) fn missing_comments(stmts: &[RawStmt]) -> Vec<(usize, String)> {
         let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
             continue;
         };
-        let NodeEnum::CreateStmt(c) = node else {
-            continue;
+        // The table whose new columns this statement introduces. A `CREATE TABLE` also requires the
+        // table itself to be commented; an `ALTER TABLE … ADD COLUMN` only adds columns (the table
+        // was created elsewhere), so its columns are checked but not the table.
+        let (table, check_table) = match node {
+            NodeEnum::CreateStmt(c) => {
+                if c.partbound.is_some() {
+                    continue; // a PARTITION OF child inherits the parent's columns
+                }
+                let Some(rv) = c.relation.as_ref() else {
+                    continue;
+                };
+                if rv.relpersistence == "t" {
+                    continue; // temporary table
+                }
+                (rangevar_key(rv), true)
+            }
+            NodeEnum::AlterTableStmt(a) => {
+                // An ALTER's RangeVar carries no persistence flag, so a temp table's ADD COLUMN
+                // cannot be distinguished here (rare; suppress if needed).
+                let Some(rv) = a.relation.as_ref() else {
+                    continue;
+                };
+                (rangevar_key(rv), false)
+            }
+            _ => continue,
         };
-        if c.partbound.is_some() {
-            continue;
-        }
-        let Some(rv) = c.relation.as_ref() else {
-            continue;
-        };
-        if rv.relpersistence == "t" {
-            continue;
-        }
-        let table = rangevar_key(rv);
-        if !commented_tables.contains(&table) {
+        if check_table && !commented_tables.contains(&table) {
             out.push((i, format!("The table `{table}` has no COMMENT.")));
         }
         for col in defined_columns(node) {
@@ -147,5 +160,51 @@ mod tests {
             .find(|f| f.rule_id == "require-comment")
             .expect("rule must fire when enabled");
         assert_eq!(hit.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn alter_add_column_without_comment_is_flagged() {
+        // a column added by ALTER TABLE ... ADD COLUMN needs a COMMENT too (the table is not flagged).
+        let m = messages("ALTER TABLE t ADD COLUMN secret text");
+        assert_eq!(m.len(), 1);
+        assert!(m[0].contains("`t.secret`"));
+    }
+
+    #[test]
+    fn alter_add_column_with_later_comment_is_satisfied() {
+        let sql = "ALTER TABLE t ADD COLUMN secret text;\n\
+                   COMMENT ON COLUMN t.secret IS 'the secret';";
+        assert!(messages(sql).is_empty());
+    }
+
+    #[test]
+    fn alter_add_multiple_columns_yields_a_finding_each() {
+        assert_eq!(
+            messages("ALTER TABLE t ADD COLUMN a int, ADD COLUMN b text").len(),
+            2
+        );
+    }
+
+    #[test]
+    fn alter_added_column_needs_comment_even_when_table_is_documented() {
+        let sql = "CREATE TABLE t (id int);\n\
+                   COMMENT ON TABLE t IS 'the table';\n\
+                   COMMENT ON COLUMN t.id IS 'pk';\n\
+                   ALTER TABLE t ADD COLUMN secret text;";
+        let m = messages(sql);
+        assert_eq!(m.len(), 1);
+        assert!(m[0].contains("`t.secret`"));
+    }
+
+    #[test]
+    fn suppressible_when_enabled() {
+        // all findings for a statement share its index, so one inline ignore suppresses them together.
+        let sql = "-- pgsafe:ignore require-comment lookup table\nCREATE TABLE t (id int)";
+        let f = lint_sql(sql, &enabled()).unwrap();
+        let hit = f
+            .iter()
+            .find(|f| f.rule_id == "require-comment")
+            .expect("rule must fire");
+        assert!(hit.is_suppressed());
     }
 }

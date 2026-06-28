@@ -132,6 +132,29 @@ mod tests {
     }
 
     #[test]
+    fn table_level_fk_flags_only_the_nullable_member() {
+        // a is NOT NULL, b is nullable -> only b is flagged.
+        let sql = "CREATE TABLE t (a int NOT NULL, b int, FOREIGN KEY (a, b) REFERENCES o(x, y))";
+        let f = flagged(sql);
+        assert_eq!(f.len(), 1);
+        assert!(f[0].contains("`b`"));
+    }
+
+    #[test]
+    fn serial_fk_is_not_flagged() {
+        // a serial FK column is implicitly NOT NULL.
+        assert!(flagged("CREATE TABLE t (owner_id serial REFERENCES users(id))").is_empty());
+    }
+
+    #[test]
+    fn identity_fk_is_not_flagged() {
+        assert!(flagged(
+            "CREATE TABLE t (owner_id bigint GENERATED ALWAYS AS IDENTITY REFERENCES users(id))"
+        )
+        .is_empty());
+    }
+
+    #[test]
     fn non_fk_nullable_column_is_not_flagged() {
         assert!(flagged("CREATE TABLE t (id int, name text)").is_empty());
     }
@@ -166,5 +189,17 @@ mod tests {
             .find(|f| f.rule_id == "forbid-nullable-fk")
             .expect("rule must fire when enabled");
         assert_eq!(hit.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn suppressible_when_enabled() {
+        let sql = "-- pgsafe:ignore forbid-nullable-fk intentional\n\
+                   CREATE TABLE t (owner_id int REFERENCES users(id))";
+        let f = lint_sql(sql, &enabled()).unwrap();
+        let hit = f
+            .iter()
+            .find(|f| f.rule_id == "forbid-nullable-fk")
+            .expect("rule must fire");
+        assert!(hit.is_suppressed());
     }
 }

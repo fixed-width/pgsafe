@@ -175,8 +175,11 @@ pub struct LintOptions {
     /// Rule ids that must not run for this input (their findings — and, for synthesized rules,
     /// their syntheses — are skipped). Default empty.
     pub disabled_rules: BTreeSet<String>,
-    /// Rule ids explicitly enabled in config. Required for opt-in (default-off) policy rules to run;
-    /// has no effect on rules that are on by default. Default empty.
+    /// Rule ids explicitly enabled in config. Required for the **boolean** opt-in policy rules
+    /// (`require-primary-key`, `require-not-null`, `require-if-exists`, `require-comment`,
+    /// `forbid-nullable-fk`) to run; has no effect on rules that are on by default. The
+    /// **data-configured** policies (`naming-convention`, `forbidden-column-type`, `require-columns`)
+    /// activate when their own field below is non-empty, independent of this set. Default empty.
     pub enabled_rules: BTreeSet<String>,
     /// Per-rule severity overrides applied to the findings this run emits, keyed by rule id.
     /// Default empty.
