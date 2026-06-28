@@ -170,16 +170,17 @@ mod tests {
     #[test]
     fn fk_on_preexisting_column_is_not_flagged() {
         // No column is added in this statement → parent_id is pre-existing → out of scope.
-        assert!(
-            flagged("ALTER TABLE child ADD CONSTRAINT fk FOREIGN KEY (parent_id) REFERENCES parent (id)")
-                .is_empty()
-        );
+        assert!(flagged(
+            "ALTER TABLE child ADD CONSTRAINT fk FOREIGN KEY (parent_id) REFERENCES parent (id)"
+        )
+        .is_empty());
     }
 
     #[test]
     fn inline_unique_or_pk_covers_the_fk_column() {
         assert!(
-            flagged("CREATE TABLE child (parent_id bigint PRIMARY KEY REFERENCES parent)").is_empty()
+            flagged("CREATE TABLE child (parent_id bigint PRIMARY KEY REFERENCES parent)")
+                .is_empty()
         );
         assert!(
             flagged("CREATE TABLE child (parent_id bigint UNIQUE REFERENCES parent)").is_empty()
@@ -234,17 +235,26 @@ mod tests {
             .iter()
             .find(|f| f.rule_id == "fk-without-covering-index")
             .expect("rule must fire");
-        assert!(hit.is_suppressed(), "directive must suppress the FK finding");
+        assert!(
+            hit.is_suppressed(),
+            "directive must suppress the FK finding"
+        );
     }
 
     #[test]
     fn disabled_fk_rule_is_silent() {
         use crate::{lint_sql, LintOptions};
         let opts = LintOptions {
-            disabled_rules: ["fk-without-covering-index".to_string()].into_iter().collect(),
+            disabled_rules: ["fk-without-covering-index".to_string()]
+                .into_iter()
+                .collect(),
             ..LintOptions::default()
         };
-        let f = lint_sql("CREATE TABLE child (parent_id bigint REFERENCES parent)", &opts).unwrap();
+        let f = lint_sql(
+            "CREATE TABLE child (parent_id bigint REFERENCES parent)",
+            &opts,
+        )
+        .unwrap();
         assert!(f.iter().all(|f| f.rule_id != "fk-without-covering-index"));
     }
 }

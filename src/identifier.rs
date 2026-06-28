@@ -127,7 +127,10 @@ mod tests {
         assert_eq!(name.len(), 64);
         let found = long_identifiers(&format!("CREATE TABLE \"{name}\" (id int)"));
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].2, 64, "quotes must be stripped, content bytes counted");
+        assert_eq!(
+            found[0].2, 64,
+            "quotes must be stripped, content bytes counted"
+        );
     }
 
     #[test]
@@ -140,8 +143,11 @@ mod tests {
     #[test]
     fn lint_sql_emits_a_warning_for_an_over_long_identifier() {
         use crate::{lint_sql, LintOptions, Severity};
-        let f = lint_sql(&format!("CREATE TABLE {} (id int)", long()), &LintOptions::default())
-            .unwrap();
+        let f = lint_sql(
+            &format!("CREATE TABLE {} (id int)", long()),
+            &LintOptions::default(),
+        )
+        .unwrap();
         let hit = f
             .iter()
             .find(|f| f.rule_id == "identifier-too-long")

@@ -63,8 +63,6 @@ mod tests {
     fn silent_on_trigger_for_same_migration_new_table() {
         // foo is created (empty) earlier in the same input → the trigger is exempt.
         let sql = format!("CREATE TABLE foo (id int); {}", trigger_sql("foo"));
-        assert!(findings(&sql)
-            .iter()
-            .all(|f| f.rule_id != "add-trigger"));
+        assert!(findings(&sql).iter().all(|f| f.rule_id != "add-trigger"));
     }
 }
