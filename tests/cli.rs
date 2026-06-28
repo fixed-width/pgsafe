@@ -383,3 +383,29 @@ fn version_flag_prints_the_crate_version() {
         .success()
         .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
 }
+
+#[test]
+fn naming_convention_via_config_fires() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = dir.path().join("pgsafe.toml");
+    std::fs::write(&cfg, "[naming]\ntable = \"^t_\"\n").unwrap();
+
+    // Without the config: no finding.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg("--no-config")
+        .write_stdin("CREATE TABLE users (id int);")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("naming-convention").not());
+
+    // With the [naming] config: a mismatching table name is flagged and gates (exit 1).
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .args(["--config", cfg.to_str().unwrap()])
+        .write_stdin("CREATE TABLE users (id int);")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("naming-convention"));
+}
