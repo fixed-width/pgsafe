@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod fk_index;
 mod identifier;
 mod newtable;
 mod output;
@@ -162,13 +163,15 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 }
 
 /// Every lint-rule id: the registered rules plus the engine-synthesized ones
-/// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`).
+/// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`,
+/// `fk-without-covering-index`).
 /// NOT the `suppression-*` hygiene ids.
 pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     let mut ids = rules::rule_ids();
     ids.push(txn::ID);
     ids.push(timeout::ID);
     ids.push(identifier::ID);
+    ids.push(fk_index::ID);
     ids
 }
 
@@ -289,6 +292,33 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 guidance: "Shorten the identifier to 63 bytes or fewer so PostgreSQL does not \
                            silently truncate it."
                     .into(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if !options.disabled_rules.contains(fk_index::ID) {
+        for (i, table, col) in fk_index::fk_without_index(stmts) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: fk_index::ID.to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "Foreign key on `{table}` column `{col}` has no covering index; referential \
+                     checks and ON DELETE/UPDATE actions on the parent scan and lock the child on \
+                     every change."
+                ),
+                guidance: format!(
+                    "Add a covering index on the referencing column, e.g. \
+                     `CREATE INDEX CONCURRENTLY ON {table} ({col});`."
+                ),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),

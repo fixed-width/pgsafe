@@ -11,7 +11,7 @@ use pg_query::NodeEnum;
 use crate::Finding;
 
 /// `schemaname.relname`, or just `relname` when unqualified.
-fn rangevar_key(rv: &RangeVar) -> String {
+pub(crate) fn rangevar_key(rv: &RangeVar) -> String {
     if rv.schemaname.is_empty() {
         rv.relname.clone()
     } else {

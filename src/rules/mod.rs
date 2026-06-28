@@ -120,7 +120,7 @@ fn columns_being_added(node: &NodeEnum) -> Vec<&ColumnDef> {
 }
 
 /// Whether a column definition carries an inline constraint of the given type.
-fn column_has_constraint(col: &ColumnDef, contype: ConstrType) -> bool {
+pub(crate) fn column_has_constraint(col: &ColumnDef, contype: ConstrType) -> bool {
     col.constraints.iter().any(|cn| {
         matches!(cn.node.as_ref(), Some(NodeEnum::Constraint(con))
             if ConstrType::try_from(con.contype) == Ok(contype))
@@ -129,7 +129,7 @@ fn column_has_constraint(col: &ColumnDef, contype: ConstrType) -> bool {
 
 /// Column definitions whose declared type is statically visible: those in a `CREATE TABLE`
 /// and those added by `ALTER TABLE ... ADD COLUMN`. Used by the schema-design lints.
-fn defined_columns(node: &NodeEnum) -> Vec<&ColumnDef> {
+pub(crate) fn defined_columns(node: &NodeEnum) -> Vec<&ColumnDef> {
     match node {
         NodeEnum::CreateStmt(c) => c
             .table_elts
@@ -168,6 +168,24 @@ fn constraints_being_added(node: &NodeEnum) -> Vec<&Constraint> {
             _ => None,
         })
         .collect()
+}
+
+/// Table-level constraints a statement introduces: the `Constraint` elements of a
+/// `CREATE TABLE`, or those added by `ALTER TABLE ... ADD CONSTRAINT`. Column-level
+/// inline constraints are not included (read them from each `ColumnDef.constraints`).
+pub(crate) fn defined_table_constraints(node: &NodeEnum) -> Vec<&Constraint> {
+    match node {
+        NodeEnum::CreateStmt(c) => c
+            .table_elts
+            .iter()
+            .filter_map(|n| match n.node.as_ref()? {
+                NodeEnum::Constraint(con) => Some(con.as_ref()),
+                _ => None,
+            })
+            .collect(),
+        NodeEnum::AlterTableStmt(_) => constraints_being_added(node),
+        _ => Vec::new(),
+    }
 }
 
 /// A `REINDEX ... CONCURRENTLY` (a `concurrently` option that is true).
