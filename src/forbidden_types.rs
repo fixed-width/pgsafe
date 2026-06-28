@@ -15,8 +15,10 @@ pub(crate) const GUIDANCE: &str =
      your config.";
 
 /// The canonical base-type name PostgreSQL normalizes `spelling` to (e.g. `char` → `bpchar`,
-/// `integer` → `int4`), or `None` if `spelling` is not a valid type. Parses a throwaway
-/// `CREATE TABLE` so the parser is the single source of truth for type identity.
+/// `integer` → `int4`), or `None` if `spelling` cannot be parsed as a type name. The parser has no
+/// catalog, so it does NOT validate that the type exists: a bare unknown identifier passes through
+/// unchanged (`notatype` → `Some("notatype")`), exactly like a real type (`money`) or an extension
+/// type (`citext`). Such a type is simply inert when matched against columns.
 pub(crate) fn canonical_type(spelling: &str) -> Option<String> {
     let sql = format!("CREATE TABLE _pgsafe_typecheck (c {spelling})");
     let parsed = pg_query::parse(&sql).ok()?;
@@ -111,11 +113,17 @@ mod tests {
     }
 
     #[test]
-    fn canonical_type_rejects_invalid() {
-        // pg_query accepts any bare identifier as a type name (semantic, not syntactic);
-        // a multi-word string that is not a recognised PostgreSQL type sequence causes a parse
-        // error, making canonical_type return None.
+    fn canonical_type_returns_none_on_unparseable() {
+        // Only strings that fail to PARSE as a type yield None. A bare unknown identifier passes
+        // through (`notatype` -> Some) — the parser has no catalog to validate type existence.
         assert!(canonical_type("not a real type").is_none());
+        assert_eq!(canonical_type("notatype").as_deref(), Some("notatype"));
+    }
+
+    #[test]
+    fn unrecognized_type_is_inert() {
+        // A configured type the parser doesn't recognize matches no column — no finding, no error.
+        assert!(flagged("CREATE TABLE t (c text)", &[("notatype", "")]).is_empty());
     }
 
     #[test]
