@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod identifier;
 mod newtable;
 mod output;
 mod rules;
@@ -161,11 +162,13 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 }
 
 /// Every lint-rule id: the registered rules plus the engine-synthesized ones
-/// (`concurrently-in-transaction`, `require-timeout`). NOT the `suppression-*` hygiene ids.
+/// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`).
+/// NOT the `suppression-*` hygiene ids.
 pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     let mut ids = rules::rule_ids();
     ids.push(txn::ID);
     ids.push(timeout::ID);
+    ids.push(identifier::ID);
     ids
 }
 
@@ -258,6 +261,34 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 severity: Severity::Error,
                 message: txn::MESSAGE.to_string(),
                 guidance: txn::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if !options.disabled_rules.contains(identifier::ID) {
+        for (off, name, len) in identifier::long_identifiers(sql) {
+            let Some(i) = geoms.iter().position(|g| off >= g.start && off < g.end) else {
+                continue;
+            };
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: identifier::ID.to_string(),
+                severity: Severity::Warning,
+                message: format!(
+                    "Identifier `{name}` is {len} bytes; PostgreSQL truncates identifiers to 63 \
+                     bytes, so two names sharing a 63-byte prefix silently collide."
+                ),
+                guidance: "Shorten the identifier to 63 bytes or fewer so PostgreSQL does not \
+                           silently truncate it."
+                    .into(),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),

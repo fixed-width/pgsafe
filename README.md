@@ -133,6 +133,7 @@ pgsafe migrations/*.sql || exit 1
 | `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
 | `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
 | `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
+| `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
 
 By default `concurrently-in-transaction` detects explicit `BEGIN … COMMIT` blocks in the SQL.
 Pass `--in-transaction` to also flag `CONCURRENTLY` operations when the transaction is applied
@@ -142,6 +143,11 @@ implicitly by the migration tool (Rails, Flyway, and similar) rather than writte
 or `SET statement_timeout`) earlier in the file satisfies it for the statements that follow; `RESET`
 or a value of `0` turns it back off. A blocking-lock operation against a table created empty earlier in
 the same migration is not flagged.
+
+`identifier-too-long` checks the raw SQL (via the scanner, since the parser truncates over-long names
+to 63 bytes before the linter sees them): it flags any identifier — table, column, constraint, index,
+or trigger name, a rename target, or a reference — written longer than 63 bytes, which PostgreSQL
+silently truncates.
 
 ## Severity & gating
 
