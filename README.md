@@ -121,6 +121,7 @@ pgsafe migrations/*.sql || exit 1
 | `add-unique-constraint` | error | Adding a `UNIQUE` constraint inline builds its underlying index while holding `ACCESS EXCLUSIVE` on the table for the whole build |
 | `alter-column-type` | error | `ALTER COLUMN ... TYPE` usually rewrites the whole table under a lock; even a no-rewrite change (e.g. `varchar`→`text` or a precision widen) invalidates cached query plans and prepared statements (`cached plan must not change result type`) |
 | `concurrently-in-transaction` | error | A `CREATE`/`DROP INDEX CONCURRENTLY` or `REINDEX … CONCURRENTLY` inside a transaction fails at runtime — Postgres rejects `CONCURRENTLY` in a transaction; use `--in-transaction` when the wrapper is implicit |
+| `detach-partition-non-concurrent` | error | `ALTER TABLE … DETACH PARTITION` takes `ACCESS EXCLUSIVE` on the parent and the partition, blocking the whole partitioned table; use `… DETACH PARTITION … CONCURRENTLY` (PG 14+) |
 | `drop-column` | warning | `DROP COLUMN` breaks any application code still referencing the column the moment it runs |
 | `drop-constraint` | warning | `DROP CONSTRAINT` removes a foreign-key/check/unique integrity guarantee and can break logical-replication replica identity |
 | `drop-index-non-concurrent` | error | `DROP INDEX` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock on the table, blocking reads and writes while it runs |
