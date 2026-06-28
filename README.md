@@ -8,7 +8,27 @@ It requires no database connection and no network access.
 
 ## Install
 
-Build from source (requires a Rust toolchain):
+### Download a prebuilt binary
+
+Each [release](https://github.com/fixed-width/pgsafe/releases/latest) attaches static Linux and macOS
+binaries. Download the archive for your platform, verify its checksum, and extract:
+
+```sh
+# Targets: x86_64-unknown-linux-musl  aarch64-unknown-linux-musl
+#          x86_64-apple-darwin        aarch64-apple-darwin
+TARGET=x86_64-unknown-linux-musl
+VERSION=v0.4.1   # set to the latest release tag
+BASE="https://github.com/fixed-width/pgsafe/releases/download/$VERSION"
+curl -fsSLO "$BASE/pgsafe-$TARGET.tar.gz"
+curl -fsSLO "$BASE/pgsafe-$TARGET.tar.gz.sha256"
+sha256sum -c "pgsafe-$TARGET.tar.gz.sha256"
+tar xzf "pgsafe-$TARGET.tar.gz"
+./pgsafe --version
+```
+
+### Build from source
+
+Requires a Rust toolchain:
 
 ```sh
 cargo build --release
