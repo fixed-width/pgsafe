@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use globset::GlobBuilder;
 use serde::Deserialize;
 
-use crate::{FailOn, Format, Severity};
+use crate::{FailOn, Format, NameKind, Severity};
 
 /// The candidate config filenames, in priority order (v1: TOML only).
 /// Config file names discovery looks for, in precedence order: the plain
@@ -74,6 +74,19 @@ fn ignore_all() -> Vec<String> {
     vec!["*".to_string()]
 }
 
+/// The `[naming]` section: one optional regex per identifier kind.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NamingConfig {
+    table: Option<String>,
+    column: Option<String>,
+    index: Option<String>,
+    constraint: Option<String>,
+    sequence: Option<String>,
+    trigger: Option<String>,
+    schema: Option<String>,
+}
+
 /// The on-disk config shape. `deny_unknown_fields` makes a typo'd key a hard error.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,6 +99,8 @@ struct RawConfig {
     rules: BTreeMap<String, RuleSetting>,
     #[serde(default)]
     ignore: Vec<RawIgnore>,
+    #[serde(default)]
+    naming: NamingConfig,
 }
 
 /// A validated, compiled config ready for per-file resolution.
@@ -100,6 +115,7 @@ pub(crate) struct Config {
     overrides: BTreeMap<String, Severity>, // global `[rules] = "sev"`
     enabled: BTreeSet<String>,             // global `[rules] = true` / `= "sev"`
     ignores: Vec<(globset::GlobMatcher, BTreeSet<String>)>, // compiled glob -> ids ("*" expanded)
+    naming: BTreeMap<NameKind, String>,
 }
 
 /// Walk up from `start` to the first directory holding a candidate config file,
@@ -193,6 +209,27 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         ignores.push((matcher, rules));
     }
 
+    let mut naming = BTreeMap::new();
+    for (kind, pat) in [
+        (NameKind::Table, &raw.naming.table),
+        (NameKind::Column, &raw.naming.column),
+        (NameKind::Index, &raw.naming.index),
+        (NameKind::Constraint, &raw.naming.constraint),
+        (NameKind::Sequence, &raw.naming.sequence),
+        (NameKind::Trigger, &raw.naming.trigger),
+        (NameKind::Schema, &raw.naming.schema),
+    ] {
+        if let Some(p) = pat {
+            regex::Regex::new(p).map_err(|e| {
+                ConfigError(format!(
+                    "[naming] {} is not a valid regex: {e}",
+                    kind.as_str()
+                ))
+            })?;
+            naming.insert(kind, p.clone());
+        }
+    }
+
     Ok(Config {
         fail_on: raw.fail_on,
         in_transaction: raw.in_transaction,
@@ -202,6 +239,7 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         overrides,
         enabled,
         ignores,
+        naming,
     })
 }
 
@@ -226,6 +264,11 @@ impl Config {
     /// Rule ids explicitly enabled in config (global). Opt-in rules run only when their id is here.
     pub(crate) fn enabled(&self) -> &BTreeSet<String> {
         &self.enabled
+    }
+
+    /// Per-kind naming-convention patterns (global).
+    pub(crate) fn naming(&self) -> &BTreeMap<NameKind, String> {
+        &self.naming
     }
 }
 
@@ -390,6 +433,39 @@ mod tests {
             discover(&deep).as_deref(),
             Some(root.path().join("pgsafe.toml").as_path())
         );
+    }
+
+    #[test]
+    fn naming_section_compiles_patterns() {
+        let cfg = from_toml_str("[naming]\ntable = \"^t_\"\nindex = \"^ix_\"\n", KNOWN).unwrap();
+        assert_eq!(
+            cfg.naming()
+                .get(&crate::NameKind::Table)
+                .map(String::as_str),
+            Some("^t_")
+        );
+        assert_eq!(
+            cfg.naming()
+                .get(&crate::NameKind::Index)
+                .map(String::as_str),
+            Some("^ix_")
+        );
+        assert!(cfg.naming().get(&crate::NameKind::Column).is_none());
+    }
+
+    #[test]
+    fn naming_malformed_regex_is_a_config_error() {
+        let err = from_toml_str("[naming]\ntable = \"^(unclosed\"\n", KNOWN).unwrap_err();
+        assert!(
+            err.0.contains("table"),
+            "error should name the kind: {}",
+            err.0
+        );
+    }
+
+    #[test]
+    fn naming_unknown_kind_is_a_config_error() {
+        assert!(from_toml_str("[naming]\ntabel = \"^t_\"\n", KNOWN).is_err());
     }
 
     #[test]

@@ -86,6 +86,7 @@ impl ResolvedRun {
             disabled_rules: self.config.disabled_for(&rel),
             enabled_rules: self.config.enabled().clone(),
             severity_overrides: self.config.overrides().clone(),
+            naming_patterns: self.config.naming().clone(),
             ..LintOptions::default()
         }
     }

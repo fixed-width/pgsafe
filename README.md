@@ -124,6 +124,7 @@ pgsafe migrations/*.sql || exit 1
 | `enum-value-used-in-transaction` | warning | `ALTER TYPE … ADD VALUE` then using that value in the same transaction fails at runtime (`unsafe use of new value`) |
 | `fk-without-covering-index` | warning | A foreign key on a newly added column with no covering index makes every parent change scan and lock the child |
 | `identifier-too-long` | warning | An identifier written longer than 63 bytes is silently truncated by PostgreSQL, so two names sharing a 63-byte prefix collide |
+| `naming-convention` | warning | **(opt-in, `[naming]`)** An introduced name that doesn't match the configured regex for its kind (table/column/index/constraint/sequence/trigger/schema) |
 | `prefer-bigint-primary-key` | warning | An `int`/`serial` primary key overflows at ~2.1B rows; use `bigint`/`bigserial`/identity |
 | `prefer-jsonb` | warning | A `json` column has no equality/ordering operators (`SELECT DISTINCT`/`GROUP BY` fail); use `jsonb` |
 | `refresh-matview-non-concurrent` | error | `REFRESH MATERIALIZED VIEW` without `CONCURRENTLY` takes an `ACCESS EXCLUSIVE` lock and blocks all reads while it rebuilds |
@@ -178,6 +179,16 @@ in its own migration, or using it only after the transaction commits, is not fla
 the migration leaves without a primary key (counting a PK added by a later `ALTER TABLE … ADD PRIMARY
 KEY` in the same migration; temp tables and partition children are exempt). Enable it with
 `[rules] require-primary-key = true` (or `= "error"`).
+
+`naming-convention` is a **parameterized** policy lint: configure a regex per identifier kind in a
+`[naming]` section and it flags any name a migration introduces (in `CREATE`/`ALTER`/`RENAME`) that
+doesn't match. A malformed pattern is a config error.
+
+```toml
+[naming]
+table  = "^[a-z][a-z0-9_]*$"   # snake_case
+index  = "^(ix|uq)_"
+```
 
 ## Severity & gating
 

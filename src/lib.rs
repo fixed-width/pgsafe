@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod enum_value;
 mod fk_index;
 mod identifier;
+mod naming;
 mod newtable;
 mod output;
 mod require_pk;
@@ -61,6 +62,42 @@ pub struct Location {
     /// 1-based character column of the statement's first non-whitespace
     /// character on its line.
     pub column: u32,
+}
+
+/// The kind of identifier a naming-convention pattern applies to.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NameKind {
+    /// A table.
+    Table,
+    /// A column.
+    Column,
+    /// An index.
+    Index,
+    /// A constraint.
+    Constraint,
+    /// A sequence.
+    Sequence,
+    /// A trigger.
+    Trigger,
+    /// A schema.
+    Schema,
+}
+
+impl NameKind {
+    /// The lowercase config-key / display name (`"table"`, `"column"`, …).
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            NameKind::Table => "table",
+            NameKind::Column => "column",
+            NameKind::Index => "index",
+            NameKind::Constraint => "constraint",
+            NameKind::Sequence => "sequence",
+            NameKind::Trigger => "trigger",
+            NameKind::Schema => "schema",
+        }
+    }
 }
 
 impl std::fmt::Display for Severity {
@@ -138,6 +175,9 @@ pub struct LintOptions {
     /// Per-rule severity overrides applied to the findings this run emits, keyed by rule id.
     /// Default empty.
     pub severity_overrides: BTreeMap<String, Severity>,
+    /// Per-kind naming-convention patterns (raw regex strings). The `naming-convention` rule runs only
+    /// when this is non-empty. Default empty.
+    pub naming_patterns: BTreeMap<NameKind, String>,
 }
 
 /// Error returned when `pgsafe` cannot process the provided SQL.
@@ -170,7 +210,7 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 /// Every lint-rule id: the registered rules plus the engine-synthesized ones
 /// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`,
 /// `fk-without-covering-index`, `enum-value-used-in-transaction`,
-/// `require-primary-key`).
+/// `require-primary-key`, `naming-convention`).
 /// NOT the `suppression-*` hygiene ids.
 pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     let mut ids = rules::rule_ids();
@@ -180,6 +220,7 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(fk_index::ID);
     ids.push(enum_value::ID);
     ids.push(require_pk::ID);
+    ids.push(naming::ID);
     ids
 }
 
@@ -369,6 +410,26 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 severity: Severity::Warning,
                 message: require_pk::MESSAGE.to_string(),
                 guidance: require_pk::GUIDANCE.to_string(),
+                statement_index: i,
+                location: Location {
+                    byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+                    line,
+                    column,
+                },
+                snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
+                suppression: None,
+            });
+        }
+    }
+    if !options.naming_patterns.is_empty() && !options.disabled_rules.contains(naming::ID) {
+        for (i, message) in naming::naming_violations(stmts, &options.naming_patterns) {
+            let g = &geoms[i];
+            let (line, column) = line_col(sql, g.start);
+            findings.push(Finding {
+                rule_id: naming::ID.to_string(),
+                severity: Severity::Warning,
+                message,
+                guidance: naming::GUIDANCE.to_string(),
                 statement_index: i,
                 location: Location {
                     byte: u32::try_from(g.start).unwrap_or(u32::MAX),
