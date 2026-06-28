@@ -225,7 +225,9 @@ COLUMN` anywhere in the migration (cross-statement) satisfies it. Enable with
 `[rules] require-comment = true`.
 
 `require-columns` enforces that every `CREATE TABLE` includes a configured set of columns (a column
-added by a later `ALTER TABLE … ADD COLUMN` in the same migration counts). Configure the list:
+added by a later `ALTER TABLE … ADD COLUMN` in the same migration counts). Names are matched
+case-insensitively against PostgreSQL's folding — the configured names are lowercased, so `Created_At`
+matches a `created_at` column. Configure the list:
 
 ```toml
 required-columns = ["created_at", "updated_at"]

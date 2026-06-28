@@ -247,7 +247,17 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         ignores,
         naming,
         forbidden_types: raw.forbidden_types,
-        required_columns: raw.required_columns.into_iter().collect(),
+        // Fold to lowercase to match PostgreSQL's unquoted-identifier folding (the AST stores an
+        // unquoted column as lower case), so a config entry like `Created_At` still matches a
+        // `created_at` column. Empty entries are dropped — they would flag every table. A genuinely
+        // quoted, mixed-case column (`"CreatedAt"`) keeps its case in the AST and is intentionally
+        // not matchable here.
+        required_columns: raw
+            .required_columns
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_ascii_lowercase())
+            .collect(),
     })
 }
 
@@ -512,6 +522,19 @@ mod tests {
         .unwrap();
         assert!(cfg.required_columns().contains("created_at"));
         assert!(cfg.required_columns().contains("updated_at"));
+    }
+
+    #[test]
+    fn required_columns_are_folded_to_lowercase_and_empties_dropped() {
+        let cfg = from_toml_str(
+            "required-columns = [\"Created_At\", \"\", \"UPDATED_AT\"]\n",
+            KNOWN,
+        )
+        .unwrap();
+        assert!(cfg.required_columns().contains("created_at"));
+        assert!(cfg.required_columns().contains("updated_at"));
+        assert!(!cfg.required_columns().contains("Created_At"));
+        assert!(!cfg.required_columns().contains(""));
     }
 
     #[test]
