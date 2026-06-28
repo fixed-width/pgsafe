@@ -737,3 +737,157 @@ fn statements_block_as_claimed() {
         failures.join("\n")
     );
 }
+
+/// A non-rewriting `ALTER COLUMN … TYPE` that nonetheless invalidates a cached plan. Proven by
+/// preparing a statement over the column (which fixes its result type), running the change, and
+/// showing (a) the table is NOT rewritten and (b) re-executing the prepared statement fails with
+/// "cached plan must not change result type". `seed` is a literal that fits `old_type`.
+struct CachedPlanCase {
+    old_type: &'static str,
+    new_type: &'static str,
+    seed: &'static str,
+    pg: RangeInclusive<u32>,
+}
+
+fn cached_plan_cases() -> Vec<CachedPlanCase> {
+    vec![
+        CachedPlanCase {
+            old_type: "varchar(100)",
+            new_type: "text",
+            seed: "'x'",
+            pg: 14..=18,
+        },
+        CachedPlanCase {
+            old_type: "varchar(100)",
+            new_type: "varchar(200)",
+            seed: "'x'",
+            pg: 14..=18,
+        },
+        CachedPlanCase {
+            old_type: "timestamp(0)",
+            new_type: "timestamp(6)",
+            seed: "now()",
+            pg: 14..=18,
+        },
+        CachedPlanCase {
+            old_type: "numeric(10,2)",
+            new_type: "numeric(12,2)",
+            seed: "1.23",
+            pg: 14..=18,
+        },
+    ]
+}
+
+/// Run one cached-plan case on a single session: prepare a statement over the column, run the
+/// no-rewrite type change, and return (rewrite outcome, whether the re-execute failed with the
+/// cached-plan error).
+fn run_cached_plan_case(client: &mut Client, case: &CachedPlanCase) -> (RewriteOutcome, bool) {
+    let t = "proof_cached_plan";
+    client
+        .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+        .expect("drop pre-existing");
+    // Clear any prepared statement a prior case left behind, so PREPARE below cannot collide.
+    client.batch_execute("DEALLOCATE ALL").ok();
+    client
+        .batch_execute(&format!(
+            "CREATE TABLE {t} (c {}); INSERT INTO {t} VALUES ({});",
+            case.old_type, case.seed
+        ))
+        .expect("setup");
+
+    let oid: u32 = client
+        .query_one(&format!("SELECT '{t}'::regclass::oid"), &[])
+        .expect("resolve oid")
+        .get::<_, u32>(0);
+    let before = relfilenode(client, oid).expect("table exists before the change");
+
+    // Prepare + execute once: this fixes the prepared statement's promised result type.
+    client
+        .batch_execute(&format!("PREPARE pcp AS SELECT c FROM {t}; EXECUTE pcp;"))
+        .expect("prepare + first execute");
+
+    // The flagged change must succeed — it is metadata-only.
+    client
+        .batch_execute(&format!(
+            "ALTER TABLE {t} ALTER COLUMN c TYPE {}",
+            case.new_type
+        ))
+        .expect("alter column type");
+
+    let rewrite = classify_rewrite(before, relfilenode(client, oid));
+
+    // Re-execute: a non-rewriting type change still invalidates the cached plan.
+    let broke = match client.batch_execute("EXECUTE pcp") {
+        Ok(()) => false,
+        Err(e) => e
+            .as_db_error()
+            .map(|d| {
+                d.message()
+                    .contains("cached plan must not change result type")
+            })
+            .unwrap_or(false),
+    };
+
+    client.batch_execute("DEALLOCATE ALL").ok();
+    client
+        .batch_execute(&format!("DROP TABLE IF EXISTS {t} CASCADE"))
+        .expect("drop");
+    (rewrite, broke)
+}
+
+#[test]
+#[ignore = "requires DATABASE_URL pointing at a throwaway Postgres (run with --ignored)"]
+fn no_rewrite_type_changes_break_cached_plans() {
+    let mut client = connect();
+    let major = server_major(
+        client
+            .query_one("SELECT current_setting('server_version_num')::int", &[])
+            .expect("read server_version_num")
+            .get::<_, i32>(0),
+    );
+
+    let mut ran = 0;
+    let mut failures = Vec::new();
+    println!("\n=== pgsafe cached-plan proofs (PostgreSQL {major}) ===");
+    for case in cached_plan_cases() {
+        if !case.pg.contains(&major) {
+            println!(
+                "  SKIP {} -> {} (out of pg range)",
+                case.old_type, case.new_type
+            );
+            continue;
+        }
+        ran += 1;
+        let (rewrite, broke) = run_cached_plan_case(&mut client, &case);
+        let ok = rewrite == RewriteOutcome::Unchanged && broke;
+        println!(
+            "  {} {} -> {:<14} rewrite={:?} cached_plan_broke={}",
+            if ok { "OK  " } else { "FAIL" },
+            case.old_type,
+            case.new_type,
+            rewrite,
+            broke
+        );
+        if rewrite != RewriteOutcome::Unchanged {
+            failures.push(format!(
+                "{} -> {}: expected no rewrite, observed {:?}",
+                case.old_type, case.new_type, rewrite
+            ));
+        }
+        if !broke {
+            failures.push(format!(
+                "{} -> {}: expected cached-plan invalidation, but the re-execute succeeded",
+                case.old_type, case.new_type
+            ));
+        }
+    }
+    assert!(
+        ran > 0,
+        "no cached-plan cases applied to PostgreSQL {major}"
+    );
+    assert!(
+        failures.is_empty(),
+        "cached-plan proofs failed on PostgreSQL {major}:\n{}",
+        failures.join("\n")
+    );
+}
