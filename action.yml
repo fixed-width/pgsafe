@@ -24,6 +24,10 @@ inputs:
     description: "Directory to lint from."
     required: false
     default: "."
+  verify-provenance:
+    description: "Verify the downloaded binary's build provenance with `gh attestation verify` (fails on a missing or invalid attestation). Requires a release built with provenance (pgsafe v0.8.3 or later)."
+    required: false
+    default: "true"
 runs:
   using: composite
   steps:
@@ -34,6 +38,7 @@ runs:
         ACTION_REPO: ${{ github.action_repository }}
         ACTION_REF: ${{ github.action_ref }}
         IN_VERSION: ${{ inputs.version }}
+        VERIFY_PROV: ${{ inputs.verify-provenance }}
       run: |
         set -euo pipefail
         asset="pgsafe-x86_64-unknown-linux-musl"
@@ -46,7 +51,11 @@ runs:
           ver="$(gh release view --repo "$repo" --json tagName -q .tagName)"
           dl "$ver"
         fi
-        ( cd "$dir" && sha256sum -c "$asset.sha256" && tar xzf "$asset.tar.gz" )
+        ( cd "$dir" && sha256sum -c "$asset.sha256" )
+        if [ "${VERIFY_PROV:-true}" = "true" ]; then
+          gh attestation verify "$dir/$asset.tar.gz" --repo "$repo"
+        fi
+        ( cd "$dir" && tar xzf "$asset.tar.gz" )
         chmod +x "$dir/pgsafe"
         echo "$dir" >> "$GITHUB_PATH"
         echo "pgsafe: installed $ver"

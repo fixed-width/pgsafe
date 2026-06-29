@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  attestations: read
 jobs:
   clean-passes:
     runs-on: ubuntu-latest
