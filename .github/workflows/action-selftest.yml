@@ -9,7 +9,7 @@ jobs:
   clean-passes:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: ./
         with:
           files: ".github/fixtures/clean/*.sql"
@@ -17,7 +17,7 @@ jobs:
   hazard-fails:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - id: run
         continue-on-error: true
         uses: ./
@@ -31,7 +31,7 @@ jobs:
   multi-glob-fails:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - id: run
         continue-on-error: true
         uses: ./
