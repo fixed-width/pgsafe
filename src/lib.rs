@@ -354,6 +354,8 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
     // Lint the static SQL recovered from each DO block's PL/pgSQL body (on by default). Each recovered
     // statement runs through the same per-statement registered rules; findings are attributed to the
     // DO statement (so location and suppression align) and prefixed to mark their origin.
+    // Accumulate residue indices: DO blocks with un-analyzable SQL (dynamic EXECUTE or unparsable body).
+    let mut residue_do_indices: Vec<usize> = Vec::new();
     for (i, raw) in stmts.iter().enumerate() {
         let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
             continue;
@@ -370,11 +372,13 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
         };
         let do_sql = sql.get(g.start..g.end).unwrap_or("");
         let analysis = plpgsql::analyze_do_block(do_sql);
+        let mut block_residue = analysis.has_residue;
         for embedded in &analysis.statements {
-            let Ok(parsed) = pg_query::parse(embedded) else {
+            let Ok(embedded_parsed) = pg_query::parse(embedded) else {
+                block_residue = true; // recovered text we cannot re-parse — never silently drop a hazard
                 continue;
             };
-            for inner in &parsed.protobuf.stmts {
+            for inner in &embedded_parsed.protobuf.stmts {
                 let Some(inner_node) = inner.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
                     continue;
                 };
@@ -397,6 +401,9 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     }
                 }
             }
+        }
+        if block_residue {
+            residue_do_indices.push(i);
         }
     }
     if !options.disabled_rules.contains(timeout::ID) {
@@ -576,9 +583,13 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             &geoms,
             do_block::ID,
             Severity::Warning,
-            do_block::unchecked_do_blocks(stmts)
-                .into_iter()
-                .map(|(i, message)| (i, message, do_block::GUIDANCE.to_string())),
+            residue_do_indices.iter().map(|&i| {
+                (
+                    i,
+                    do_block::MESSAGE.to_string(),
+                    do_block::GUIDANCE.to_string(),
+                )
+            }),
         );
     }
     if options.enabled_rules.contains(require_comment::ID)
