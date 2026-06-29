@@ -344,7 +344,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: fixed-width/pgsafe@v0.8.2
+      - uses: fixed-width/pgsafe@v0.8.4
         with:
           files: 'db/migrate/*.sql'   # default: *.sql (any depth)
 ```
