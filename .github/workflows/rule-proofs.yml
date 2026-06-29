@@ -31,7 +31,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
       # pg_query compiles vendored libpg_query (C) via bindgen, which needs libclang.
       - name: Install libclang
