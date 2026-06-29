@@ -27,6 +27,10 @@ jobs:
     needs: create-release
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write      # upload-rust-binary-action attaches assets to the release
+      id-token: write      # Sigstore OIDC token for build-provenance signing
+      attestations: write  # write the provenance to the attestation API
     strategy:
       fail-fast: false
       matrix:
@@ -63,6 +67,11 @@ jobs:
           include: LICENSE
           locked: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: pgsafe-${{ matrix.target }}.tar.gz
 
   # Flip the draft live only after every matrix upload succeeded, so the published release carries
   # all assets atomically. With release immutability enabled this is the point the tag locks and the
