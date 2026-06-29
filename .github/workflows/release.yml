@@ -8,7 +8,18 @@ permissions:
   contents: write
 
 jobs:
+  # upload-rust-binary-action uploads assets to an EXISTING release; it does not create one.
+  # This job creates the GitHub release for the tag first; the matrix below then uploads to it.
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/create-gh-release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   upload:
+    needs: create-release
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
