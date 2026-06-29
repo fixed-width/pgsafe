@@ -61,6 +61,15 @@ mod tests {
     }
 
     #[test]
+    fn do_with_explicit_language_clause_is_flagged() {
+        // `DO LANGUAGE plpgsql $$ … $$` parses to the same DoStmt node as the positional form.
+        assert_eq!(
+            flagged("DO LANGUAGE plpgsql $$ BEGIN PERFORM 1; END $$;"),
+            1
+        );
+    }
+
+    #[test]
     fn each_do_block_is_flagged_once() {
         // two DO blocks around a plain statement — one finding each, none for the CREATE.
         let sql = "DO $$ BEGIN PERFORM 1; END $$;\n\
@@ -84,6 +93,18 @@ mod tests {
             .find(|f| f.rule_id == "unchecked-do-block")
             .expect("rule must fire when enabled");
         assert_eq!(hit.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn disabled_overrides_enabled() {
+        // a rule both enabled and disabled is silenced — the disabled set wins.
+        let opts = LintOptions {
+            enabled_rules: ["unchecked-do-block".to_string()].into_iter().collect(),
+            disabled_rules: ["unchecked-do-block".to_string()].into_iter().collect(),
+            ..LintOptions::default()
+        };
+        let f = lint_sql("DO $$ BEGIN PERFORM 1; END $$;", &opts).unwrap();
+        assert!(f.iter().all(|f| f.rule_id != "unchecked-do-block"));
     }
 
     #[test]

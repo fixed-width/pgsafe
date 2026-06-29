@@ -228,7 +228,7 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 /// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`,
 /// `fk-without-covering-index`, `enum-value-used-in-transaction`, `require-primary-key`,
 /// `require-not-null`, `naming-convention`, `forbidden-column-type`, `require-if-exists`,
-/// `require-comment`, `require-columns`, `forbid-nullable-fk`, `unchecked-do-block`).
+/// `unchecked-do-block`, `require-comment`, `require-columns`, `forbid-nullable-fk`).
 /// NOT the `suppression-*` hygiene ids.
 pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     let mut ids = rules::rule_ids();
@@ -242,10 +242,10 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(naming::ID);
     ids.push(forbidden_types::ID);
     ids.push(require_if_exists::ID);
+    ids.push(do_block::ID);
     ids.push(require_comment::ID);
     ids.push(require_columns::ID);
     ids.push(forbid_nullable_fk::ID);
-    ids.push(do_block::ID);
     ids
 }
 
