@@ -46,6 +46,10 @@ pub struct CommonArgs {
     /// `pgsafe --example-config > .pgsafe.toml`.
     #[arg(long)]
     pub example_config: bool,
+    /// Print the ids of every rule this build can emit (one per line, or a JSON
+    /// envelope with `--format json`) and exit.
+    #[arg(long)]
+    pub list_rules: bool,
 }
 
 /// The `pgsafe` binary's top-level parser.
@@ -138,6 +142,18 @@ pub fn example_config() -> &'static str {
 pub fn run(args: CommonArgs) -> ExitCode {
     if args.example_config {
         print!("{}", config::EXAMPLE_CONFIG);
+        return ExitCode::SUCCESS;
+    }
+    if args.list_rules {
+        let ids = crate::list_rule_ids();
+        if matches!(args.format, Some(Format::Json)) {
+            let envelope = serde_json::json!({ "schema_version": 1, "rules": ids });
+            println!("{envelope}");
+        } else {
+            for id in ids {
+                println!("{id}");
+            }
+        }
         return ExitCode::SUCCESS;
     }
     let r = match resolve(&args) {
