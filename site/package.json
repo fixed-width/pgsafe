@@ -1,0 +1,29 @@
+{
+  "name": "pgsafe-site",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "astro": "^7.0.3"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.9",
+    "@astrojs/sitemap": "^3.7.3",
+    "@playwright/test": "^1.61.1",
+    "typescript": "^6.0.3"
+  },
+  "//overrides": "Pin patched yaml (>=2.8.3) into @astrojs/check's nested yaml-language-server; resolves GHSA-48c2-rrv3-qjmp (dev-only). Drop once @astrojs/check ships it transitively.",
+  "overrides": {
+    "yaml": "^2.9.0"
+  }
+}

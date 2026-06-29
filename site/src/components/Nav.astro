@@ -1,0 +1,22 @@
+---
+const repo = "https://github.com/fixed-width/pgsafe";
+---
+<header class="nav">
+  <div class="container nav-row">
+    <a class="brand" href="/">pgsafe<span class="cursor">_</span></a>
+    <nav class="links">
+      <a href="/#features">Features</a>
+      <a href="/#install">Install</a>
+      <a href={repo} rel="noopener noreferrer">GitHub</a>
+    </nav>
+  </div>
+</header>
+<style>
+  .nav { border-bottom: 1px solid var(--border); position: sticky; top: 0; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(6px); }
+  .nav-row { display: flex; align-items: center; justify-content: space-between; height: 3.5rem; }
+  .brand { color: var(--fg); font-weight: 600; font-size: 1.1rem; }
+  .cursor { color: var(--accent); }
+  .links { display: flex; gap: 1.25rem; }
+  .links a { color: var(--fg-dim); }
+  .links a:hover { color: var(--fg); text-decoration: none; }
+</style>

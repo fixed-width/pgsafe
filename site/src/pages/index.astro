@@ -1,0 +1,89 @@
+---
+import Base from "../layouts/Base.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+
+const title = "pgsafe — catch unsafe PostgreSQL migrations before they ship";
+const description =
+  "pgsafe is a static linter that flags PostgreSQL schema migrations likely to lock or break production — no database connection required.";
+
+// A representative finding, shown in the hero terminal.
+const demo = [
+  { sev: "error", id: "add-index-non-concurrent", text: "CREATE INDEX without CONCURRENTLY blocks writes for the whole build." },
+  { sev: "warning", id: "require-timeout", text: "Lock-taking statement with no lock_timeout can pile up the lock queue." },
+];
+
+const features = [
+  { h: "No database needed", p: "Parses SQL with PostgreSQL's real parser. No connection, no network, no credentials." },
+  { h: "Catches lock & break hazards", p: "Flags rewrites, blocking index builds, unvalidated constraints, and changes that break running app code." },
+  { h: "Safe-rewrite guidance", p: "Every finding explains the hazard and the safe way to make the same change." },
+  { h: "CI-ready", p: "Machine-readable JSON, exit codes, and a GitHub Action so a PR fails on an unsafe migration." },
+];
+---
+<Base title={title} description={description}>
+  <Nav />
+  <main class="container">
+    <section class="hero">
+      <h1>Ship Postgres migrations <span class="accent">without fear.</span></h1>
+      <p class="lede">{description}</p>
+      <div class="cta">
+        <a class="btn primary" href="/#install">Get started</a>
+        <a class="btn" href="https://github.com/fixed-width/pgsafe" rel="noopener noreferrer">View source</a>
+      </div>
+      <div class="term" role="img" aria-label="Example pgsafe output">
+        <div class="term-bar"><span></span><span></span><span></span></div>
+        <pre><code><span class="prompt">$ pgsafe migration.sql</span>
+{demo.map((f) => (
+  <span><span class={`sev-${f.sev}`}>{f.sev}</span>  <span class="rid">{f.id}</span>{"  "}{f.text}
+</span>
+))}</code></pre>
+      </div>
+    </section>
+
+    <section id="features" class="features">
+      <h2>What it does</h2>
+      <div class="grid">
+        {features.map((f) => (
+          <article class="card">
+            <h3>{f.h}</h3>
+            <p>{f.p}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section id="install" class="install">
+      <h2>Install</h2>
+      <p>Run it in CI with the GitHub Action:</p>
+      <pre><code>{`- uses: fixed-width/pgsafe@v0.8.5
+  with:
+    files: "db/migrate/*.sql"`}</code></pre>
+      <p>Or grab a prebuilt binary from the <a href="https://github.com/fixed-width/pgsafe/releases/latest" rel="noopener noreferrer">latest release</a> (static Linux and macOS builds).</p>
+    </section>
+  </main>
+  <Footer />
+</Base>
+
+<style>
+  .hero { padding: 4rem 0 3rem; }
+  h1 { font-size: clamp(2rem, 5vw, 3.25rem); line-height: 1.1; margin: 0 0 1rem; }
+  .accent { color: var(--accent); }
+  .lede { color: var(--fg-dim); font-size: 1.1rem; max-width: 46rem; }
+  .cta { display: flex; gap: 0.75rem; margin: 1.75rem 0 2.5rem; flex-wrap: wrap; }
+  .btn { border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 1.1rem; color: var(--fg); }
+  .btn:hover { border-color: var(--accent); text-decoration: none; }
+  .btn.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: #06120a; font-weight: 600; }
+  .term { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-elev); }
+  .term-bar { display: flex; gap: 0.4rem; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); }
+  .term-bar span { width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--border); }
+  .term pre { border: 0; margin: 0; border-radius: 0; font-size: 0.85rem; }
+  .prompt { color: var(--fg-dim); }
+  .rid { color: var(--accent); }
+  .features { padding: 2rem 0; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; margin-top: 1.25rem; }
+  .card { border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; background: var(--bg-elev); }
+  .card h3 { margin: 0 0 0.5rem; color: var(--fg); font-size: 1rem; }
+  .card p { margin: 0; color: var(--fg-dim); font-size: 0.92rem; }
+  .install { padding: 2rem 0; }
+  .install h2, .features h2 { font-size: 1.5rem; }
+</style>
