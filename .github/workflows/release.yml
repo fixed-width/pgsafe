@@ -8,8 +8,12 @@ permissions:
   contents: write
 
 jobs:
-  # upload-rust-binary-action uploads assets to an EXISTING release; it does not create one.
-  # This job creates the GitHub release for the tag first; the matrix below then uploads to it.
+  # upload-rust-binary-action uploads assets to an EXISTING release; it does not create one. This
+  # job creates a DRAFT release for the tag, the matrix below uploads assets to it, and the publish
+  # job flips it live last — so the release is only published once every asset is attached. This is
+  # required for immutable releases: once a release is published its tag and assets are frozen, so
+  # assets cannot be added afterwards. A draft keeps the tag unlocked until publish, so a failed
+  # build simply leaves an unpublished draft and the tag can be reused on a re-run.
   create-release:
     runs-on: ubuntu-latest
     steps:
@@ -17,6 +21,7 @@ jobs:
       - uses: taiki-e/create-gh-release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          draft: true
 
   upload:
     needs: create-release
@@ -58,3 +63,17 @@ jobs:
           include: LICENSE
           locked: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Flip the draft live only after every matrix upload succeeded, so the published release carries
+  # all assets atomically. With release immutability enabled this is the point the tag locks and the
+  # assets freeze; if any upload job failed, this job is skipped and the draft stays unpublished.
+  publish:
+    needs: upload
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false
