@@ -18,6 +18,11 @@ use crate::{FailOn, Format, NameKind, Severity};
 /// non-dotfile wins.
 const CANDIDATES: &[&str] = &["pgsafe.toml", ".pgsafe.toml"];
 
+/// The annotated example config (`pgsafe --example-config`). Every option is shown, commented
+/// out, so the file is a valid no-op as-is. Kept in sync with the schema by `example_config_*`
+/// tests below.
+pub(crate) const EXAMPLE_CONFIG: &str = include_str!("../config-example.toml");
+
 /// A config problem. Rendered by the CLI as `error: {0}` and mapped to exit 2.
 #[derive(Debug)]
 pub(crate) struct ConfigError(pub String);
@@ -302,6 +307,44 @@ mod tests {
         "add-index-non-concurrent",
         "require-timeout",
     ];
+
+    #[test]
+    fn example_config_parses_and_is_current() {
+        // The shipped template (what `pgsafe --example-config` prints) must parse cleanly
+        // against the real rule set — a broken TOML edit fails here, not in a user's setup.
+        let known = crate::known_rule_ids();
+        let parsed = from_toml_str(EXAMPLE_CONFIG, &known);
+        assert!(
+            parsed.is_ok(),
+            "example config must parse: {:?}",
+            parsed.err()
+        );
+        // Every rule the example documents must still exist (a rename fails here) and must be
+        // present in the template (so the example can't quietly drop a documented rule).
+        for rule in [
+            "drop-table",
+            "add-trigger",
+            "add-index-non-concurrent",
+            "require-primary-key",
+            "require-not-null",
+            "require-comment",
+            "require-if-exists",
+            "forbid-nullable-fk",
+            "unchecked-do-block",
+            "naming-convention",
+            "forbidden-column-type",
+            "require-columns",
+        ] {
+            assert!(
+                known.contains(&rule),
+                "example references unknown rule `{rule}` (renamed or removed?)"
+            );
+            assert!(
+                EXAMPLE_CONFIG.contains(rule),
+                "example config should mention `{rule}`"
+            );
+        }
+    }
 
     #[test]
     fn parses_scalars_rules_and_ignores() {

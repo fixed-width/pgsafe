@@ -1,0 +1,83 @@
+# .pgsafe.toml — annotated pgsafe configuration. Every option is shown; all settings are
+# commented out (so this file is a no-op as-is — the values shown are examples/defaults).
+# Uncomment and edit what you want. Generate this with `pgsafe --example-config`.
+#
+# Discovery: pgsafe walks up the directory tree from each SQL file to the nearest
+# `.pgsafe.toml` (or `pgsafe.toml`). Unknown keys are a hard error, so a typo won't be ignored.
+# CLI flags override the matching config keys.
+
+# ── Run defaults (each mirrors a CLI flag; the flag wins when both are set) ───────────────
+
+# Minimum severity that fails the run: "error" | "warning" (any finding fails) | "never".
+# fail_on = "warning"
+
+# Default output format: "human" | "json".
+# format = "human"
+
+# Treat each file as already inside a transaction (Rails/Flyway/etc. wrap migrations
+# implicitly), so CONCURRENTLY index operations are flagged without an explicit BEGIN.
+# in_transaction = false
+
+# Lint only migration files whose path sorts after this cutoff — the last "legacy" migration
+# you don't want to re-lint. (The --since flag overrides this.)
+# since = "0042_last_legacy_migration"
+
+# Columns every CREATE TABLE must contain (enables the `require-columns` rule). A later
+# ALTER TABLE … ADD COLUMN in the same migration also satisfies it. NOTE: a top-level key, so
+# it must appear before any [section] below.
+# required-columns = ["created_at", "updated_at"]
+
+# ── Rules ────────────────────────────────────────────────────────────────────────────────
+# Each entry is one of:
+#   true            enable an opt-in rule (the policy lints below are off by default)
+#   false           disable a rule entirely
+#   "error" | "warning"   force the severity (e.g. escalate a warning so it fails the build)
+# The lock/rewrite hazard rules are on by default — you only list one here to disable it or
+# change its severity. Full rule list: `pgsafe --help` output / the README rules table.
+[rules]
+# Escalate or relax an on-by-default rule:
+# drop-table  = "error"     # make DROP TABLE fail the build
+# add-trigger = false       # turn a rule off
+
+# Opt-in policy lints (off unless enabled here):
+# require-primary-key = true
+# require-not-null    = true
+# require-comment     = true
+# require-if-exists   = true
+# forbid-nullable-fk  = true
+# unchecked-do-block  = true
+
+# ── Path ignores ─────────────────────────────────────────────────────────────────────────
+# Skip findings for files matching a glob. `rules` defaults to ["*"] (ignore everything for the
+# path); give specific rule ids to ignore only those. Repeat the block for more paths.
+# [[ignore]]
+# path = "migrations/legacy/**"
+# [[ignore]]
+# path  = "migrations/0001_init.sql"
+# rules = ["add-index-non-concurrent", "drop-table"]
+
+# ── Naming conventions (enables `naming-convention`) ───────────────────────────────────────
+# A regex per identifier kind. A name a migration introduces (in CREATE/ALTER/RENAME) that does
+# not match its kind's regex is flagged. Omit a kind to not check it.
+[naming]
+# table      = "^[a-z][a-z0-9_]*$"
+# column     = "^[a-z][a-z0-9_]*$"
+# index      = "^ix_[a-z0-9_]+$"
+# constraint = "^(ck|fk|uq)_[a-z0-9_]+$"
+# sequence   = "^[a-z][a-z0-9_]*_seq$"
+# trigger    = "^trg_[a-z0-9_]+$"
+# schema     = "^[a-z][a-z0-9_]*$"
+
+# ── Forbidden column types (enables `forbidden-column-type`) ───────────────────────────────
+# Map a banned type to its suggested replacement; a column of a key type is flagged with the
+# suggestion. Types are matched as written (after pg_query canonicalization).
+[forbidden-types]
+# timestamp = "timestamptz"
+# char      = "text"
+# money     = "numeric"
+# json      = "jsonb"
+
+# ── Suppressing a single finding ───────────────────────────────────────────────────────────
+# Inline in the SQL (not here): put a directive on the line BEFORE the statement —
+#   -- pgsafe:ignore drop-table  reason goes here
+#   DROP TABLE legacy_audit;
