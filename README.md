@@ -142,6 +142,7 @@ pgsafe migrations/*.sql || exit 1
 | `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
 | `set-not-null` | error | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
 | `truncate` | warning | `TRUNCATE` takes an `ACCESS EXCLUSIVE` lock and irreversibly removes all rows; with `CASCADE` the lock propagates to every FK-referencing table |
+| `unchecked-do-block` | warning | **(opt-in)** A `DO $$ … $$` block whose procedural body pgsafe cannot analyze — DDL/DML inside it bypasses every rule; enable with `[rules] unchecked-do-block = true` |
 | `vacuum-full-cluster` | error | `VACUUM FULL` and `CLUSTER` rewrite the entire table under an `ACCESS EXCLUSIVE` lock — minutes to hours of blocked reads and writes, plus 2× disk |
 
 By default `concurrently-in-transaction` detects explicit `BEGIN … COMMIT` blocks in the SQL.
@@ -239,6 +240,13 @@ required-columns = ["created_at", "updated_at"]
 columns and the columns of a table-level `FOREIGN KEY (…)`. A column that is `NOT NULL` (inline, via a
 primary key, an identity column, a serial type, or a later `SET NOT NULL`) is not flagged. Enable with
 `[rules] forbid-nullable-fk = true`.
+
+`unchecked-do-block` flags every `DO $$ … $$` block. pgsafe analyzes top-level SQL statements, but a
+`DO` block's body is procedural PL/pgSQL that the SQL parser exposes only as an opaque string — so any
+`ALTER TABLE`, `CREATE INDEX`, or other DDL/DML the block runs is invisible to every rule. Enable this
+to keep hazards out of unchecked blocks (move the DDL to top-level statements, or review and suppress
+the finding with `-- pgsafe:ignore unchecked-do-block <reason>`). Off by default. Enable with
+`[rules] unchecked-do-block = true`.
 
 ## Severity & gating
 

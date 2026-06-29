@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod do_block;
 mod enum_value;
 mod fk_index;
 mod forbid_nullable_fk;
@@ -177,9 +178,10 @@ pub struct LintOptions {
     pub disabled_rules: BTreeSet<String>,
     /// Rule ids explicitly enabled in config. Required for the **boolean** opt-in policy rules
     /// (`require-primary-key`, `require-not-null`, `require-if-exists`, `require-comment`,
-    /// `forbid-nullable-fk`) to run; has no effect on rules that are on by default. The
-    /// **data-configured** policies (`naming-convention`, `forbidden-column-type`, `require-columns`)
-    /// activate when their own field below is non-empty, independent of this set. Default empty.
+    /// `forbid-nullable-fk`, `unchecked-do-block`) to run; has no effect on rules that are on by
+    /// default. The **data-configured** policies (`naming-convention`, `forbidden-column-type`,
+    /// `require-columns`) activate when their own field below is non-empty, independent of this set.
+    /// Default empty.
     pub enabled_rules: BTreeSet<String>,
     /// Per-rule severity overrides applied to the findings this run emits, keyed by rule id.
     /// Default empty.
@@ -228,7 +230,7 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 /// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`,
 /// `fk-without-covering-index`, `enum-value-used-in-transaction`, `require-primary-key`,
 /// `require-not-null`, `naming-convention`, `forbidden-column-type`, `require-if-exists`,
-/// `require-comment`, `require-columns`, `forbid-nullable-fk`).
+/// `unchecked-do-block`, `require-comment`, `require-columns`, `forbid-nullable-fk`).
 /// NOT the `suppression-*` hygiene ids.
 pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     let mut ids = rules::rule_ids();
@@ -242,6 +244,7 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(naming::ID);
     ids.push(forbidden_types::ID);
     ids.push(require_if_exists::ID);
+    ids.push(do_block::ID);
     ids.push(require_comment::ID);
     ids.push(require_columns::ID);
     ids.push(forbid_nullable_fk::ID);
@@ -511,6 +514,20 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             require_if_exists::missing_if_exists(stmts)
                 .into_iter()
                 .map(|(i, message)| (i, message, require_if_exists::GUIDANCE.to_string())),
+        );
+    }
+    if options.enabled_rules.contains(do_block::ID)
+        && !options.disabled_rules.contains(do_block::ID)
+    {
+        push_synthesized(
+            &mut findings,
+            sql,
+            &geoms,
+            do_block::ID,
+            Severity::Warning,
+            do_block::unchecked_do_blocks(stmts)
+                .into_iter()
+                .map(|(i, message)| (i, message, do_block::GUIDANCE.to_string())),
         );
     }
     if options.enabled_rules.contains(require_comment::ID)
