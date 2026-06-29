@@ -142,7 +142,7 @@ pgsafe migrations/*.sql || exit 1
 | `set-logged-unlogged` | error | `ALTER TABLE … SET {LOGGED\|UNLOGGED}` rewrites the entire table and its indexes under an `ACCESS EXCLUSIVE` lock |
 | `set-not-null` | error | `ALTER COLUMN ... SET NOT NULL` scans the entire table under an `ACCESS EXCLUSIVE` lock |
 | `truncate` | warning | `TRUNCATE` takes an `ACCESS EXCLUSIVE` lock and irreversibly removes all rows; with `CASCADE` the lock propagates to every FK-referencing table |
-| `unchecked-do-block` | warning | **(opt-in)** A `DO $$ … $$` block whose procedural body pgsafe cannot analyze — DDL/DML inside it bypasses every rule; enable with `[rules] unchecked-do-block = true` |
+| `unchecked-do-block` | warning | **(opt-in)** A `DO $$ … $$` block containing SQL pgsafe can't statically analyze — a dynamic `EXECUTE`, or a body that won't parse; enable with `[rules] unchecked-do-block = true` |
 | `vacuum-full-cluster` | error | `VACUUM FULL` and `CLUSTER` rewrite the entire table under an `ACCESS EXCLUSIVE` lock — minutes to hours of blocked reads and writes, plus 2× disk |
 
 By default `concurrently-in-transaction` detects explicit `BEGIN … COMMIT` blocks in the SQL.
@@ -241,12 +241,14 @@ columns and the columns of a table-level `FOREIGN KEY (…)`. A column that is `
 primary key, an identity column, a serial type, or a later `SET NOT NULL`) is not flagged. Enable with
 `[rules] forbid-nullable-fk = true`.
 
-`unchecked-do-block` flags every `DO $$ … $$` block. pgsafe analyzes top-level SQL statements, but a
-`DO` block's body is procedural PL/pgSQL that the SQL parser exposes only as an opaque string — so any
-`ALTER TABLE`, `CREATE INDEX`, or other DDL/DML the block runs is invisible to every rule. Enable this
-to keep hazards out of unchecked blocks (move the DDL to top-level statements, or review and suppress
-the finding with `-- pgsafe:ignore unchecked-do-block <reason>`). Off by default. Enable with
-`[rules] unchecked-do-block = true`.
+pgsafe analyzes the static SQL inside `DO $$ … $$` blocks by default: statements PL/pgSQL parses
+directly (e.g. an `ALTER TABLE` or `CREATE INDEX` in the body, including inside `IF`/`LOOP`/`CASE`) are
+recovered and run through every **per-statement** rule, reported as `Inside a DO block: …`.
+Cross-statement and synthesized rules (such as `require-timeout`, `fk-without-covering-index`,
+`concurrently-in-transaction`) are not applied inside `DO` blocks. What pgsafe cannot see is
+dynamic execution — `EXECUTE '…'`, especially when the string is built at runtime — and a body that
+won't parse. The opt-in `unchecked-do-block` rule flags exactly that residue, so you know when a block
+still holds SQL the linter couldn't check. Enable with `[rules] unchecked-do-block = true`.
 
 ## Severity & gating
 
