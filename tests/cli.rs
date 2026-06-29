@@ -163,7 +163,8 @@ fn json_format_clean_sql_exits_0_with_empty_findings() {
 
 #[test]
 fn error_severity_renders_in_human_and_json() {
-    // human: format is "{name}: {severity} [{rule_id}] statement #…"
+    // human: a statement header ("{name}:{line}:{col}  {snippet}") then a nested
+    // "  {severity} [{rule_id}]" line per finding.
     Command::cargo_bin("pgsafe")
         .unwrap()
         .write_stdin("VACUUM FULL t;")

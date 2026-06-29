@@ -2,7 +2,7 @@
 //! the gate decision, and the human/JSON renderers. This is the reusable
 //! surface a thin binary (or another tool) builds on.
 
-use crate::{Finding, Severity};
+use crate::{Finding, Location, Severity};
 
 /// The version of the JSON output envelope (`schema_version`).
 pub const SCHEMA_VERSION: u32 = 1;
@@ -110,14 +110,60 @@ pub fn render_finding_human(file: &str, f: &Finding) -> String {
     out
 }
 
-/// Render every finding across `reports` to the human stdout block. Parse
-/// errors are not included here — see [`render_errors`].
+/// Render the grouped-output header for a statement: `{file}:{line}:{col}  {snippet}`
+/// (the snippet is omitted when empty). One header precedes all the findings on that statement.
+#[must_use]
+pub fn render_statement_header(file: &str, location: Location, snippet: &str) -> String {
+    if snippet.is_empty() {
+        format!("{file}:{}:{}\n", location.line, location.column)
+    } else {
+        format!("{file}:{}:{}  {snippet}\n", location.line, location.column)
+    }
+}
+
+/// Render one finding's nested body for the grouped output: a `  {severity} [{rule}]` line
+/// (with a suppression note when suppressed), the indented message, and a `fix:` line unless
+/// suppressed. The owning statement's location and snippet come from [`render_statement_header`].
+#[must_use]
+pub fn render_finding_body(f: &Finding) -> String {
+    let suffix = match &f.suppression {
+        Some(s) => format!("  — suppressed: {}", s.reason),
+        None => String::new(),
+    };
+    let mut out = format!("  {} [{}]{}\n", f.severity, f.rule_id, suffix);
+    out.push_str(&format!("    {}\n", f.message));
+    if f.suppression.is_none() {
+        out.push_str(&format!("    fix: {}\n", f.guidance));
+    }
+    out
+}
+
+/// Render every finding across `reports` to the human stdout block, grouped by statement: each
+/// statement's location and snippet appear once as a header, its findings nested beneath, with a
+/// blank line between statements. Findings arrive sorted by statement index, so a group is the run
+/// of consecutive findings sharing one index. Parse errors are not included — see [`render_errors`].
 #[must_use]
 pub fn render_human(reports: &[FileReport]) -> String {
     let mut out = String::new();
+    let mut first = true;
     for r in reports {
-        for f in &r.findings {
-            out.push_str(&render_finding_human(&r.name, f));
+        let mut i = 0;
+        while i < r.findings.len() {
+            if !first {
+                out.push('\n');
+            }
+            first = false;
+            let head = &r.findings[i];
+            out.push_str(&render_statement_header(
+                &r.name,
+                head.location,
+                &head.snippet,
+            ));
+            let stmt = head.statement_index;
+            while i < r.findings.len() && r.findings[i].statement_index == stmt {
+                out.push_str(&render_finding_body(&r.findings[i]));
+                i += 1;
+            }
         }
     }
     out
@@ -210,6 +256,33 @@ mod tests {
         let s = render_finding_human("m.sql", f);
         assert!(s.contains("error [vacuum-full-cluster]"));
         assert!(s.contains("  fix: "));
+    }
+
+    #[test]
+    fn render_human_groups_findings_by_statement() {
+        let reports = vec![lint_input(
+            "m.sql",
+            "DROP TABLE users;\nCREATE INDEX i ON t (x);",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_human(&reports);
+        // Each statement has exactly one header line with its snippet (the two findings on
+        // statement 0 — drop-table + require-timeout — share one header).
+        assert_eq!(
+            s.matches("m.sql:").count(),
+            2,
+            "one header per statement:\n{s}"
+        );
+        assert!(s.contains("m.sql:1:1  DROP TABLE users\n"));
+        assert!(s.contains("m.sql:2:1  CREATE INDEX i ON t (x)\n"));
+        // Findings are nested (indented) under their statement header.
+        assert!(s.contains("\n  warning [drop-table]\n    "));
+        assert!(s.contains("\n  error [add-index-non-concurrent]\n    "));
+        // A blank line separates the two statement groups.
+        assert!(
+            s.contains("\n\nm.sql:2:1"),
+            "blank line between groups:\n{s}"
+        );
     }
 
     #[test]
