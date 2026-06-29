@@ -31,6 +31,8 @@ pub enum Format {
     Human,
     /// Machine-readable JSON envelope.
     Json,
+    /// GitHub Actions workflow annotation commands (for the GitHub Action / CI).
+    Github,
 }
 
 /// Lint results for a single named input.
@@ -195,6 +197,55 @@ pub fn render_json(reports: &[FileReport]) -> Result<String, String> {
         .map_err(|e| format!("failed to serialize JSON output: {e}"))
 }
 
+/// Escape a workflow-command message value: `%`, CR, LF.
+fn gh_escape_data(s: &str) -> String {
+    s.replace('%', "%25")
+        .replace('\r', "%0D")
+        .replace('\n', "%0A")
+}
+
+/// Escape a workflow-command property value: the data escapes plus `,` and `:`.
+fn gh_escape_prop(s: &str) -> String {
+    gh_escape_data(s).replace(',', "%2C").replace(':', "%3A")
+}
+
+/// Render findings as GitHub Actions workflow annotation commands (`--format github`): one
+/// `::error`/`::warning file=…,line=…,col=…,title=pgsafe(rule)::message` per finding (suppressed
+/// findings skipped), plus `::error file=…::{error}` for any file that failed to parse. GitHub turns
+/// these into inline annotations on the diff; the process exit code (the gate) still drives the check.
+#[must_use]
+pub fn render_github(reports: &[FileReport]) -> String {
+    let mut out = String::new();
+    for r in reports {
+        if let Some(err) = &r.error {
+            out.push_str(&format!(
+                "::error file={}::{}\n",
+                gh_escape_prop(&r.name),
+                gh_escape_data(err)
+            ));
+            continue;
+        }
+        for f in &r.findings {
+            if f.is_suppressed() {
+                continue;
+            }
+            let level = match f.severity {
+                Severity::Error => "error",
+                Severity::Warning => "warning",
+            };
+            out.push_str(&format!(
+                "::{level} file={},line={},col={},title={}::{}\n",
+                gh_escape_prop(&r.name),
+                f.location.line,
+                f.location.column,
+                gh_escape_prop(&format!("pgsafe({})", f.rule_id)),
+                gh_escape_data(&f.message),
+            ));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +366,46 @@ mod tests {
         let s = render_errors(&reports);
         assert!(s.contains("bad.sql: parse error"));
         assert!(!s.contains("ok.sql"));
+    }
+
+    #[test]
+    fn gh_escape_helpers_encode_special_chars() {
+        assert_eq!(super::gh_escape_data("a%b\nc\rd"), "a%25b%0Ac%0Dd");
+        assert_eq!(super::gh_escape_prop("x,y:z"), "x%2Cy%3Az");
+    }
+
+    #[test]
+    fn render_github_emits_severity_keyed_annotations() {
+        // VACUUM FULL → an error rule (vacuum-full-cluster) + a warning (require-timeout), both at 1:1.
+        let reports = vec![lint_input(
+            "m.sql",
+            "VACUUM FULL t;",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_github(&reports);
+        assert!(s.contains("::error file=m.sql,line=1,col=1,title=pgsafe(vacuum-full-cluster)::"));
+        assert!(s.contains("::warning file=m.sql,line=1,col=1,title=pgsafe(require-timeout)::"));
+    }
+
+    #[test]
+    fn render_github_skips_suppressed_findings() {
+        let sql = "-- pgsafe:ignore vacuum-full-cluster reviewed\nVACUUM FULL t;";
+        let reports = vec![lint_input("m.sql", sql, &crate::LintOptions::default())];
+        let s = render_github(&reports);
+        // the suppressed finding is not annotated; an unsuppressed sibling still is.
+        assert!(!s.contains("title=pgsafe(vacuum-full-cluster)"));
+        assert!(s.contains("title=pgsafe(require-timeout)"));
+    }
+
+    #[test]
+    fn render_github_annotates_a_parse_error() {
+        let reports = vec![lint_input(
+            "bad.sql",
+            "ALTER TABLE;",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_github(&reports);
+        assert!(s.starts_with("::error file=bad.sql::"), "got: {s}");
+        assert!(s.contains("parse error"));
     }
 }
