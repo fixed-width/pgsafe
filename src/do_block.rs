@@ -92,4 +92,19 @@ mod tests {
             .expect("rule must fire");
         assert!(hit.is_suppressed());
     }
+
+    #[test]
+    fn disabled_overrides_enabled() {
+        let opts = LintOptions {
+            enabled_rules: ["unchecked-do-block".to_string()].into_iter().collect(),
+            disabled_rules: ["unchecked-do-block".to_string()].into_iter().collect(),
+            ..LintOptions::default()
+        };
+        let f = lint_sql(
+            "DO $$ BEGIN EXECUTE 'ALTER TABLE t ADD COLUMN x int'; END $$;",
+            &opts,
+        )
+        .unwrap();
+        assert!(f.iter().all(|f| f.rule_id != "unchecked-do-block"));
+    }
 }

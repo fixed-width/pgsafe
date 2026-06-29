@@ -370,7 +370,10 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             line,
             column,
         };
-        let do_sql = sql.get(g.start..g.end).unwrap_or("");
+        let Some(do_sql) = sql.get(g.start..g.end) else {
+            residue_do_indices.push(i); // unreadable source range — conservative residue, never silent
+            continue;
+        };
         let analysis = plpgsql::analyze_do_block(do_sql);
         let mut block_residue = analysis.has_residue;
         for embedded in &analysis.statements {
@@ -380,6 +383,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             };
             for inner in &embedded_parsed.protobuf.stmts {
                 let Some(inner_node) = inner.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
+                    block_residue = true; // parsed but unreadable node — never silently skip a recovered statement
                     continue;
                 };
                 for rule in rules {
@@ -890,5 +894,21 @@ mod tests {
             .find(|f| f.rule_id == "add-index-non-concurrent")
             .expect("finding must still be present, just suppressed");
         assert!(hit.is_suppressed());
+    }
+
+    #[test]
+    fn mixed_do_block_yields_both_embedded_and_residue_findings() {
+        let opts = LintOptions {
+            enabled_rules: ["unchecked-do-block".to_string()].into_iter().collect(),
+            ..LintOptions::default()
+        };
+        let f = lint_sql(
+            "DO $$ BEGIN CREATE INDEX i ON t (c); EXECUTE 'DROP TABLE u'; END $$;",
+            &opts,
+        )
+        .unwrap();
+        assert!(f.iter().any(|f| f.rule_id == "add-index-non-concurrent"
+            && f.message.starts_with("Inside a DO block:")));
+        assert!(f.iter().any(|f| f.rule_id == "unchecked-do-block"));
     }
 }

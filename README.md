@@ -243,7 +243,9 @@ primary key, an identity column, a serial type, or a later `SET NOT NULL`) is no
 
 pgsafe analyzes the static SQL inside `DO $$ … $$` blocks by default: statements PL/pgSQL parses
 directly (e.g. an `ALTER TABLE` or `CREATE INDEX` in the body, including inside `IF`/`LOOP`/`CASE`) are
-recovered and run through every rule, reported as `Inside a DO block: …`. What pgsafe cannot see is
+recovered and run through every **per-statement** rule, reported as `Inside a DO block: …`.
+Cross-statement and synthesized rules (such as `require-timeout`, `fk-without-covering-index`,
+`concurrently-in-transaction`) are not applied inside `DO` blocks. What pgsafe cannot see is
 dynamic execution — `EXECUTE '…'`, especially when the string is built at runtime — and a body that
 won't parse. The opt-in `unchecked-do-block` rule flags exactly that residue, so you know when a block
 still holds SQL the linter couldn't check. Enable with `[rules] unchecked-do-block = true`.

@@ -9,8 +9,11 @@ use serde_json::Value;
 pub(crate) struct DoBodyAnalysis {
     /// SQL statement texts recovered from `PLpgSQL_stmt_execsql` nodes, in body order.
     pub statements: Vec<String>,
-    /// `true` if the block holds anything pgsafe cannot statically analyze: a `PLpgSQL_stmt_dynexecute`
-    /// (`EXECUTE`), or a body that `parse_plpgsql` rejected.
+    /// `true` if the block holds anything pgsafe cannot statically analyze: a dynamic-SQL form
+    /// (`EXECUTE`, `FOR … IN EXECUTE`, `OPEN … FOR EXECUTE`), or a body that `parse_plpgsql`
+    /// rejected. Note: `lint_sql` may additionally mark residue when a recovered statement string
+    /// fails SQL re-parse, so this flag captures only the plpgsql-level residue — not the only
+    /// source of residue the caller tracks.
     pub has_residue: bool,
 }
 
@@ -32,22 +35,31 @@ pub(crate) fn analyze_do_block(do_sql: &str) -> DoBodyAnalysis {
     analysis
 }
 
-/// Recursively collect every `PLpgSQL_stmt_execsql` query text and flag any `PLpgSQL_stmt_dynexecute`
-/// as residue. The plpgsql JSON nests statement objects under control-flow keys (`then_body`, etc.),
-/// so a full descent reaches statements inside `IF`/`LOOP`/`CASE`/nested blocks.
+/// Recursively collect every `PLpgSQL_stmt_execsql` query text and flag any dynamic-SQL form
+/// (`EXECUTE` / `FOR … IN EXECUTE` / `OPEN … FOR EXECUTE`) as residue. The plpgsql JSON nests
+/// statement objects under control-flow keys (`then_body`, etc.), so a full descent reaches
+/// statements inside `IF`/`LOOP`/`CASE`/nested blocks.
 fn walk(value: &Value, out: &mut DoBodyAnalysis) {
     match value {
         Value::Object(map) => {
-            if let Some(query) = map
-                .get("PLpgSQL_stmt_execsql")
-                .and_then(|n| n.get("sqlstmt"))
-                .and_then(|n| n.get("PLpgSQL_expr"))
-                .and_then(|n| n.get("query"))
-                .and_then(Value::as_str)
-            {
-                out.statements.push(query.to_string());
+            if let Some(execsql) = map.get("PLpgSQL_stmt_execsql") {
+                if let Some(query) = execsql
+                    .get("sqlstmt")
+                    .and_then(|n| n.get("PLpgSQL_expr"))
+                    .and_then(|n| n.get("query"))
+                    .and_then(Value::as_str)
+                {
+                    out.statements.push(query.to_string());
+                } else {
+                    // execsql node present but its query text could not be read — treat as residue
+                    // rather than silently dropping a statement.
+                    out.has_residue = true;
+                }
             }
-            if map.contains_key("PLpgSQL_stmt_dynexecute") {
+            if map.contains_key("PLpgSQL_stmt_dynexecute")
+                || map.contains_key("PLpgSQL_stmt_dynfors")
+                || map.contains_key("dynquery")
+            {
                 out.has_residue = true;
             }
             for child in map.values() {
@@ -121,6 +133,32 @@ mod tests {
         );
         assert_eq!(a.statements.len(), 1);
         assert!(a.statements[0].contains("ALTER TABLE t"));
+        assert!(a.has_residue);
+    }
+
+    #[test]
+    fn do_with_explicit_language_clause_recovers_statements() {
+        let a = analyze_do_block(
+            "DO LANGUAGE plpgsql $$ BEGIN ALTER TABLE t ADD COLUMN x int; END $$;",
+        );
+        assert_eq!(a.statements.len(), 1);
+        assert!(a.statements[0].contains("ALTER TABLE t"));
+        assert!(!a.has_residue);
+    }
+
+    #[test]
+    fn for_in_execute_is_residue() {
+        let a = analyze_do_block(
+            "DO $$ DECLARE r record; BEGIN FOR r IN EXECUTE 'SELECT 1' LOOP NULL; END LOOP; END $$;",
+        );
+        assert!(a.has_residue);
+    }
+
+    #[test]
+    fn open_for_execute_is_residue() {
+        let a = analyze_do_block(
+            "DO $$ DECLARE c refcursor; BEGIN OPEN c FOR EXECUTE 'SELECT 1'; END $$;",
+        );
         assert!(a.has_residue);
     }
 }
