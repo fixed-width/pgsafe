@@ -1,11 +1,8 @@
 //! Recovery of statically-analyzable SQL from a `DO` block's PL/pgSQL body, via the experimental
 //! `pg_query::parse_plpgsql`. Pure: produces the embedded SQL statement texts plus a flag for
 //! un-analyzable residue (a dynamic `EXECUTE`, or a body that would not parse). Not a rule — the
-//! engine (`lint_sql`) replays the statements through the per-statement rules and uses the residue
-//! flag to drive the `unchecked-do-block` rule.
-// Items are `pub(crate)` for consumption by Tasks 2 & 3 (not wired yet).
-#![allow(dead_code)]
-
+//! engine (`lint_sql`) replays the statements through the per-statement rules; the residue flag is
+//! consumed by the `unchecked-do-block` rule (Task 3).
 use serde_json::Value;
 
 /// The result of statically analyzing a `DO` block body.

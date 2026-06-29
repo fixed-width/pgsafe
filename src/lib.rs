@@ -10,6 +10,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use pg_query::NodeEnum;
+
 mod do_block;
 mod enum_value;
 mod fk_index;
@@ -346,6 +348,54 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     snippet: snippet.clone(),
                     suppression: None,
                 });
+            }
+        }
+    }
+    // Lint the static SQL recovered from each DO block's PL/pgSQL body (on by default). Each recovered
+    // statement runs through the same per-statement registered rules; findings are attributed to the
+    // DO statement (so location and suppression align) and prefixed to mark their origin.
+    for (i, raw) in stmts.iter().enumerate() {
+        let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
+            continue;
+        };
+        if !matches!(node, NodeEnum::DoStmt(_)) {
+            continue;
+        }
+        let g = &geoms[i];
+        let (line, column) = line_col(sql, g.start);
+        let location = Location {
+            byte: u32::try_from(g.start).unwrap_or(u32::MAX),
+            line,
+            column,
+        };
+        let do_sql = sql.get(g.start..g.end).unwrap_or("");
+        let analysis = plpgsql::analyze_do_block(do_sql);
+        for embedded in &analysis.statements {
+            let Ok(parsed) = pg_query::parse(embedded) else {
+                continue;
+            };
+            for inner in &parsed.protobuf.stmts {
+                let Some(inner_node) = inner.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
+                    continue;
+                };
+                for rule in rules {
+                    if options.disabled_rules.contains(rule.id()) {
+                        continue;
+                    }
+                    rule.check(inner_node, &mut hits);
+                    for h in hits.drain(..) {
+                        findings.push(Finding {
+                            rule_id: rule.id().to_string(),
+                            severity: rule.severity(),
+                            message: format!("Inside a DO block: {}", h.message),
+                            guidance: h.guidance,
+                            statement_index: i,
+                            location,
+                            snippet: embedded.trim().to_string(),
+                            suppression: None,
+                        });
+                    }
+                }
             }
         }
     }
@@ -773,5 +823,61 @@ mod tests {
         let fs = lint_sql(sql, &opts(&["drop-table"], &[])).unwrap();
         assert!(!fs.iter().any(|f| f.rule_id == "suppression-unused"));
         assert!(!fs.iter().any(|f| f.rule_id == "drop-table"));
+    }
+
+    #[test]
+    fn hazard_inside_do_block_is_flagged_by_the_real_rule() {
+        let f = lint_sql(
+            "DO $$ BEGIN CREATE INDEX i ON t (c); END $$;",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        let hit = f
+            .iter()
+            .find(|f| f.rule_id == "add-index-non-concurrent")
+            .expect("a non-CONCURRENTLY CREATE INDEX in a DO block must be flagged");
+        assert!(hit.message.starts_with("Inside a DO block:"));
+        assert!(hit.snippet.contains("CREATE INDEX"));
+    }
+
+    #[test]
+    fn safe_do_block_produces_no_findings() {
+        let f = lint_sql("DO $$ BEGIN PERFORM 1; END $$;", &LintOptions::default()).unwrap();
+        assert!(f.is_empty());
+    }
+
+    #[test]
+    fn multiple_hazards_in_one_do_block_each_flagged() {
+        let f = lint_sql(
+            "DO $$ BEGIN CREATE INDEX i ON t (c); DROP TABLE u; END $$;",
+            &LintOptions::default(),
+        )
+        .unwrap();
+        assert!(f.iter().any(|f| f.rule_id == "add-index-non-concurrent"));
+        assert!(f.iter().any(|f| f.rule_id == "drop-table"));
+    }
+
+    #[test]
+    fn embedded_finding_respects_disabled_rules() {
+        let opts = LintOptions {
+            disabled_rules: ["add-index-non-concurrent".to_string()]
+                .into_iter()
+                .collect(),
+            ..LintOptions::default()
+        };
+        let f = lint_sql("DO $$ BEGIN CREATE INDEX i ON t (c); END $$;", &opts).unwrap();
+        assert!(f.iter().all(|f| f.rule_id != "add-index-non-concurrent"));
+    }
+
+    #[test]
+    fn embedded_finding_is_suppressible_on_the_do_statement() {
+        let sql = "-- pgsafe:ignore add-index-non-concurrent reviewed\n\
+                   DO $$ BEGIN CREATE INDEX i ON t (c); END $$;";
+        let f = lint_sql(sql, &LintOptions::default()).unwrap();
+        let hit = f
+            .iter()
+            .find(|f| f.rule_id == "add-index-non-concurrent")
+            .expect("finding must still be present, just suppressed");
+        assert!(hit.is_suppressed());
     }
 }
