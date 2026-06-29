@@ -42,6 +42,10 @@ pub struct CommonArgs {
     /// Also settable as `since = "..."` in the config file; this flag overrides it.
     #[arg(long, value_name = "CUTOFF", conflicts_with = "git_diff")]
     pub since: Option<String>,
+    /// Print an annotated example `.pgsafe.toml` to stdout and exit, e.g.
+    /// `pgsafe --example-config > .pgsafe.toml`.
+    #[arg(long)]
+    pub example_config: bool,
 }
 
 /// The `pgsafe` binary's top-level parser.
@@ -121,10 +125,21 @@ pub fn resolve(args: &CommonArgs) -> Result<ResolvedRun, String> {
     })
 }
 
+/// The annotated example configuration printed by `--example-config`. Exposed so superset CLIs
+/// (e.g. pgsafe-pro, which shares this config) can offer the same flag.
+#[must_use]
+pub fn example_config() -> &'static str {
+    config::EXAMPLE_CONFIG
+}
+
 /// Read, lint, render, and gate the inputs in `args`, returning the process
 /// exit code (`0` clean, `1` gated findings, `2` parse/IO error).
 #[must_use]
 pub fn run(args: CommonArgs) -> ExitCode {
+    if args.example_config {
+        print!("{}", config::EXAMPLE_CONFIG);
+        return ExitCode::SUCCESS;
+    }
     let r = match resolve(&args) {
         Ok(r) => r,
         Err(msg) => {

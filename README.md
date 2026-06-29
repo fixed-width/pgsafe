@@ -302,6 +302,9 @@ severity, or ignore findings by path. pgsafe walks up from the current directory
 nearest config file (stopping at the `.git` boundary). The hidden name `.pgsafe.toml` also
 works; if a directory holds both, the plain `pgsafe.toml` wins. Every key is optional.
 
+For a fully-annotated starting point covering every option, run `pgsafe --example-config`
+(it prints to stdout): `pgsafe --example-config > .pgsafe.toml`.
+
 ```toml
 # Default flags (an explicit CLI flag still wins over these).
 fail_on        = "warning"   # "warning" | "error" | "never"
