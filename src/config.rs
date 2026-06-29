@@ -247,6 +247,8 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         ignores,
         naming,
         forbidden_types: raw.forbidden_types,
+        // Stored verbatim; the `require-columns` rule folds names to lower case (matching
+        // PostgreSQL's unquoted-identifier folding) and skips empties at match time.
         required_columns: raw.required_columns.into_iter().collect(),
     })
 }
@@ -512,6 +514,13 @@ mod tests {
         .unwrap();
         assert!(cfg.required_columns().contains("created_at"));
         assert!(cfg.required_columns().contains("updated_at"));
+    }
+
+    #[test]
+    fn required_columns_stored_verbatim() {
+        // Config stores names as written; the require-columns rule folds case + skips empties.
+        let cfg = from_toml_str("required-columns = [\"Created_At\"]\n", KNOWN).unwrap();
+        assert!(cfg.required_columns().contains("Created_At"));
     }
 
     #[test]
