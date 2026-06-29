@@ -53,7 +53,8 @@ runs:
         fi
         ( cd "$dir" && sha256sum -c "$asset.sha256" )
         if [ "${VERIFY_PROV:-true}" = "true" ]; then
-          gh attestation verify "$dir/$asset.tar.gz" --repo "$repo"
+          gh attestation verify "$dir/$asset.tar.gz" --repo "$repo" \
+            --signer-workflow "$repo/.github/workflows/release.yml"
         fi
         ( cd "$dir" && tar xzf "$asset.tar.gz" )
         chmod +x "$dir/pgsafe"
