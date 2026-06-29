@@ -38,9 +38,13 @@ pub(crate) fn missing_if_exists(stmts: &[RawStmt]) -> Vec<(usize, String)> {
                     Ok(ObjectType::ObjectMatview) => Some(
                         "CREATE MATERIALIZED VIEW without IF NOT EXISTS is not idempotent — it errors if the materialized view already exists.",
                     ),
-                    _ => Some(
+                    Ok(ObjectType::ObjectTable) => Some(
                         "CREATE TABLE AS without IF NOT EXISTS is not idempotent — it errors if the table already exists.",
                     ),
+                    // Any other objtype in a CreateTableAsStmt is unexpected (the parser only emits
+                    // ObjectTable or ObjectMatview here). Emit nothing rather than a possibly
+                    // unfixable "add IF NOT EXISTS" finding for an unrecognized form.
+                    Ok(_) | Err(_) => None,
                 }
             }
             NodeEnum::DropStmt(d) if !d.missing_ok => {
@@ -74,8 +78,8 @@ mod tests {
     fn message(sql: &str) -> String {
         missing_if_exists(&pg_query::parse(sql).unwrap().protobuf.stmts)
             .into_iter()
-            .map(|(_, m)| m)
             .next()
+            .map(|(_, m)| m)
             .expect("expected a finding")
     }
 
@@ -160,6 +164,23 @@ mod tests {
             .find(|f| f.rule_id == "require-if-exists")
             .expect("rule must fire when enabled");
         assert_eq!(hit.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn create_materialized_view_fires_through_lint_sql() {
+        // end-to-end through the engine, not just the helper: the new form reaches Finding output.
+        let f = lint_sql("CREATE MATERIALIZED VIEW m AS SELECT 1", &enabled()).unwrap();
+        assert!(f
+            .iter()
+            .any(|f| f.rule_id == "require-if-exists" && f.message.contains("MATERIALIZED VIEW")));
+    }
+
+    #[test]
+    fn create_table_as_fires_through_lint_sql() {
+        let f = lint_sql("CREATE TABLE t AS SELECT 1", &enabled()).unwrap();
+        assert!(f
+            .iter()
+            .any(|f| f.rule_id == "require-if-exists" && f.message.contains("CREATE TABLE AS")));
     }
 
     #[test]
