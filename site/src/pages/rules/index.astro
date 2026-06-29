@@ -1,0 +1,61 @@
+---
+import Base from "../../layouts/Base.astro";
+import Nav from "../../components/Nav.astro";
+import Footer from "../../components/Footer.astro";
+import SeverityBadge from "../../components/SeverityBadge.astro";
+import { RULE_LIST, type Category } from "../../data/rules";
+
+const title = "pgsafe rules — every PostgreSQL migration hazard it checks";
+const description = "The full pgsafe rule reference: what each rule flags, why it's unsafe, and the safe rewrite.";
+const order: Category[] = ["Locking & rewrites", "Constraints", "Destructive", "Schema design", "Policy"];
+const groups = order
+  .map((cat) => ({ cat, rules: RULE_LIST.filter((r) => r.category === cat) }))
+  .filter((g) => g.rules.length);
+---
+<Base title={title} description={description}>
+  <Nav />
+  <main class="container">
+    <h1>Rules</h1>
+    <p class="lede">Every hazard pgsafe checks. Click a rule for the full explanation and the safe rewrite.</p>
+    <input id="filter" type="search" placeholder="Filter rules…" aria-label="Filter rules" autocomplete="off" />
+    {groups.map((g) => (
+      <section class="group" data-group>
+        <h2>{g.cat}</h2>
+        <ul class="rules">
+          {g.rules.map((r) => (
+            <li class="rule" data-id={r.id} data-text={`${r.id} ${r.summary}`.toLowerCase()}>
+              <a href={`/rules/${r.id}/`}><code>{r.id}</code></a>
+              <SeverityBadge severity={r.severity} />
+              <span class="sum">{r.summary}</span>
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))}
+  </main>
+  <Footer />
+</Base>
+<script is:inline>
+  const q = document.getElementById("filter");
+  q?.addEventListener("input", () => {
+    const t = q.value.trim().toLowerCase();
+    document.querySelectorAll(".rule").forEach((el) => {
+      el.style.display = el.getAttribute("data-text").includes(t) ? "" : "none";
+    });
+    document.querySelectorAll("[data-group]").forEach((g) => {
+      const any = [...g.querySelectorAll(".rule")].some((el) => el.style.display !== "none");
+      g.style.display = any ? "" : "none";
+    });
+  });
+</script>
+<style>
+  h1 { margin-top: 2.5rem; }
+  .lede { color: var(--fg-dim); }
+  #filter { width: 100%; max-width: 28rem; margin: 1rem 0 2rem; padding: 0.55rem 0.8rem; background: var(--bg-elev); border: 1px solid var(--border); border-radius: 8px; color: var(--fg); font-family: var(--mono); }
+  .group h2 { font-size: 1.1rem; color: var(--fg); border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
+  .rules { list-style: none; padding: 0; margin: 0 0 2rem; }
+  .rule { display: grid; grid-template-columns: minmax(14rem, auto) auto 1fr; gap: 0.75rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+  .rule code { color: var(--accent); }
+  .sum { color: var(--fg-dim); font-size: 0.9rem; }
+  @media (max-width: 640px) { .rule { grid-template-columns: 1fr auto; } .sum { grid-column: 1 / -1; } }
+</style>

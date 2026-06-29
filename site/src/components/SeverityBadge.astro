@@ -1,0 +1,10 @@
+---
+interface Props { severity: "error" | "warning" }
+const { severity } = Astro.props;
+---
+<span class={`badge ${severity}`}>{severity}</span>
+<style>
+  .badge { font-size: 0.72rem; padding: 0.1rem 0.45rem; border-radius: 4px; border: 1px solid; text-transform: uppercase; letter-spacing: 0.04em; }
+  .error { color: var(--error); border-color: color-mix(in srgb, var(--error) 50%, transparent); }
+  .warning { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 50%, transparent); }
+</style>
