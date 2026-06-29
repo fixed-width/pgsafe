@@ -349,10 +349,21 @@ jobs:
           files: 'db/migrate/*.sql'   # default: *.sql (any depth)
 ```
 
-Inputs: `version` (pgsafe release; defaults to the pinned ref), `files` (glob; `*` spans `/`),
-`fail-on` (`error`/`warning`/`never`), `config` (a `.pgsafe.toml` path), `working-directory`.
-The action needs `pull-requests: read` to read the PR's changed files. Findings appear as inline
-annotations; the check fails per `fail-on`.
+### Inputs
+
+All inputs are optional.
+
+| Input | Default | Description |
+|---|---|---|
+| `version` | the pinned ref | pgsafe release to download, e.g. `v0.8.1`. Defaults to the ref the action is pinned at; falls back to the latest release if that ref has no binary. |
+| `files` | `*.sql` | Glob selecting which changed files to lint. `fnmatch` semantics — `*` spans `/`, so `*.sql` matches `.sql` at any depth and `db/migrate/*.sql` scopes to one tree. |
+| `fail-on` | `warning` | Minimum severity that fails the check: `error`, `warning`, or `never`. |
+| `config` | discovery | Path to a `.pgsafe.toml`. Empty uses pgsafe's own config discovery. |
+| `working-directory` | `.` | Directory to lint from. |
+
+The action needs `pull-requests: read` to read the PR's changed files through the GitHub API (no
+special checkout depth required). Findings appear as inline annotations on the diff, and the check's
+pass/fail follows `fail-on`.
 
 ## Linting only new migrations
 
