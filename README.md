@@ -370,10 +370,15 @@ All inputs are optional.
 | `fail-on` | `warning` | Minimum severity that fails the check: `error`, `warning`, or `never`. |
 | `config` | discovery | Path to a `.pgsafe.toml`. Empty uses pgsafe's own config discovery. |
 | `working-directory` | `.` | Directory to lint from. |
+| `verify-provenance` | `true` | Verify the binary's SLSA build provenance with `gh attestation verify` before use; fails on a missing or invalid attestation. Set `false` to pin a release built before provenance (pre-v0.8.3). |
 
 The action needs `pull-requests: read` to read the PR's changed files through the GitHub API (no
 special checkout depth required). Findings appear as inline annotations on the diff, and the check's
 pass/fail follows `fail-on`.
+
+Verification checks that the downloaded binary was built by this repository's release workflow.
+It reads the action repository's public attestations; if your runner's token cannot, add
+`attestations: read` to the job's `permissions`.
 
 ## Linting only new migrations
 
