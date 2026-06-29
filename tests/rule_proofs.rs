@@ -613,6 +613,27 @@ fn outcome_cases() -> Vec<OutcomeCase> {
             expect: Expect::Fails("23503"),
             pg: 14..=18,
         },
+        // `require-if-exists` claims a `CREATE MATERIALIZED VIEW` without `IF NOT EXISTS` errors on a
+        // re-run. setup creates the matview once; the re-run is the ddl. `table` is the base table so
+        // the cleanup `DROP TABLE … CASCADE` reaches the dependent matview (it is not itself a table).
+        OutcomeCase {
+            rule: "require-if-exists (CREATE MATERIALIZED VIEW re-run)",
+            table: "proof_ie_mv_base",
+            setup: "CREATE TABLE proof_ie_mv_base (c int); \
+                    CREATE MATERIALIZED VIEW proof_ie_mv AS SELECT c FROM proof_ie_mv_base;",
+            ddl: "CREATE MATERIALIZED VIEW proof_ie_mv AS SELECT c FROM proof_ie_mv_base",
+            expect: Expect::Fails("42P07"),
+            pg: 14..=18,
+        },
+        // `require-if-exists` claims a `CREATE TABLE … AS` without `IF NOT EXISTS` errors on a re-run.
+        OutcomeCase {
+            rule: "require-if-exists (CREATE TABLE AS re-run)",
+            table: "proof_ie_ctas",
+            setup: "CREATE TABLE proof_ie_ctas AS SELECT 1 AS c;",
+            ddl: "CREATE TABLE proof_ie_ctas AS SELECT 1 AS c",
+            expect: Expect::Fails("42P07"),
+            pg: 14..=18,
+        },
         // REJECTION proof: `REFRESH MATERIALIZED VIEW CONCURRENTLY` IS allowed inside a transaction
         // (unlike CREATE/DROP INDEX CONCURRENTLY), so `concurrently-in-transaction` must NOT flag it.
         // `expect: Expect::Succeeds` asserts the statement runs to completion in a transaction.

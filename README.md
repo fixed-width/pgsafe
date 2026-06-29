@@ -134,7 +134,7 @@ pgsafe migrations/*.sql || exit 1
 | `rename` | warning | Renaming a table, column, type, enum value, or other object breaks existing queries, views, and functions that reference the old name |
 | `require-columns` | warning | **(opt-in, `required-columns`)** A `CREATE TABLE` missing a configured required column (e.g. `created_at`) — counts a later `ADD COLUMN` |
 | `require-comment` | warning | **(opt-in)** A new table or column left without a `COMMENT` — enable with `[rules] require-comment = true` |
-| `require-if-exists` | warning | **(opt-in)** A `CREATE TABLE/INDEX/SEQUENCE/SCHEMA` without `IF NOT EXISTS`, or a `DROP` without `IF EXISTS` — enable with `[rules] require-if-exists = true` |
+| `require-if-exists` | warning | **(opt-in)** A `CREATE TABLE/INDEX/SEQUENCE/SCHEMA/MATERIALIZED VIEW/TABLE … AS` without `IF NOT EXISTS`, or a `DROP` without `IF EXISTS` — enable with `[rules] require-if-exists = true` |
 | `require-not-null` | warning | **(opt-in)** A `CREATE TABLE` with a column left nullable — enable with `[rules] require-not-null = true` |
 | `require-primary-key` | warning | **(opt-in)** A `CREATE TABLE` the migration leaves without a primary key — enable with `[rules] require-primary-key = true` |
 | `require-timeout` | warning | A blocking-lock statement (`ALTER TABLE`, `DROP TABLE`, non-`CONCURRENTLY` `DROP INDEX`, `TRUNCATE`, non-`CONCURRENTLY` index/refresh, `REINDEX`, `CLUSTER`, `VACUUM FULL`) runs with no `lock_timeout`/`statement_timeout` set — if it queues behind a slow query it blocks every query behind it |
@@ -216,8 +216,9 @@ money     = "numeric"
 ```
 
 `require-if-exists` enforces idempotent DDL: it flags a `CREATE TABLE`, `CREATE INDEX`, `CREATE
-SEQUENCE`, or `CREATE SCHEMA` written without `IF NOT EXISTS`, and any `DROP` written without `IF
-EXISTS`. Enable with `[rules] require-if-exists = true`.
+SEQUENCE`, `CREATE SCHEMA`, `CREATE MATERIALIZED VIEW`, or `CREATE TABLE … AS` written without `IF NOT
+EXISTS`, and any `DROP` written without `IF EXISTS`. (`SELECT … INTO` has no `IF NOT EXISTS` form, so
+it is left alone.) Enable with `[rules] require-if-exists = true`.
 
 `require-comment` enforces documentation: every new table and every new column — whether introduced by
 `CREATE TABLE` or by `ALTER TABLE … ADD COLUMN` — must have a `COMMENT`. A `COMMENT ON TABLE`/`COMMENT ON
