@@ -42,8 +42,8 @@ mod config;
 mod gitdiff;
 
 pub use output::{
-    gate, lint_input, render_errors, render_finding_human, render_human, render_json, FailOn,
-    FileReport, Format, SCHEMA_VERSION,
+    gate, lint_input, render_errors, render_finding_body, render_finding_human, render_human,
+    render_json, render_statement_header, FailOn, FileReport, Format, SCHEMA_VERSION,
 };
 
 /// Severity level of a [`Finding`], ordered by increasing severity
