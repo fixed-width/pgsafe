@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::{
-    config, gate, lint_input, render_errors, render_human, render_json, FailOn, FileReport, Format,
-    LintOptions,
+    config, gate, lint_input, render_errors, render_github, render_human, render_json, FailOn,
+    FileReport, Format, LintOptions,
 };
 
 /// The flags shared by every pgsafe-style CLI. Flatten this into a larger
@@ -169,6 +169,7 @@ pub fn run(args: CommonArgs) -> ExitCode {
                 return ExitCode::from(2);
             }
         },
+        Format::Github => print!("{}", render_github(&reports)),
     }
 
     if had_error {
