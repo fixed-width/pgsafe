@@ -1,0 +1,29 @@
+name: action-selftest
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  clean-passes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./
+        with:
+          files: ".github/fixtures/clean/*.sql"
+          fail-on: error
+  hazard-fails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: run
+        continue-on-error: true
+        uses: ./
+        with:
+          files: ".github/fixtures/hazard/*.sql"
+          fail-on: error
+      - name: assert the hazard fixture failed the check
+        run: |
+          test "${{ steps.run.outcome }}" = "failure" \
+            || { echo "expected pgsafe to fail on the hazard fixture"; exit 1; }
