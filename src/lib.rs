@@ -192,8 +192,10 @@ pub struct LintOptions {
     /// Forbidden column types mapped to a suggested replacement (raw spellings). The
     /// `forbidden-column-type` rule runs only when this is non-empty. Default empty.
     pub forbidden_column_types: BTreeMap<String, String>,
-    /// Column names every `CREATE TABLE` must include (raw, folded names). The `require-columns` rule
-    /// runs only when this is non-empty. Default empty.
+    /// Column names every `CREATE TABLE` must include. Matched case-insensitively: the rule folds
+    /// each name to lower case to match PostgreSQL's unquoted-identifier folding, so any casing here
+    /// works (`Created_At` matches a `created_at` column). A quoted, mixed-case column keeps its case
+    /// and is not matched. The `require-columns` rule runs only when this is non-empty. Default empty.
     pub required_columns: BTreeSet<String>,
 }
 
