@@ -313,16 +313,18 @@ mod tests {
         // The shipped template (what `pgsafe --example-config` prints) must parse cleanly
         // against the real rule set — a broken TOML edit fails here, not in a user's setup.
         let known = crate::known_rule_ids();
+        let parsed = from_toml_str(EXAMPLE_CONFIG, &known);
         assert!(
-            from_toml_str(EXAMPLE_CONFIG, &known).is_ok(),
+            parsed.is_ok(),
             "example config must parse: {:?}",
-            from_toml_str(EXAMPLE_CONFIG, &known).err()
+            parsed.err()
         );
         // Every rule the example documents must still exist (a rename fails here) and must be
         // present in the template (so the example can't quietly drop a documented rule).
         for rule in [
             "drop-table",
             "add-trigger",
+            "add-index-non-concurrent",
             "require-primary-key",
             "require-not-null",
             "require-comment",
