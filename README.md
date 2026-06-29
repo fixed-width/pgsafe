@@ -329,6 +329,31 @@ rules = ["drop-table"]       # ignore only these rules here
 **Validation is strict:** an unknown key, an unknown rule id, a bad value, or a bad glob fails
 the run (exit 2) rather than being silently ignored — so a typo can't quietly disable a check.
 
+## GitHub Action
+
+Lint a PR's changed migrations and get inline annotations on the diff:
+
+```yaml
+# .github/workflows/pgsafe.yml
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  pgsafe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: fixed-width/pgsafe@v0.8.0
+        with:
+          files: 'db/migrate/*.sql'   # default: *.sql (any depth)
+```
+
+Inputs: `version` (pgsafe release; defaults to the pinned ref), `files` (glob; `*` spans `/`),
+`fail-on` (`error`/`warning`/`never`), `config` (a `.pgsafe.toml` path), `working-directory`.
+The action needs `pull-requests: read` to read the PR's changed files. Findings appear as inline
+annotations; the check fails per `fail-on`.
+
 ## Linting only new migrations
 
 To adopt pgsafe on a repo full of existing migrations without fixing them all first, lint only

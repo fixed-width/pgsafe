@@ -1,0 +1,93 @@
+name: pgsafe
+description: Lint changed PostgreSQL migration files for unsafe operations.
+branding:
+  icon: shield
+  color: blue
+inputs:
+  version:
+    description: "pgsafe release to download. Default: the ref the action was pinned at; falls back to the latest release."
+    required: false
+    default: ""
+  files:
+    description: "Glob filtering candidate files (fnmatch; * spans /). Default lints any .sql at any depth."
+    required: false
+    default: "*.sql"
+  fail-on:
+    description: "Minimum severity that fails the check: error | warning | never."
+    required: false
+    default: warning
+  config:
+    description: "Path to a .pgsafe.toml. Empty uses pgsafe's own config discovery."
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory to lint from."
+    required: false
+    default: "."
+runs:
+  using: composite
+  steps:
+    - name: Install pgsafe
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        ACTION_REPO: ${{ github.action_repository }}
+        ACTION_REF: ${{ github.action_ref }}
+        IN_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        asset="pgsafe-x86_64-unknown-linux-musl"
+        repo="${ACTION_REPO:-fixed-width/pgsafe}"
+        ver="${IN_VERSION:-${ACTION_REF:-}}"
+        dir="$(mktemp -d)"
+        dl() { gh release download "$1" --repo "$repo" -p "$asset.tar.gz" -p "$asset.sha256" -D "$dir"; }
+        if [ -z "$ver" ] || ! dl "$ver" 2>/dev/null; then
+          echo "pgsafe: no release asset for ref '$ver'; using the latest release"
+          ver="$(gh release view --repo "$repo" --json tagName -q .tagName)"
+          dl "$ver"
+        fi
+        ( cd "$dir" && sha256sum -c "$asset.sha256" && tar xzf "$asset.tar.gz" )
+        chmod +x "$dir/pgsafe"
+        echo "$dir" >> "$GITHUB_PATH"
+        echo "pgsafe: installed $ver"
+    - name: Lint migrations
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ github.token }}
+        FILES_GLOB: ${{ inputs.files }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        CONFIG: ${{ inputs.config }}
+        EVENT: ${{ github.event_name }}
+        REPO: ${{ github.repository }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        set -euo pipefail
+        # Candidate files: a PR's changed/added files via the API (no base tree needed), else the tree.
+        if [ "$EVENT" = "pull_request" ] && [ -n "${PR:-}" ]; then
+          gh api "repos/$REPO/pulls/$PR/files" --paginate \
+            -q '.[] | select(.status != "removed") | .filename' > /tmp/candidates.txt
+        else
+          git ls-files > /tmp/candidates.txt 2>/dev/null || find . -type f | sed 's|^\./||' > /tmp/candidates.txt
+        fi
+        # Filter to the glob (fnmatch; * spans /).
+        python3 -c 'import fnmatch,sys; [print(p) for p in (l.strip() for l in sys.stdin) if p and fnmatch.fnmatch(p, sys.argv[1])]' "$FILES_GLOB" < /tmp/candidates.txt > /tmp/matched.txt
+        if [ ! -s /tmp/matched.txt ]; then
+          echo "pgsafe: no migration files matched '$FILES_GLOB' — nothing to lint."
+          exit 0
+        fi
+        mapfile -t files < /tmp/matched.txt
+        cfg=(); [ -n "$CONFIG" ] && cfg=(--config "$CONFIG")
+        # Step summary from a never-fail JSON pass (counts + table).
+        pgsafe --format json --fail-on never "${cfg[@]}" "${files[@]}" > /tmp/out.json || true
+        errs=$(jq '[.files[].findings[] | select(has("suppression")|not) | select(.severity=="error")] | length' /tmp/out.json)
+        warns=$(jq '[.files[].findings[] | select(has("suppression")|not) | select(.severity=="warning")] | length' /tmp/out.json)
+        {
+          echo "### pgsafe: ${errs} error(s), ${warns} warning(s)"
+          echo ""
+          echo "| file | line | rule | severity |"
+          echo "|---|---|---|---|"
+          jq -r '.files[] as $f | $f.findings[] | select(has("suppression")|not) | "| \($f.file) | \(.location.line) | \(.rule_id) | \(.severity) |"' /tmp/out.json
+        } >> "$GITHUB_STEP_SUMMARY"
+        # Gating run: annotations to the log + exit per --fail-on.
+        pgsafe --format github --fail-on "$FAIL_ON" "${cfg[@]}" "${files[@]}"
