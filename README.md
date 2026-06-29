@@ -344,9 +344,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: fixed-width/pgsafe@v0.8.1
+      - uses: fixed-width/pgsafe@v0.8.2
         with:
           files: 'db/migrate/*.sql'   # default: *.sql (any depth)
+```
+
+To lint more than one location, pass several globs (comma- or newline-separated); a file is
+linted if it matches any of them:
+
+```yaml
+        with:
+          files: |
+            db/migrate/*.sql
+            api/sql/*.sql
 ```
 
 ### Inputs
@@ -356,7 +366,7 @@ All inputs are optional.
 | Input | Default | Description |
 |---|---|---|
 | `version` | the pinned ref | pgsafe release to download, e.g. `v0.8.1`. Defaults to the ref the action is pinned at; falls back to the latest release if that ref has no binary. |
-| `files` | `*.sql` | Glob selecting which changed files to lint. `fnmatch` semantics — `*` spans `/`, so `*.sql` matches `.sql` at any depth and `db/migrate/*.sql` scopes to one tree. |
+| `files` | `*.sql` | One or more globs selecting which changed files to lint, comma- or newline-separated; a file is linted if it matches any. `fnmatch` semantics — `*` spans `/`, so `*.sql` matches `.sql` at any depth and `db/migrate/*.sql` scopes to one tree. |
 | `fail-on` | `warning` | Minimum severity that fails the check: `error`, `warning`, or `never`. |
 | `config` | discovery | Path to a `.pgsafe.toml`. Empty uses pgsafe's own config discovery. |
 | `working-directory` | `.` | Directory to lint from. |

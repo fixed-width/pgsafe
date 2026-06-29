@@ -9,7 +9,7 @@ inputs:
     required: false
     default: ""
   files:
-    description: "Glob filtering candidate files (fnmatch; * spans /). Default lints any .sql at any depth."
+    description: "One or more globs, comma- or newline-separated; a file is linted if it matches any (fnmatch; * spans /). Default lints any .sql at any depth."
     required: false
     default: "*.sql"
   fail-on:
@@ -70,8 +70,10 @@ runs:
         else
           git ls-files > /tmp/candidates.txt 2>/dev/null || find . -type f | sed 's|^\./||' > /tmp/candidates.txt
         fi
-        # Filter to the glob (fnmatch; * spans /).
-        python3 -c 'import fnmatch,sys; [print(p) for p in (l.strip() for l in sys.stdin) if p and fnmatch.fnmatch(p, sys.argv[1])]' "$FILES_GLOB" < /tmp/candidates.txt > /tmp/matched.txt
+        # Filter to the glob(s): one or more patterns, comma- or newline-separated; a file is kept
+        # if it matches ANY of them (fnmatch; * spans /). Candidates are iterated once, so a file
+        # matched by several patterns is still listed only once.
+        python3 -c 'import fnmatch,re,sys; globs=[s for s in (x.strip() for x in re.split(r"[,\n]", sys.argv[1])) if s]; [print(p) for p in (l.strip() for l in sys.stdin) if p and any(fnmatch.fnmatch(p, g) for g in globs)]' "$FILES_GLOB" < /tmp/candidates.txt > /tmp/matched.txt
         if [ ! -s /tmp/matched.txt ]; then
           echo "pgsafe: no migration files matched '$FILES_GLOB' — nothing to lint."
           exit 0

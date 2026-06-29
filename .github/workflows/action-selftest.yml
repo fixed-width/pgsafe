@@ -27,3 +27,22 @@ jobs:
         run: |
           test "${{ steps.run.outcome }}" = "failure" \
             || { echo "expected pgsafe to fail on the hazard fixture"; exit 1; }
+  multi-glob-fails:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - id: run
+        continue-on-error: true
+        uses: ./
+        with:
+          # Two globs (newline-separated) spanning both fixture trees. The hazard lives in the
+          # second glob, so a passing job here would mean multi-glob matching is broken (only the
+          # first pattern, or the whole string as one pattern, was honored).
+          files: |
+            .github/fixtures/clean/*.sql
+            .github/fixtures/hazard/*.sql
+          fail-on: error
+      - name: assert the hazard tree was linted via the second glob
+        run: |
+          test "${{ steps.run.outcome }}" = "failure" \
+            || { echo "expected the hazard fixture (second glob) to fail the check"; exit 1; }
