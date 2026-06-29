@@ -19,6 +19,7 @@ mod identifier;
 mod naming;
 mod newtable;
 mod output;
+mod plpgsql;
 mod require_columns;
 mod require_comment;
 mod require_if_exists;
