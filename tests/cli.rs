@@ -121,7 +121,7 @@ fn json_format_structure_is_correct() {
     let v: serde_json::Value =
         serde_json::from_slice(&out.stdout).expect("stdout must be valid JSON");
 
-    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["schema_version"], 2);
     assert_eq!(v["files"][0]["file"], "<stdin>");
 
     let fnd = &v["files"][0]["findings"][0];

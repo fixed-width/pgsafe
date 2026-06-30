@@ -134,6 +134,31 @@ pub(crate) struct RuleHit {
     pub guidance: String,
 }
 
+/// A single text edit within the linted SQL: replace bytes `[start, end)` with
+/// `replacement`. `start == end` is a pure insertion.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FixEdit {
+    /// 0-based byte offset where the edit begins.
+    pub start: u32,
+    /// 0-based byte offset where the edit ends (`== start` for an insertion).
+    pub end: u32,
+    /// Text to splice in place of `[start, end)`.
+    pub replacement: String,
+}
+
+/// A machine-applicable remediation for a [`Finding`]: a short title plus the
+/// edits that make the statement safe. Present only for findings whose fix is an
+/// unambiguous mechanical change.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Fix {
+    /// Short label for the fix, e.g. `"Add CONCURRENTLY"`.
+    pub title: String,
+    /// The edits to apply, in ascending `start` order; non-overlapping.
+    pub edits: Vec<FixEdit>,
+}
+
 /// A safety finding reported for a specific SQL statement.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -158,6 +183,9 @@ pub struct Finding {
     /// A suppressed finding is still reported but does not affect the gate exit code.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub suppression: Option<Suppression>,
+    /// `Some` when this finding has a safe, machine-applicable fix.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fix: Option<Fix>,
 }
 
 impl Finding {
@@ -296,6 +324,7 @@ fn push_synthesized(
             },
             snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
             suppression: None,
+            fix: None,
         });
     }
 }
@@ -355,6 +384,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     location,
                     snippet: snippet.clone(),
                     suppression: None,
+                    fix: None,
                 });
             }
         }
@@ -409,6 +439,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                             location,
                             snippet: embedded.trim().to_string(),
                             suppression: None,
+                            fix: None,
                         });
                     }
                 }
@@ -921,5 +952,62 @@ mod tests {
         assert!(f.iter().any(|f| f.rule_id == "add-index-non-concurrent"
             && f.message.starts_with("Inside a DO block:")));
         assert!(f.iter().any(|f| f.rule_id == "unchecked-do-block"));
+    }
+
+    #[test]
+    fn finding_serializes_fix_when_present() {
+        let f = Finding {
+            rule_id: "add-index-non-concurrent".into(),
+            severity: Severity::Error,
+            message: "m".into(),
+            guidance: "g".into(),
+            statement_index: 0,
+            location: Location {
+                byte: 0,
+                line: 1,
+                column: 1,
+            },
+            snippet: "CREATE INDEX i ON t (c)".into(),
+            suppression: None,
+            fix: Some(Fix {
+                title: "Add CONCURRENTLY".into(),
+                edits: vec![FixEdit {
+                    start: 12,
+                    end: 12,
+                    replacement: " CONCURRENTLY".into(),
+                }],
+            }),
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        assert!(
+            json.contains(r#""fix":{"title":"Add CONCURRENTLY""#),
+            "{json}"
+        );
+        assert!(
+            json.contains(r#""edits":[{"start":12,"end":12,"replacement":" CONCURRENTLY"}]"#),
+            "{json}"
+        );
+        // Round-trips back to an equal value.
+        assert_eq!(serde_json::from_str::<Finding>(&json).unwrap(), f);
+    }
+
+    #[test]
+    fn finding_omits_fix_when_absent() {
+        let f = Finding {
+            rule_id: "drop-column".into(),
+            severity: Severity::Warning,
+            message: "m".into(),
+            guidance: "g".into(),
+            statement_index: 0,
+            location: Location {
+                byte: 0,
+                line: 1,
+                column: 1,
+            },
+            snippet: "ALTER TABLE t DROP COLUMN c".into(),
+            suppression: None,
+            fix: None,
+        };
+        assert!(!serde_json::to_string(&f).unwrap().contains("fix"));
     }
 }
