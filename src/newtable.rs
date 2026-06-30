@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{AlterTableType, ConstrType, ObjectType, RangeVar, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::Finding;
+use crate::{Finding, Severity};
 
 /// `RangeVar.relpersistence` for a temporary relation (libpg_query's `RELPERSISTENCE_TEMP`).
 const RELPERSISTENCE_TEMP: &str = "t";
@@ -93,7 +93,6 @@ fn attach_partition_child(node: &NodeEnum) -> Option<String> {
 /// `immediately_valid` is `false` for `… NOT VALID` (the constraint is recorded but not enforced
 /// until a later `VALIDATE CONSTRAINT`), mirroring `Constraint.skip_validation`. `None` for any
 /// other node, a non-`ALTER TABLE`, or a non-CHECK constraint.
-#[allow(dead_code)] // wired into lint_sql in Task 2
 fn added_check_constraint(node: &NodeEnum) -> Option<(String, bool)> {
     let NodeEnum::AlterTableStmt(a) = node else {
         return None;
@@ -117,7 +116,6 @@ fn added_check_constraint(node: &NodeEnum) -> Option<(String, bool)> {
 }
 
 /// For an `ALTER TABLE T VALIDATE CONSTRAINT …`, the key of table `T`. `None` for any other node.
-#[allow(dead_code)] // wired into lint_sql in Task 2
 fn validated_constraint_table(node: &NodeEnum) -> Option<String> {
     let NodeEnum::AlterTableStmt(a) = node else {
         return None;
@@ -140,7 +138,6 @@ fn validated_constraint_table(node: &NodeEnum) -> Option<String> {
 /// blocks it under ACCESS EXCLUSIVE for the scan's duration. The CHECK match is name-agnostic
 /// per-child and does not verify the predicate implies the partition bound (it errs toward not
 /// escalating — never toward silence).
-#[allow(dead_code)] // wired into lint_sql in Task 2; pub(crate) for that caller
 pub(crate) fn attach_escalation_indices(stmts: &[RawStmt]) -> BTreeSet<usize> {
     let mut created: BTreeSet<String> = BTreeSet::new();
     let mut check_not_valid: BTreeSet<String> = BTreeSet::new();
@@ -174,6 +171,28 @@ pub(crate) fn attach_escalation_indices(stmts: &[RawStmt]) -> BTreeSet<usize> {
         }
     }
     escalate
+}
+
+/// Escalate `attach-partition` findings from `Warning` to `Error` for an `ATTACH PARTITION` of a
+/// child that is neither created nor CHECK-prepared earlier in this migration (see
+/// [`attach_escalation_indices`]). The escalated finding gets one sentence appended explaining why
+/// the pre-existing child makes the operation error-grade. All other findings are untouched.
+/// Runs before user `severity_overrides`, so an explicit override still has the final say.
+pub(crate) fn escalate_pre_existing_attach(stmts: &[RawStmt], findings: &mut [Finding]) {
+    let escalate = attach_escalation_indices(stmts);
+    if escalate.is_empty() {
+        return;
+    }
+    for f in findings.iter_mut() {
+        if f.rule_id == "attach-partition" && escalate.contains(&f.statement_index) {
+            f.severity = Severity::Error;
+            f.message.push_str(
+                " The child table is not created in this migration, so it may already be \
+                 receiving traffic; the validation scan blocks it under ACCESS EXCLUSIVE for the \
+                 scan's duration.",
+            );
+        }
+    }
 }
 
 /// The single table a `DROP TABLE` targets, or `None` for a non-table drop or a multi-table

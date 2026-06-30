@@ -260,6 +260,8 @@ mod tests {
             "prefer-bigint-primary-key",
             "drop-constraint",
             "add-trigger",
+            // Nominal Warning; escalated to Error at runtime for a pre-existing child (no
+            // in-migration CHECK prep) — see newtable::escalate_pre_existing_attach.
             "attach-partition",
         ];
         for id in errors {

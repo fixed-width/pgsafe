@@ -41,6 +41,19 @@ mod tests {
         lint_sql(sql, &LintOptions::default()).unwrap()
     }
 
+    fn findings_with_override(sql: &str, sev: Severity) -> Vec<crate::Finding> {
+        let mut opts = LintOptions::default();
+        opts.severity_overrides
+            .insert("attach-partition".to_string(), sev);
+        lint_sql(sql, &opts).unwrap()
+    }
+
+    fn attach_finding(fs: Vec<crate::Finding>) -> crate::Finding {
+        fs.into_iter()
+            .find(|f| f.rule_id == "attach-partition")
+            .expect("attach-partition rule must fire")
+    }
+
     const ATTACH: &str = "ALTER TABLE parent ATTACH PARTITION child FOR VALUES FROM (0) TO (100)";
 
     #[test]
@@ -48,15 +61,6 @@ mod tests {
         assert!(findings(ATTACH)
             .iter()
             .any(|f| f.rule_id == "attach-partition"));
-    }
-
-    #[test]
-    fn attach_is_a_warning() {
-        let f = findings(ATTACH)
-            .into_iter()
-            .find(|f| f.rule_id == "attach-partition")
-            .expect("rule must fire");
-        assert_eq!(f.severity, Severity::Warning);
     }
 
     #[test]
@@ -82,5 +86,61 @@ mod tests {
         assert!(findings(&sql)
             .iter()
             .any(|f| f.rule_id == "attach-partition"));
+    }
+
+    #[test]
+    fn pre_existing_child_is_error() {
+        // Child never created in this migration -> may be a live table -> Error.
+        assert_eq!(attach_finding(findings(ATTACH)).severity, Severity::Error);
+    }
+
+    #[test]
+    fn pre_existing_child_error_explains_why() {
+        // The escalated finding appends the pre-existing-child explanation.
+        assert!(attach_finding(findings(ATTACH))
+            .message
+            .contains("not created in this migration"));
+    }
+
+    #[test]
+    fn not_valid_check_then_validate_keeps_warning() {
+        let sql = format!(
+            "ALTER TABLE child ADD CONSTRAINT cc CHECK (id >= 0 AND id < 100) NOT VALID; \
+             ALTER TABLE child VALIDATE CONSTRAINT cc; {ATTACH};"
+        );
+        assert_eq!(attach_finding(findings(&sql)).severity, Severity::Warning);
+    }
+
+    #[test]
+    fn plain_check_keeps_warning() {
+        let sql =
+            format!("ALTER TABLE child ADD CONSTRAINT cc CHECK (id >= 0 AND id < 100); {ATTACH};");
+        assert_eq!(attach_finding(findings(&sql)).severity, Severity::Warning);
+    }
+
+    #[test]
+    fn populated_same_migration_child_is_warning() {
+        // Child built (and filled) in this migration is not in service -> stays Warning.
+        let sql = format!("CREATE TABLE child (id int); INSERT INTO child VALUES (1); {ATTACH};");
+        assert_eq!(attach_finding(findings(&sql)).severity, Severity::Warning);
+    }
+
+    #[test]
+    fn explicit_warning_override_beats_escalation() {
+        // A user who forces attach-partition to warning keeps warning even on the pre-existing case.
+        assert_eq!(
+            attach_finding(findings_with_override(ATTACH, Severity::Warning)).severity,
+            Severity::Warning
+        );
+    }
+
+    #[test]
+    fn explicit_error_override_applies_to_non_escalated_case() {
+        // A user who forces attach-partition to error gets error even on the same-migration case.
+        let sql = format!("CREATE TABLE child (id int); INSERT INTO child VALUES (1); {ATTACH};");
+        assert_eq!(
+            attach_finding(findings_with_override(&sql, Severity::Error)).severity,
+            Severity::Error
+        );
     }
 }
