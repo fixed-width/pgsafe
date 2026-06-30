@@ -1,4 +1,4 @@
-import catalog from "./rules.catalog.json";
+import catalog from "./rules.catalog.json" with { type: "json" };
 
 export type Severity = "error" | "warning";
 export type Category =
