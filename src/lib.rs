@@ -658,9 +658,9 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             &geoms,
             forbidden_types::ID,
             Severity::Warning,
-            forbidden_types::forbidden_violations(stmts, &options.forbidden_column_types)
+            forbidden_types::forbidden_violations(stmts, &options.forbidden_column_types, sql)
                 .into_iter()
-                .map(|(i, message)| (i, message, forbidden_types::GUIDANCE.to_string(), None)),
+                .map(|(i, message, fix)| (i, message, forbidden_types::GUIDANCE.to_string(), fix)),
         );
     }
     if options.enabled_rules.contains(require_if_exists::ID)
