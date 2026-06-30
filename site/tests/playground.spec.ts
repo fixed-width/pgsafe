@@ -65,3 +65,14 @@ test('fail-on toggles the gate verdict', async ({ page }) => {
   await page.selectOption('#opt-failon', 'never');
   await expect(page.locator('.gate')).toContainText('would pass');
 });
+
+test('re-linting clears a stale hover highlight (no phantom highlight on a clean migration)', async ({ page }) => {
+  await page.goto('/playground/');
+  await expect(page.locator('.finding').first()).toBeVisible({ timeout: 20_000 });
+  await page.locator('.finding').first().hover();
+  await expect(page.locator('.cm-hl-line')).toHaveCount(1);
+  // Loading a safe example removes the hovered row without a mouseleave.
+  await page.selectOption('#examples', 'concurrent-index');
+  await expect(page.locator('#results')).toContainText('No findings');
+  await expect(page.locator('.cm-hl-line')).toHaveCount(0);
+});

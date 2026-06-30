@@ -94,6 +94,9 @@ function para(cls: string, text: string): HTMLParagraphElement {
 }
 
 function render(env: Envelope): void {
+  // Re-rendering replaces the finding rows, so any hovered row is gone without
+  // a mouseleave — clear its stale line highlight before rebuilding.
+  highlightLine(null);
   resultsEl.replaceChildren();
   if ("error" in env) {
     resultsEl.append(para("status", `pgsafe error: ${env.error}`));
