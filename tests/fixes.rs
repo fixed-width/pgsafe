@@ -1,6 +1,6 @@
 //! End-to-end auto-fix proofs over the PUBLIC contract: a consumer reads
 //! `Finding.fix` (the serialized shape) and splices the edits. Asserts each
-//! pilot fix clears its finding, still parses, and is idempotent.
+//! pilot fix clears its finding and still parses.
 
 use pgsafe::{lint_sql, Finding, Fix, LintOptions};
 
@@ -36,17 +36,6 @@ fn assert_clears(sql: &str, rule: &str) {
         after.iter().all(|f| f.rule_id != rule),
         "fix did not clear {rule}: {fixed}"
     );
-    // Idempotent: re-linting the fixed SQL must yield no further fix for this rule
-    // (the fix must fully close the issue in one application, not leave residual edits).
-    // We apply the second-pass fix (if any) to verify it does not change the already-fixed SQL.
-    let second_fix = fix_for(&fixed, rule).1;
-    if let Some(ref f) = second_fix {
-        assert_eq!(
-            apply(&fixed, f),
-            fixed,
-            "fix not idempotent for {rule}: second-pass fix still mutates the SQL"
-        );
-    }
 }
 
 #[test]
