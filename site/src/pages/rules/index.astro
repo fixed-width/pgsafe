@@ -9,7 +9,10 @@ const title = "pgsafe rules — every PostgreSQL migration hazard it checks";
 const description = "The full pgsafe rule reference: what each rule flags, why it's unsafe, and the safe rewrite.";
 const order: Category[] = ["Locking & rewrites", "Constraints", "Destructive", "Schema design", "Policy"];
 const groups = order
-  .map((cat) => ({ cat, rules: RULE_LIST.filter((r) => r.category === cat) }))
+  .map((cat) => ({
+    cat,
+    rules: RULE_LIST.filter((r) => r.category === cat).sort((a, b) => a.id.localeCompare(b.id)),
+  }))
   .filter((g) => g.rules.length);
 ---
 <Base title={title} description={description}>
