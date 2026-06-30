@@ -483,8 +483,10 @@ export const RULES: Record<string, RuleDoc> = {
     safeRewrite:
       "Add a `CHECK` constraint on the child matching the partition bound and validate it separately first (`ADD CONSTRAINT ... CHECK (...) NOT VALID`, then `VALIDATE CONSTRAINT`); `ATTACH` then skips the scan and the lock is brief.",
     example: {
-      unsafe:
-        "ALTER TABLE measurement ATTACH PARTITION measurement_y2021 FOR VALUES FROM ('2021-01-01') TO ('2022-01-01');",
+      unsafe: [
+        "ALTER TABLE measurement ATTACH PARTITION measurement_y2021",
+        "  FOR VALUES FROM ('2021-01-01') TO ('2022-01-01');",
+      ].join("\n"),
       safe: [
         "-- add a matching, validated CHECK first so ATTACH can skip the scan",
         "ALTER TABLE measurement_y2021",
