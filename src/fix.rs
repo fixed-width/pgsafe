@@ -1,7 +1,9 @@
-//! Auto-fix construction: a rule emits a [`FixDraft`] (anchor + replacement); the
-//! engine resolves it to absolute byte [`crate::FixEdit`]s using the source text
-//! and the statement's byte span. A draft that can't be located resolves to
-//! `None`, so an un-locatable fix is simply omitted rather than misapplied.
+//! Auto-fix construction: a rule emits a [`FixDraft`] that expresses fix INTENT
+//! as one or more anchored edits (absolute offsets, keyword positions, or
+//! statement-relative anchors); the engine lowers each anchor to a validated
+//! absolute byte [`crate::FixEdit`] using the source text and the statement's byte
+//! span. A draft whose intent can't be located in the source resolves to `None`,
+//! so an un-locatable fix is simply omitted rather than misapplied.
 
 use crate::{Fix, FixEdit};
 
@@ -11,16 +13,16 @@ pub(crate) enum FixAnchor {
     /// Absolute byte span the rule computed itself (e.g. from a node `location`).
     Absolute { start: u32, end: u32 },
     /// Insert at the statement's first-token byte (`span.start`).
-    #[allow(dead_code)] // no rule produces this anchor yet; retained for future producers
+    #[allow(dead_code)] // Plan 2 producer: reserved for statement-prologue insertions
     StatementStart,
     /// Insert at the statement body's end (`span.end`, before any `;`).
-    #[allow(dead_code)] // no rule produces this anchor yet; retained for future producers
+    #[allow(dead_code)] // Plan 2 producer: drives NOT VALID rewrites
     StatementBodyEnd,
     /// Insert immediately after the first whole-word, ASCII-case-insensitive
     /// occurrence of this keyword within the statement span.
     AfterKeyword(&'static str),
     /// Replace the identifier token starting at this absolute byte offset.
-    #[allow(dead_code)] // no rule produces this anchor yet; retained for future producers
+    #[allow(dead_code)] // Plan 2 producer: drives type swap rewrites (e.g. json → jsonb)
     ReplaceTokenAt(u32),
 }
 
@@ -37,8 +39,12 @@ pub(crate) struct FixDraft {
 }
 
 /// Resolve a draft against the source. `start`/`end` are the statement's byte
-/// span (`geoms[i].start/end`). Returns `None` if any anchor can't be located.
+/// span (`geoms[i].start/end`). Returns `None` if any anchor can't be located,
+/// or if the draft carries no edits (upholding "fix present ⇒ at least one edit").
 pub(crate) fn resolve(draft: &FixDraft, sql: &str, start: usize, end: usize) -> Option<Fix> {
+    if draft.edits.is_empty() {
+        return None;
+    }
     let mut edits = Vec::with_capacity(draft.edits.len());
     for e in &draft.edits {
         let (s, en) = match e.anchor {
@@ -65,7 +71,16 @@ pub(crate) fn resolve(draft: &FixDraft, sql: &str, start: usize, end: usize) -> 
             replacement: e.replacement.clone(),
         });
     }
-    // `apply` sorts descending before splicing; the ascending sort here is redundant.
+    // Uphold the Fix.edits invariant: ascending start order, non-overlapping.
+    edits.sort_by_key(|e| e.start);
+    for w in edits.windows(2) {
+        debug_assert!(
+            w[0].end <= w[1].start,
+            "resolve produced overlapping edits: prev.end={} > next.start={}",
+            w[0].end,
+            w[1].start
+        );
+    }
     Some(Fix {
         title: draft.title.to_string(),
         edits,
@@ -269,6 +284,58 @@ mod tests {
         assert_eq!(
             apply(sql, &fix),
             "-- é\nCREATE INDEX CONCURRENTLY i ON t (c);"
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_empty_draft() {
+        let d = FixDraft {
+            title: "nothing",
+            edits: vec![],
+        };
+        assert!(resolve(&d, SQL, 0, 23).is_none());
+    }
+
+    #[test]
+    fn absolute_out_of_range_resolves_to_none() {
+        // SQL is 24 bytes; byte 999 is far out of range.
+        let d = FixDraft {
+            title: "x",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::Absolute {
+                    start: 999,
+                    end: 1000,
+                },
+                replacement: "z".into(),
+            }],
+        };
+        assert!(resolve(&d, SQL, 0, 23).is_none());
+    }
+
+    #[test]
+    fn multi_edit_descending_apply_order_preserves_second_span() {
+        // Two non-zero-width replacements where low-to-high application would corrupt the second:
+        // "foo" [12,15) → "renamed_table" expands by 10 bytes, shifting "bigint"'s offset.
+        // Descending application avoids the shift.
+        let sql = "ALTER TABLE foo ADD COLUMN bar bigint;";
+        let fix = Fix {
+            title: "t".into(),
+            edits: vec![
+                FixEdit {
+                    start: 12,
+                    end: 15,
+                    replacement: "renamed_table".into(),
+                },
+                FixEdit {
+                    start: 31,
+                    end: 37,
+                    replacement: "int4".into(),
+                },
+            ],
+        };
+        assert_eq!(
+            apply(sql, &fix),
+            "ALTER TABLE renamed_table ADD COLUMN bar int4;"
         );
     }
 }

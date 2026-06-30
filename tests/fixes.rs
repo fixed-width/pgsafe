@@ -36,11 +36,17 @@ fn assert_clears(sql: &str, rule: &str) {
         after.iter().all(|f| f.rule_id != rule),
         "fix did not clear {rule}: {fixed}"
     );
-    // Idempotent: re-fixing finds nothing for this rule.
-    assert!(after
-        .iter()
-        .filter(|f| f.rule_id == rule)
-        .all(|f| f.fix.is_none()));
+    // Idempotent: re-linting the fixed SQL must yield no further fix for this rule
+    // (the fix must fully close the issue in one application, not leave residual edits).
+    // We apply the second-pass fix (if any) to verify it does not change the already-fixed SQL.
+    let second_fix = fix_for(&fixed, rule).1;
+    if let Some(ref f) = second_fix {
+        assert_eq!(
+            apply(&fixed, f),
+            fixed,
+            "fix not idempotent for {rule}: second-pass fix still mutates the SQL"
+        );
+    }
 }
 
 #[test]
@@ -62,17 +68,65 @@ fn add_index_fix_clears_unique_index() {
 }
 
 #[test]
+fn require_timeout_first_finding_has_fix_subsequent_do_not() {
+    // Both statements take a blocking lock without a timeout — both flag require-timeout.
+    // Only the first finding should carry the fix (one migration-level prologue).
+    let sql = "CREATE INDEX i ON t (a);\nDROP TABLE other;";
+    let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+    let timeout_findings: Vec<_> = fs
+        .iter()
+        .filter(|f| f.rule_id == "require-timeout")
+        .collect();
+    assert!(
+        timeout_findings.len() >= 2,
+        "expected ≥2 require-timeout findings, got {}",
+        timeout_findings.len()
+    );
+    assert!(
+        timeout_findings[0].fix.is_some(),
+        "first require-timeout finding must carry the fix"
+    );
+    assert!(
+        timeout_findings[1].fix.is_none(),
+        "subsequent require-timeout findings must not carry a fix"
+    );
+}
+
+#[test]
+fn require_timeout_single_fix_clears_all_findings() {
+    // Applying the fix from the first finding should clear ALL require-timeout findings.
+    let sql = "CREATE INDEX i ON t (a);\nDROP TABLE other;";
+    let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+    let fix = fs
+        .iter()
+        .find(|f| f.rule_id == "require-timeout")
+        .and_then(|f| f.fix.clone())
+        .expect("require-timeout fix present on first finding");
+    let fixed = apply(sql, &fix);
+    let after = lint_sql(&fixed, &LintOptions::default())
+        .unwrap_or_else(|e| panic!("fixed SQL did not parse: {e}"));
+    assert!(
+        after.iter().all(|f| f.rule_id != "require-timeout"),
+        "single fix should clear all require-timeout findings; fixed SQL:\n{fixed}"
+    );
+}
+
+#[test]
 fn require_timeout_fix_inserts_before_first_flagged_statement() {
     let sql = "SELECT 1;\nCREATE INDEX i ON t (a);";
     let (_, fix) = fix_for(sql, "require-timeout");
     let fix = fix.expect("require-timeout fix present");
+    let first_edit = fix
+        .edits
+        .first()
+        .expect("timeout fix has at least one edit");
     // The prologue must go before the flagged CREATE INDEX, not at byte 0.
     assert!(
-        fix.edits[0].start > 0,
+        first_edit.start > 0,
         "prologue should precede the flagged statement, not byte 0"
     );
     // And it should land exactly at the start of the flagged statement.
-    let at = fix.edits[0].start as usize;
+    let at = first_edit.start as usize;
     assert!(
         sql[at..].starts_with("CREATE INDEX"),
         "prologue anchored at: {:?}",

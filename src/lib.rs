@@ -138,6 +138,10 @@ pub(crate) struct RuleHit {
 
 /// A single text edit within the linted SQL: replace bytes `[start, end)` with
 /// `replacement`. `start == end` is a pure insertion.
+///
+/// All offsets are 0-based byte positions into the linted SQL string and are
+/// guaranteed to fall on UTF-8 character boundaries within the range of the
+/// linted input.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FixEdit {
@@ -152,12 +156,27 @@ pub struct FixEdit {
 /// A machine-applicable remediation for a [`Finding`]: a short title plus the
 /// edits that make the statement safe. Present only for findings whose fix is an
 /// unambiguous mechanical change.
+///
+/// # Guarantees (upheld by construction)
+///
+/// A consumer can rely on the following invariants:
+///
+/// - **Non-empty**: `edits` contains at least one edit.
+/// - **Ascending order**: edits are sorted by `start` in ascending order.
+/// - **Non-overlapping**: for each consecutive pair, `prev.end <= next.start`.
+/// - **In-range**: every `start` and `end` offset falls within the byte length
+///   of the linted SQL string.
+/// - **UTF-8 boundaries**: offsets land on UTF-8 character boundaries so that
+///   splicing via `str::replace_range` does not panic.
+///
+/// Apply edits **high-to-low** (sort descending by `start` before splicing) so
+/// that each splice does not shift the byte offsets of earlier edits.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Fix {
     /// Short label for the fix, e.g. `"Add CONCURRENTLY"`.
     pub title: String,
-    /// The edits to apply, in ascending `start` order; non-overlapping.
+    /// The edits to apply, in ascending `start` order; non-overlapping; at least one.
     pub edits: Vec<FixEdit>,
 }
 
@@ -315,9 +334,15 @@ fn push_synthesized(
         );
         let g = &geoms[i];
         let (line, column) = line_col(sql, g.start);
-        let fix = draft
-            .as_ref()
-            .and_then(|d| crate::fix::resolve(d, sql, g.start, g.end));
+        let fix = draft.as_ref().and_then(|d| {
+            let r = crate::fix::resolve(d, sql, g.start, g.end);
+            debug_assert!(
+                r.is_some(),
+                "rule {rule_id}: fix draft {:?} failed to resolve",
+                d.title
+            );
+            r
+        });
         findings.push(Finding {
             rule_id: rule_id.to_string(),
             severity,
@@ -382,10 +407,16 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             }
             rule.check(node, &mut hits);
             for h in hits.drain(..) {
-                let fix = h
-                    .fix
-                    .as_ref()
-                    .and_then(|d| crate::fix::resolve(d, sql, g.start, g.end));
+                let fix = h.fix.as_ref().and_then(|d| {
+                    let r = crate::fix::resolve(d, sql, g.start, g.end);
+                    debug_assert!(
+                        r.is_some(),
+                        "rule {}: fix draft {:?} failed to resolve",
+                        rule.id(),
+                        d.title
+                    );
+                    r
+                });
                 findings.push(Finding {
                     rule_id: rule.id().to_string(),
                     severity: rule.severity(),
@@ -463,9 +494,15 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
     if !options.disabled_rules.contains(timeout::ID) {
         let timeout_indices =
             timeout::require_timeout_indices(stmts, options.assume_in_transaction);
-        let timeout_fix = timeout_indices.first().map(|&first| {
-            timeout::timeout_fix(u32::try_from(geoms[first].start).unwrap_or(u32::MAX))
+        // Build the fix draft once from the first flagged statement. The prologue is a single
+        // migration-level edit — only the first finding carries it; the rest get None so that a
+        // consumer splicing every finding's fix doesn't insert the prologue N times.
+        let timeout_fix = timeout_indices.first().and_then(|&first| {
+            let start = u32::try_from(geoms[first].start).ok()?;
+            Some(timeout::timeout_fix(start))
         });
+        // `take()` yields Some for the first iteration, None for every subsequent one.
+        let mut timeout_fix_once = timeout_fix;
         push_synthesized(
             &mut findings,
             sql,
@@ -473,11 +510,12 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             timeout::ID,
             Severity::Warning,
             timeout_indices.into_iter().map(|i| {
+                let fix = timeout_fix_once.take();
                 (
                     i,
                     timeout::MESSAGE.to_string(),
                     timeout::GUIDANCE.to_string(),
-                    timeout_fix.clone(),
+                    fix,
                 )
             }),
         );
