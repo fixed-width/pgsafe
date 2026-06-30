@@ -461,22 +461,25 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
         }
     }
     if !options.disabled_rules.contains(timeout::ID) {
+        let timeout_indices =
+            timeout::require_timeout_indices(stmts, options.assume_in_transaction);
+        let timeout_fix = timeout_indices.first().map(|&first| {
+            timeout::timeout_fix(u32::try_from(geoms[first].start).unwrap_or(u32::MAX))
+        });
         push_synthesized(
             &mut findings,
             sql,
             &geoms,
             timeout::ID,
             Severity::Warning,
-            timeout::require_timeout_indices(stmts, options.assume_in_transaction)
-                .into_iter()
-                .map(|i| {
-                    (
-                        i,
-                        timeout::MESSAGE.to_string(),
-                        timeout::GUIDANCE.to_string(),
-                        None,
-                    )
-                }),
+            timeout_indices.into_iter().map(|i| {
+                (
+                    i,
+                    timeout::MESSAGE.to_string(),
+                    timeout::GUIDANCE.to_string(),
+                    timeout_fix.clone(),
+                )
+            }),
         );
     }
     let (mut findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);

@@ -3,9 +3,6 @@
 //! and the statement's byte span. A draft that can't be located resolves to
 //! `None`, so an un-locatable fix is simply omitted rather than misapplied.
 
-// Consumers (rules) are added in subsequent tasks; allow dead-code until they land.
-#![allow(dead_code)]
-
 use crate::{Fix, FixEdit};
 
 /// Where an edit attaches, in terms a rule can express without the source text.
@@ -14,13 +11,16 @@ pub(crate) enum FixAnchor {
     /// Absolute byte span the rule computed itself (e.g. from a node `location`).
     Absolute { start: u32, end: u32 },
     /// Insert at the statement's first-token byte (`span.start`).
+    #[allow(dead_code)] // no rule produces this anchor yet; retained for future producers
     StatementStart,
     /// Insert at the statement body's end (`span.end`, before any `;`).
+    #[allow(dead_code)] // no rule produces this anchor yet; retained for future producers
     StatementBodyEnd,
     /// Insert immediately after the first whole-word, ASCII-case-insensitive
     /// occurrence of this keyword within the statement span.
     AfterKeyword(&'static str),
     /// Replace the identifier token starting at this absolute byte offset.
+    #[allow(dead_code)] // no rule produces this anchor yet; retained for future producers
     ReplaceTokenAt(u32),
 }
 
@@ -42,7 +42,12 @@ pub(crate) fn resolve(draft: &FixDraft, sql: &str, start: usize, end: usize) -> 
     let mut edits = Vec::with_capacity(draft.edits.len());
     for e in &draft.edits {
         let (s, en) = match e.anchor {
-            FixAnchor::Absolute { start, end } => (start as usize, end as usize),
+            FixAnchor::Absolute { start, end } => {
+                let (s, e) = (start as usize, end as usize);
+                // bounds-guard: out-of-range offset → None; point insertion (s==e) is Some("")
+                sql.get(s..e)?;
+                (s, e)
+            }
             FixAnchor::StatementStart => (start, start),
             FixAnchor::StatementBodyEnd => (end, end),
             FixAnchor::AfterKeyword(kw) => {
@@ -60,7 +65,7 @@ pub(crate) fn resolve(draft: &FixDraft, sql: &str, start: usize, end: usize) -> 
             replacement: e.replacement.clone(),
         });
     }
-    edits.sort_by_key(|e| e.start);
+    // `apply` sorts descending before splicing; the ascending sort here is redundant.
     Some(Fix {
         title: draft.title.to_string(),
         edits,
@@ -97,6 +102,7 @@ fn token_len(s: &str) -> Option<usize> {
 
 /// Apply a fix to `sql`, returning the rewritten string. Edits are applied high
 /// offset to low so earlier splices don't shift later ones.
+#[allow(dead_code)] // not yet wired to the CLI; called from tests only
 pub(crate) fn apply(sql: &str, fix: &Fix) -> String {
     let mut out = sql.to_string();
     let mut edits = fix.edits.clone();
