@@ -16,13 +16,11 @@ pub(crate) enum FixAnchor {
     #[allow(dead_code)] // Plan 2 producer: reserved for statement-prologue insertions
     StatementStart,
     /// Insert at the statement body's end (`span.end`, before any `;`).
-    #[allow(dead_code)] // Plan 2 producer: drives NOT VALID rewrites
     StatementBodyEnd,
     /// Insert immediately after the first whole-word, ASCII-case-insensitive
     /// occurrence of this keyword within the statement span.
     AfterKeyword(&'static str),
     /// Replace the identifier token starting at this absolute byte offset.
-    #[allow(dead_code)] // Plan 2 producer: drives type swap rewrites (e.g. json → jsonb)
     ReplaceTokenAt(u32),
 }
 

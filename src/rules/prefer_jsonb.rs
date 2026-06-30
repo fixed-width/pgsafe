@@ -21,6 +21,9 @@ fn jsonb_fix(col: &ColumnDef) -> Option<FixDraft> {
     // pg_query sets location to -1 when the source position is unknown; those are
     // rejected by the `try_from` conversion returning `None`.
     let at = u32::try_from(tn.location).ok()?;
+    // NOTE: a user who explicitly writes the catalog-qualified form (e.g. `pg_catalog.json`)
+    // would have `location` point at `pg_catalog`, so the replacement would corrupt the output.
+    // We accept this: catalog-qualifying a built-in type is essentially unheard of in real DDL.
     Some(FixDraft {
         title: "Use jsonb",
         edits: vec![FixDraftEdit {

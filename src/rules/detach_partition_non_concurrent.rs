@@ -134,7 +134,7 @@ mod tests {
 
         let mut out = Vec::new();
         super::DetachPartitionNonConcurrent.check(&node, &mut out);
-        let h = out.iter().find(|_| true).expect("rule must fire");
+        let h = out.first().expect("rule must fire");
         assert!(
             h.fix.is_none(),
             "multi-cmd ALTER TABLE must not produce a fix"
