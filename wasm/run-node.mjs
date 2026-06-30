@@ -1,5 +1,7 @@
 // Run the wasip1 pgsafe-wasm command under Node's V8 (browser-representative).
-// Reads SQL on stdin, prints the pgsafe JSON envelope on stdout.
+// Reads a {"sql":"...","inTransaction":false} JSON request on stdin, prints the
+// pgsafe JSON envelope on stdout. e.g.:
+//   echo '{"sql":"CREATE INDEX i ON t (c);"}' | node wasm/run-node.mjs <wasm>
 import { WASI } from 'node:wasi';
 import { readFileSync } from 'node:fs';
 import { argv } from 'node:process';
