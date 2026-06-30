@@ -55,7 +55,7 @@ outcomes such as `DROP TABLE` or `RENAME`) never carry one.
   "fix": {
     "title": "Add CONCURRENTLY",
     "edits": [
-      { "start": 13, "end": 13, "replacement": " CONCURRENTLY" }
+      { "start": 12, "end": 12, "replacement": " CONCURRENTLY" }
     ]
   }
 }

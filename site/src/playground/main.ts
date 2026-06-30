@@ -190,6 +190,10 @@ function byteToChar(text: string, targetByte: number): number {
  *  ascending (engine contract), so CodeMirror composes them in one transaction;
  *  the resulting docChanged re-lints. */
 function applyFixToEditor(fix: NonNullable<Finding["fix"]>): void {
+  if (fix.edits.length === 0) {
+    console.error("applyFixToEditor: fix has no edits", fix);
+    return;
+  }
   const text = view.state.doc.toString();
   view.dispatch({
     changes: fix.edits.map((e) => ({
@@ -227,6 +231,12 @@ function render(env: Envelope): void {
   }
   const findings = file?.findings ?? [];
   setClaimLines(findings);
+  // Capture the doc this render was computed against. Button click handlers
+  // compare view.state.doc to this reference — identical object means the doc
+  // hasn't changed since lint; a different object means a re-lint is pending
+  // and the byte offsets are stale, so we bail rather than splice at the wrong
+  // position or throw a CodeMirror RangeError.
+  const lintedDoc = view.state.doc;
   if (!findings.length) {
     resultsEl.append(para("clean", "✓ No findings — this migration looks safe."));
     return;
@@ -276,7 +286,15 @@ function render(env: Envelope): void {
         fixBtn.textContent = f.fix.title || "Fix";
         fixBtn.title = "Apply this fix to the migration";
         const thisFix = f.fix;
-        fixBtn.addEventListener("click", () => applyFixToEditor(thisFix));
+        fixBtn.addEventListener("click", () => {
+          if (view.state.doc !== lintedDoc) return; // doc changed since this lint; a re-lint is pending
+          try {
+            applyFixToEditor(thisFix);
+          } catch (e) {
+            console.error("Fix failed:", e);
+            resultsEl.prepend(para("status", `Could not apply fix: ${String(e)}`));
+          }
+        });
         actions.append(fixBtn);
       }
       const ignoreBtn = document.createElement("button");
@@ -284,7 +302,15 @@ function render(env: Envelope): void {
       ignoreBtn.className = "ignore";
       ignoreBtn.textContent = "Ignore";
       ignoreBtn.title = "Insert a pgsafe:ignore directive for this finding";
-      ignoreBtn.addEventListener("click", () => ignoreFinding(f));
+      ignoreBtn.addEventListener("click", () => {
+        if (view.state.doc !== lintedDoc) return; // doc changed since this lint; a re-lint is pending
+        try {
+          ignoreFinding(f);
+        } catch (e) {
+          console.error("Ignore failed:", e);
+          resultsEl.prepend(para("status", `Could not ignore finding: ${String(e)}`));
+        }
+      });
       actions.append(ignoreBtn);
       el.append(head, msg, para("loc", loc), actions);
     }
