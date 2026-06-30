@@ -93,6 +93,22 @@ function para(cls: string, text: string): HTMLParagraphElement {
   return p;
 }
 
+/** Append text with backtick code spans rendered as <code> — XSS-safe (every
+ *  piece goes in via textContent), for finding messages that contain code. */
+function appendInline(parent: HTMLElement, text: string): void {
+  const re = /`([^`]+)`/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parent.appendChild(document.createTextNode(text.slice(last, m.index)));
+    const code = document.createElement("code");
+    code.textContent = m[1];
+    parent.appendChild(code);
+    last = re.lastIndex;
+  }
+  if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
+}
+
 function render(env: Envelope): void {
   // Re-rendering replaces the finding rows, so any hovered row is gone without
   // a mouseleave — clear its stale line highlight before rebuilding.
@@ -142,7 +158,10 @@ function render(env: Envelope): void {
     const loc = f.suppression
       ? `ignored — ${f.suppression.reason} · line ${f.location.line}`
       : `line ${f.location.line}, col ${f.location.column}`;
-    el.append(head, para("msg", f.message), para("loc", loc));
+    const msg = document.createElement("p");
+    msg.className = "msg";
+    appendInline(msg, f.message);
+    el.append(head, msg, para("loc", loc));
     resultsEl.append(el);
   }
   resultsEl.append(

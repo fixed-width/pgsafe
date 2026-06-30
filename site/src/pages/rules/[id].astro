@@ -4,13 +4,14 @@ import Nav from "../../components/Nav.astro";
 import Footer from "../../components/Footer.astro";
 import SeverityBadge from "../../components/SeverityBadge.astro";
 import { RULES, RULE_LIST } from "../../data/rules";
+import { inlineMd, stripMd } from "../../lib/md";
 
 export function getStaticPaths() {
   return RULE_LIST.map((r) => ({ params: { id: r.id }, props: { rule: r } }));
 }
 const { rule } = Astro.props;
 const title = `${rule.id} — pgsafe rule`;
-const description = rule.summary;
+const description = stripMd(rule.summary);
 const related = (rule.related ?? []).map((id) => RULES[id]).filter(Boolean);
 // Deep link into the playground with the unsafe example preloaded. The base64
 // of {sql, inTransaction} matches what playground/permalink.ts decodes.
@@ -29,10 +30,10 @@ const tryHref = rule.example
     <p class="title">{rule.title}</p>
 
     <h2>Why it's unsafe</h2>
-    <p>{rule.whyUnsafe}</p>
+    <p class="md" set:html={inlineMd(rule.whyUnsafe)} />
 
     <h2>Safe rewrite</h2>
-    <p>{rule.safeRewrite}</p>
+    <p class="md" set:html={inlineMd(rule.safeRewrite)} />
 
     {rule.example && (
       <>
@@ -56,7 +57,7 @@ const tryHref = rule.example
         <h2>Related</h2>
         <ul class="related">
           {related.map((r) => (
-            <li><a href={`/rules/${r.id}/`}><code>{r.id}</code></a> — {r.summary}</li>
+            <li><a href={`/rules/${r.id}/`}><code>{r.id}</code></a> — <span class="md" set:html={inlineMd(r.summary)} /></li>
           ))}
         </ul>
       </>
@@ -79,5 +80,5 @@ const tryHref = rule.example
   .safe-lbl { color: var(--safe); }
   .related { list-style: none; padding: 0; }
   .related li { padding: 0.3rem 0; color: var(--fg-dim); }
-  .related code { color: var(--accent); }
+  .related a code { color: var(--accent); }
 </style>

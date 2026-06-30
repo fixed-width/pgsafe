@@ -4,6 +4,7 @@ import Nav from "../../components/Nav.astro";
 import Footer from "../../components/Footer.astro";
 import SeverityBadge from "../../components/SeverityBadge.astro";
 import { RULE_LIST, type Category } from "../../data/rules";
+import { inlineMd, stripMd } from "../../lib/md";
 
 const title = "pgsafe rules — every PostgreSQL migration hazard it checks";
 const description = "The full pgsafe rule reference: what each rule flags, why it's unsafe, and the safe rewrite.";
@@ -26,10 +27,10 @@ const groups = order
         <h2>{g.cat}</h2>
         <ul class="rules">
           {g.rules.map((r) => (
-            <li class="rule" data-id={r.id} data-text={`${r.id} ${r.summary}`.toLowerCase()}>
+            <li class="rule" data-id={r.id} data-text={`${r.id} ${stripMd(r.summary)}`.toLowerCase()}>
               <a href={`/rules/${r.id}/`}><code>{r.id}</code></a>
               <SeverityBadge severity={r.severity} />
-              <span class="sum">{r.summary}</span>
+              <span class="sum md" set:html={inlineMd(r.summary)} />
             </li>
           ))}
         </ul>
@@ -58,7 +59,7 @@ const groups = order
   .group h2 { font-size: 1.1rem; color: var(--fg); border-bottom: 1px solid var(--border); padding-bottom: 0.4rem; }
   .rules { list-style: none; padding: 0; margin: 0 0 2rem; }
   .rule { display: grid; grid-template-columns: minmax(14rem, auto) auto 1fr; gap: 0.75rem; align-items: center; padding: 0.5rem 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
-  .rule code { color: var(--accent); }
+  .rule a code { color: var(--accent); }
   .sum { color: var(--fg-dim); font-size: 0.9rem; }
   @media (max-width: 640px) { .rule { grid-template-columns: 1fr auto; } .sum { grid-column: 1 / -1; } }
 </style>
