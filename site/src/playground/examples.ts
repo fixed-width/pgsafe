@@ -53,9 +53,20 @@ export const EXAMPLES: Example[] = [
     id: "safe-rewrite",
     label: "The safe rewrite of a foreign key",
     sql: [
+      "SET lock_timeout = '5s';",
       "ALTER TABLE orders ADD CONSTRAINT fk_customer",
       "  FOREIGN KEY (customer_id) REFERENCES customers (id) NOT VALID;",
       "ALTER TABLE orders VALIDATE CONSTRAINT fk_customer;",
+    ].join("\n"),
+  },
+  {
+    id: "with-timeout",
+    label: "Guarded with a lock_timeout (safe)",
+    sql: [
+      "-- a bounded lock_timeout makes a blocking DDL fail fast instead of",
+      "-- piling up the lock queue",
+      "SET lock_timeout = '5s';",
+      "ALTER TABLE users ADD COLUMN status text;",
     ].join("\n"),
   },
 ];
