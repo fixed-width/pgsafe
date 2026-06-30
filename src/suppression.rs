@@ -120,15 +120,13 @@ pub(crate) struct StatementGeom {
     pub index: usize,
     /// Byte offset of the statement's first real token (after skipping leading whitespace and comments).
     pub start: usize,
-    /// Byte offset of the statement's first non-whitespace byte, taken from `stmt_location` BEFORE
-    /// skipping any leading comment block. When the statement has no leading comments,
-    /// `raw_start == start`. Otherwise it points at the statement's leading comment region — the
-    /// anchor for a statement-level prologue insertion, so the prologue lands ABOVE an own-line
-    /// leading directive rather than between the directive and the statement body. (Edge: pg_query
-    /// folds a preceding statement's *same-line* trailing comment into this statement's extent, so
-    /// for a statement preceded by such a trailing comment `raw_start` may coincide with it; the
-    /// common own-line-comment case is exact.)
-    pub raw_start: usize,
+    /// Byte offset of the start of the statement's contiguous own-line leading comment block, or
+    /// the statement's own line start when there is none. This is the correct anchor for inserting
+    /// a statement-level prologue (e.g. `SET lock_timeout`) so the prologue lands ABOVE any
+    /// own-line `-- pgsafe:ignore` directives rather than between a directive and the statement
+    /// body. Computed by walking backward from `start`'s line over contiguous own-line comment
+    /// lines. When there are no such lines, `prologue_anchor == line_start(sql, start)`.
+    pub prologue_anchor: usize,
     /// Byte offset one past the statement's last non-whitespace character.
     pub end: usize,
     /// 1-based line number of the statement's first real token.
@@ -166,24 +164,69 @@ pub(crate) fn geometry(
         let slice = sql.get(off..raw_end).unwrap_or("");
         let lead = slice.len() - slice.trim_start().len();
         let trail = slice.len() - slice.trim_end().len();
-        // `content_start` is the first non-whitespace byte — the start of any leading
-        // comment block, or the first keyword if there are no leading comments.
         let content_start = off + lead;
         // `start` advances past any leading comments to the statement's first real token.
         let start = skip_leading_comments(sql, content_start, &comment_spans);
         let end = raw_end.saturating_sub(trail).max(start);
         let first_line = line_col(sql, start).0;
         let last_line = line_col(sql, end.saturating_sub(1).max(start)).0;
+        // Walk backward from `start`'s line over any contiguous own-line comment lines so
+        // that a statement-level prologue (e.g. SET lock_timeout) is inserted ABOVE any
+        // own-line directives rather than between a directive and the statement body.
+        let prologue_anchor = compute_prologue_anchor(sql, start, &comment_spans);
         out.push(StatementGeom {
             index,
             start,
-            raw_start: content_start,
+            prologue_anchor,
             end,
             first_line,
             last_line,
         });
     }
     out
+}
+
+/// Returns the byte offset of the first byte on the line containing `pos`.
+fn line_start(sql: &str, pos: usize) -> usize {
+    sql[..pos].rfind('\n').map_or(0, |i| i + 1)
+}
+
+/// Whether `sql[ls..le]` (a line's content, not including the trailing `\n`) is
+/// an own-line comment: its first non-whitespace byte is the start of a comment
+/// span. A blank line returns `false`.
+fn is_own_line_comment(sql: &str, ls: usize, le: usize, spans: &[(usize, usize)]) -> bool {
+    let line = match sql.get(ls..le) {
+        Some(s) => s,
+        None => return false,
+    };
+    let ws = line.len() - line.trim_start().len();
+    let first = ls + ws;
+    // Blank line: no content after whitespace.
+    if first >= le {
+        return false;
+    }
+    spans.iter().any(|&(s, _)| s == first)
+}
+
+/// Compute the prologue-insertion anchor for the statement whose first token is at
+/// `start`. Walk backward from `start`'s line over any contiguous own-line comment
+/// lines; return the start of the earliest such line, or the line start of `start`
+/// when there are no such lines directly above.
+fn compute_prologue_anchor(sql: &str, start: usize, spans: &[(usize, usize)]) -> usize {
+    let mut anchor = line_start(sql, start);
+    loop {
+        if anchor == 0 {
+            break;
+        }
+        let above_end = anchor - 1; // byte of the '\n' that ends the line directly above
+        let above_start = line_start(sql, above_end);
+        if is_own_line_comment(sql, above_start, above_end, spans) {
+            anchor = above_start;
+        } else {
+            break;
+        }
+    }
+    anchor
 }
 
 /// Advance `pos` past any leading SQL/C comments (and whitespace between them).

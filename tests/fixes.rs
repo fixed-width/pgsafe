@@ -135,9 +135,9 @@ fn require_timeout_prologue_lands_above_leading_directive() {
     // and the statement. That broke suppression (the directive no longer attached to
     // the now-displaced statement) and raised a spurious `suppression-unused`.
     //
-    // After the fix: `timeout_fix` anchors at `geoms[first].raw_start` — the first
-    // non-whitespace byte BEFORE skipping comments — so the prologue goes ABOVE the
-    // entire comment block.
+    // After the fix: `timeout_fix` anchors at `geoms[first].prologue_anchor` — the
+    // start of the statement's contiguous own-line comment block — so the prologue
+    // goes ABOVE the entire comment block.
     let sql = "-- pgsafe:ignore add-index-non-concurrent  built in a maintenance window\n\
                CREATE INDEX idx_users_email ON users (email);";
     let fs = lint_sql(sql, &LintOptions::default()).unwrap();
@@ -165,6 +165,60 @@ fn require_timeout_prologue_lands_above_leading_directive() {
     assert!(
         ainc.is_suppressed(),
         "add-index-non-concurrent must remain suppressed; fixed SQL:\n{fixed}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Regression: multi-statement — timeout prologue must land ABOVE a leading
+// directive on a non-first flagged statement
+// ---------------------------------------------------------------------------
+
+/// The first flagged statement is not statement 0.  Statement 0 (`CREATE TABLE`) is
+/// non-blocking; statement 1 (`CREATE INDEX`) takes a blocking lock and has an
+/// own-line `-- pgsafe:ignore add-index-non-concurrent` directive directly above it.
+/// A trailing `-- pgsafe:ignore prefer-jsonb` rides on statement 0's line.
+///
+/// With the old `raw_start` anchor the prologue was inserted BETWEEN the own-line
+/// directive and `CREATE INDEX` (pg_query doesn't attribute inter-statement comment
+/// lines to the later statement), breaking suppression and raising `suppression-unused`.
+/// With the new backward-line-walk anchor the prologue must land ABOVE the directive.
+#[test]
+fn require_timeout_prologue_lands_above_leading_directive_non_first_stmt() {
+    let sql = "CREATE TABLE t (data json); -- pgsafe:ignore prefer-jsonb  ok\n\
+               -- pgsafe:ignore add-index-non-concurrent  reason\n\
+               CREATE INDEX i ON existing (col);";
+    let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+    let rt_fix = fs
+        .iter()
+        .find(|f| f.rule_id == "require-timeout")
+        .and_then(|f| f.fix.clone())
+        .expect("require-timeout finding must carry a fix");
+    let fixed = apply(sql, &rt_fix);
+    let after = lint_sql(&fixed, &LintOptions::default())
+        .unwrap_or_else(|e| panic!("fixed SQL did not parse:\n{fixed}\n{e}"));
+    assert!(
+        after.iter().all(|f| f.rule_id != "require-timeout"),
+        "require-timeout must be cleared after the fix; fixed SQL:\n{fixed}"
+    );
+    assert!(
+        after.iter().all(|f| f.rule_id != "suppression-unused"),
+        "suppression-unused must not fire; fixed SQL:\n{fixed}"
+    );
+    let ainc = after
+        .iter()
+        .find(|f| f.rule_id == "add-index-non-concurrent")
+        .expect("add-index-non-concurrent must still be present (suppressed)");
+    assert!(
+        ainc.is_suppressed(),
+        "add-index-non-concurrent must remain suppressed; fixed SQL:\n{fixed}"
+    );
+    let pjsonb = after
+        .iter()
+        .find(|f| f.rule_id == "prefer-jsonb")
+        .expect("prefer-jsonb must still be present (suppressed)");
+    assert!(
+        pjsonb.is_suppressed(),
+        "prefer-jsonb must remain suppressed; fixed SQL:\n{fixed}"
     );
 }
 
