@@ -18,17 +18,15 @@ SHIM_DIR="$(cd "$(dirname "$0")/wasi-shims" && pwd)"
 SHIM_FLAGS="-I$SHIM_DIR -include $SHIM_DIR/prelude.h"
 export CFLAGS_wasm32_wasip1="$SHIM_FLAGS --sysroot=$WASI_SDK_PATH/share/wasi-sysroot -mllvm -wasm-enable-sjlj $WASI_EMUL_DEFS"
 # bindgen runs on the host but must emit wasm32 (32-bit pointer) bindings.
-# rust-bindgen 0.66 supports libclang ~16-18; wasi-sdk's libclang 22 silently
-# drops the function bindings (emits only consts/types). So run bindgen on the
-# host llvm-18 libclang, fed the wasm target + wasi sysroot + clang-18 builtin
-# headers (for stddef.h). The C compile stays on wasi-sdk clang 22 (above).
-HOST_LLVM="${HOST_LLVM:-/usr/lib/llvm-18}"
-export LIBCLANG_PATH="$HOST_LLVM/lib"
-HOST_CLANG_INC=$(set -- "$HOST_LLVM"/lib/clang/*/include; echo "$1")
+# Use wasi-sdk's own libclang (no host llvm needed), fed the wasm target + wasi
+# sysroot + its builtin headers (for stddef.h). The C compile also uses wasi-sdk
+# clang (above).
+export LIBCLANG_PATH="$WASI_SDK_PATH/lib"
+CLANG_BUILTIN_INC=$(set -- "$WASI_SDK_PATH"/lib/clang/*/include; echo "$1")
 # -fvisibility=default is REQUIRED: wasm32 defaults function visibility to
 # hidden, and bindgen silently skips hidden-visibility functions — without this
 # the bindings contain types/consts but ZERO functions, and pg_query won't link.
-export BINDGEN_EXTRA_CLANG_ARGS="-I$SHIM_DIR -isystem $HOST_CLANG_INC --sysroot=$WASI_SDK_PATH/share/wasi-sysroot --target=wasm32-wasip1 -fvisibility=default $WASI_EMUL_DEFS"
+export BINDGEN_EXTRA_CLANG_ARGS="-I$SHIM_DIR -isystem $CLANG_BUILTIN_INC --sysroot=$WASI_SDK_PATH/share/wasi-sysroot --target=wasm32-wasip1 -fvisibility=default $WASI_EMUL_DEFS"
 # The final link (rustc/rust-lld) must pull in the matching emulation archives,
 # plus libsetjmp.a which provides the wasm SjLj runtime helpers
 # (__wasm_setjmp/__wasm_setjmp_test/__wasm_longjmp/__c_longjmp) that

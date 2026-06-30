@@ -4,9 +4,16 @@
 (PostgreSQL's real C parser) — compiles to `wasm32-wasip1` and lints correctly
 in a browser-class WASM engine (V8 / Node, and therefore browsers).
 
-This is the **spike** form: a WASI *command* that reads SQL on stdin and writes
-the same JSON envelope as `pgsafe --format json` on stdout. The browser-facing
-warm `lint()` export + WASI shim are Milestone 2.
+It is a WASI *command*: stdin is a `{"sql": "...", "inTransaction": false}` JSON
+request, stdout is the same JSON envelope as `pgsafe --format json`. The site
+loads this module in the browser via a WASI shim (`site/src/playground/`).
+
+For the site, `build-web.sh` builds the release wasm and copies it to
+`site/public/pgsafe.wasm` (gitignored; rebuilt by `npm run build:wasm` and by CI):
+
+```sh
+WASI_SDK_PATH="$HOME/wasi-sdk-33.0-x86_64-linux" ./build-web.sh
+```
 
 ## Result
 
@@ -22,8 +29,8 @@ warm `lint()` export + WASI shim are Milestone 2.
 - **wasi-sdk 33** (clang 22) — compiles the `libpg_query` C for wasm. Set
   `WASI_SDK_PATH` to the install dir.
 - **Rust target** `wasm32-wasip1` (`rustup target add wasm32-wasip1`).
-- **Host libclang-18** for bindgen (`/usr/lib/llvm-18`, override with
-  `HOST_LLVM`). See the bindgen note below.
+- bindgen runs on **wasi-sdk's own libclang** (no host LLVM needed). See the
+  bindgen note below.
 - **Node ≥ 20** (V8) to run/validate — *not* wasmtime (see runtime note).
 
 ## Build
@@ -53,10 +60,9 @@ encodes, each discovered against a concrete failure:
 6. **bindgen `-fvisibility=default` — essential.** wasm32 defaults function
    visibility to *hidden*, and bindgen silently drops hidden-visibility
    functions: without this flag the generated bindings contain types/consts but
-   **zero functions**, and `pg_query` fails to link. This is independent of the
-   libclang version. (We run bindgen on host libclang-18 via `LIBCLANG_PATH`;
-   wasi-sdk's libclang also works once `-fvisibility=default` is set — a
-   possible Milestone-2 simplification to drop the host-llvm dependency.)
+   **zero functions**, and `pg_query` fails to link. With this flag,
+   wasi-sdk's own libclang (`LIBCLANG_PATH=$WASI_SDK_PATH/lib`) generates the
+   functions fine — so there is no host-LLVM dependency.
 
 ## Runtime note — legacy exception handling
 
@@ -73,6 +79,8 @@ encoding. Consequences:
 ## Files
 
 - `spike.sh` — build recipe (all env/flags).
+- `build-web.sh` — builds the release wasm and copies it to `site/public/pgsafe.wasm`.
 - `wasi-shims/` — stub headers + force-included `prelude.h` for wasi-libc gaps.
-- `run-node.mjs` — V8/WASI harness used as the gate.
-- `src/` — the WASI command (`run()` lints a string; `main` does stdin→stdout).
+- `run-node.mjs` — V8/WASI harness (feeds a JSON request on stdin).
+- `src/` — the WASI command (`lint_json()` lints a `{sql,inTransaction}` request;
+  `main` does stdin→stdout).
