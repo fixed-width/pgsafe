@@ -337,7 +337,7 @@ fn push_synthesized(
         let fix = draft.as_ref().and_then(|d| {
             let r = crate::fix::resolve(d, sql, g.start, g.end);
             debug_assert!(
-                r.is_some(),
+                r.is_some() || d.may_legitimately_not_resolve(),
                 "rule {rule_id}: fix draft {:?} failed to resolve",
                 d.title
             );
@@ -410,7 +410,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 let fix = h.fix.as_ref().and_then(|d| {
                     let r = crate::fix::resolve(d, sql, g.start, g.end);
                     debug_assert!(
-                        r.is_some(),
+                        r.is_some() || d.may_legitimately_not_resolve(),
                         "rule {}: fix draft {:?} failed to resolve",
                         rule.id(),
                         d.title
@@ -658,9 +658,9 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             &geoms,
             forbidden_types::ID,
             Severity::Warning,
-            forbidden_types::forbidden_violations(stmts, &options.forbidden_column_types)
+            forbidden_types::forbidden_violations(stmts, &options.forbidden_column_types, sql)
                 .into_iter()
-                .map(|(i, message)| (i, message, forbidden_types::GUIDANCE.to_string(), None)),
+                .map(|(i, message, fix)| (i, message, forbidden_types::GUIDANCE.to_string(), fix)),
         );
     }
     if options.enabled_rules.contains(require_if_exists::ID)
@@ -674,7 +674,9 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_if_exists::missing_if_exists(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_if_exists::GUIDANCE.to_string(), None)),
+                .map(|(i, message, draft)| {
+                    (i, message, require_if_exists::GUIDANCE.to_string(), draft)
+                }),
         );
     }
     if options.enabled_rules.contains(do_block::ID)

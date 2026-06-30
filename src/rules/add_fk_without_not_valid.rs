@@ -29,7 +29,15 @@ impl Rule for AddFkWithoutNotValid {
                                ALTER TABLE ... VALIDATE CONSTRAINT in a separate statement (it allows \
                                concurrent reads and writes)."
                         .into(),
-                    fix: None,
+                    // Fix is only safe when this is the sole ALTER TABLE command; with multiple
+                    // commands StatementBodyEnd is ambiguous — NOT VALID would bind incorrectly.
+                    fix: (super::alter_table_cmds(node).len() == 1).then(|| crate::fix::FixDraft {
+                        title: "Add NOT VALID",
+                        edits: vec![crate::fix::FixDraftEdit {
+                            anchor: crate::fix::FixAnchor::StatementBodyEnd,
+                            replacement: " NOT VALID".into(),
+                        }],
+                    }),
                 });
             }
         }
@@ -59,6 +67,59 @@ impl Rule for AddFkWithoutNotValid {
 #[cfg(test)]
 mod tests {
     use crate::{lint_sql, LintOptions};
+
+    #[test]
+    fn emits_a_not_valid_fix() {
+        use crate::fix::apply;
+        let sql = "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id);";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-fk-without-not-valid")
+            .expect("rule must fire");
+        let fix = f.fix.as_ref().expect("fix present");
+        assert_eq!(fix.title, "Add NOT VALID");
+        let fixed = apply(sql, fix);
+        assert_eq!(
+            fixed,
+            "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id) NOT VALID;"
+        );
+        // Applying it clears the finding.
+        assert!(lint_sql(&fixed, &LintOptions::default())
+            .unwrap()
+            .iter()
+            .all(|f| f.rule_id != "add-fk-without-not-valid"));
+    }
+
+    #[test]
+    fn emits_a_not_valid_fix_no_semicolon() {
+        // Without a trailing semicolon StatementBodyEnd must still land at the true end.
+        use crate::fix::apply;
+        let sql = "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id)";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-fk-without-not-valid")
+            .expect("rule must fire");
+        let fix = f.fix.as_ref().expect("fix present");
+        let fixed = apply(sql, fix);
+        assert_eq!(
+            fixed,
+            "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id) NOT VALID"
+        );
+    }
+
+    #[test]
+    fn inline_fk_fix_is_none() {
+        // Inline FK on ADD COLUMN cannot take NOT VALID — fix must be absent.
+        let sql = "ALTER TABLE t ADD COLUMN pid int DEFAULT 1 REFERENCES p (id);";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-fk-without-not-valid")
+            .expect("rule must fire");
+        assert!(f.fix.is_none(), "inline FK must not produce a fix");
+    }
 
     #[test]
     fn flags_fk_without_not_valid() {
@@ -95,5 +156,22 @@ mod tests {
         assert!(findings
             .iter()
             .all(|f| f.rule_id != "add-fk-without-not-valid"));
+    }
+
+    #[test]
+    fn multi_command_fk_fix_is_none() {
+        // Multiple commands in one ALTER TABLE — the fix is suppressed because StatementBodyEnd
+        // is ambiguous when len > 1 (NOT VALID would bind to the wrong command).
+        let sql =
+            "ALTER TABLE t ADD COLUMN x int, ADD CONSTRAINT fk FOREIGN KEY (x) REFERENCES u (id);";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-fk-without-not-valid")
+            .expect("rule must fire");
+        assert!(
+            f.fix.is_none(),
+            "multi-command ALTER must not emit a fix (StatementBodyEnd ambiguous)"
+        );
     }
 }

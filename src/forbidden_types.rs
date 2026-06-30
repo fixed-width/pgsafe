@@ -5,8 +5,9 @@
 
 use std::collections::BTreeMap;
 
-use pg_query::protobuf::RawStmt;
+use pg_query::protobuf::{ColumnDef, RawStmt};
 
+use crate::fix::{FixAnchor, FixDraft, FixDraftEdit};
 use crate::rules::{column_base_type, defined_columns};
 
 pub(crate) const ID: &str = "forbidden-column-type";
@@ -34,12 +35,99 @@ pub(crate) fn canonical_type(spelling: &str) -> Option<String> {
     column_base_type(col)
 }
 
-/// Introduced columns whose type is forbidden, as `(statement_index, message)`. `forbidden` maps a
-/// configured type spelling to its suggested replacement (empty string = no suggestion).
+/// Returns `true` when the type token starting at byte `at` in `sql` is a single SQL word —
+/// not a multi-word type like `timestamp without time zone` or `double precision`, not
+/// schema-qualified like `pg_catalog.text`, and not followed by a type modifier like `(6)`.
+///
+/// Accepted risk: a schema-qualified custom type (`myschema.mytype`) written without
+/// qualification cannot be distinguished here from a bare single-word type; the `.` guard
+/// conservatively suppresses the fix only when a `.` follows the first word, which is the
+/// right safe-by-default behaviour for `ReplaceTokenAt`.
+fn is_single_token_type(sql: &str, at: usize) -> bool {
+    let Some(rest) = sql.get(at..) else {
+        return false;
+    };
+    let tok_len = rest
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        .count();
+    if tok_len == 0 {
+        return false;
+    }
+    let after = rest[tok_len..].trim_start();
+    // A schema-qualifier dot means the written type is qualified (e.g. `pg_catalog.text`).
+    if after.starts_with('.') {
+        return false;
+    }
+    // A `(` means the type carries a modifier (e.g. `timestamp(6)`, `varchar(255)`). The
+    // replacement type may not accept that modifier, so suppress the fix.
+    if after.starts_with('(') {
+        return false;
+    }
+    // A continuation word means the written type spans multiple tokens. This covers both
+    // `timestamp without time zone` / `double precision` and interval qualifiers like
+    // `interval year to month`.
+    const CONT: [&str; 13] = [
+        "with",
+        "without",
+        "varying",
+        "precision",
+        "time",
+        "zone",
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "to",
+    ];
+    let next_word: String = after
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
+    !CONT.iter().any(|w| w.eq_ignore_ascii_case(&next_word))
+}
+
+/// Build a fix draft that swaps the column's type token to `replacement`.
+///
+/// Guards:
+/// - `replacement` must be non-empty (empty means "no suggestion" in the config).
+/// - `type_name` must be present and `location >= 0` (pg_query sets -1 for unknown positions).
+/// - The written type must be a single SQL token; multi-word types like
+///   `timestamp without time zone` or `double precision` are rejected because
+///   `ReplaceTokenAt` replaces only the first word, which would corrupt the rest.
+///
+/// `location` points at the source token regardless of how many names pg_query
+/// normalises the type into (e.g. `timestamp` → `["pg_catalog", "timestamp"]`), so
+/// the names-list length is not checked.
+fn forbidden_fix(sql: &str, replacement: &str, col: &ColumnDef) -> Option<FixDraft> {
+    if replacement.is_empty() {
+        return None;
+    }
+    let tn = col.type_name.as_ref()?;
+    // Reject location == -1 (unknown source position) via the sign-checked conversion.
+    // Using try_from avoids the cast_sign_loss clippy lint that `as u32` would trigger.
+    let at = u32::try_from(tn.location).ok()?;
+    if !is_single_token_type(sql, at as usize) {
+        return None;
+    }
+    Some(FixDraft {
+        title: "Change to configured type",
+        edits: vec![FixDraftEdit {
+            anchor: FixAnchor::ReplaceTokenAt(at),
+            replacement: replacement.into(),
+        }],
+    })
+}
+
+/// Introduced columns whose type is forbidden, as `(statement_index, message, fix_draft)`.
+/// `forbidden` maps a configured type spelling to its suggested replacement (empty = no suggestion).
 pub(crate) fn forbidden_violations(
     stmts: &[RawStmt],
     forbidden: &BTreeMap<String, String>,
-) -> Vec<(usize, String)> {
+    sql: &str,
+) -> Vec<(usize, String, Option<FixDraft>)> {
     // canonical leaf -> (configured spelling, replacement). Built once. A spelling that fails to
     // canonicalize is skipped silently — an unrecognized type matches nothing.
     let lookup: BTreeMap<String, (&str, &str)> = forbidden
@@ -71,7 +159,8 @@ pub(crate) fn forbidden_violations(
                         col.colname
                     )
                 };
-                out.push((i, message));
+                let fix = forbidden_fix(sql, replacement, col);
+                out.push((i, message, fix));
             }
         }
     }
@@ -96,9 +185,10 @@ mod tests {
         forbidden_violations(
             &pg_query::parse(sql).unwrap().protobuf.stmts,
             &forbid(pairs),
+            sql,
         )
         .into_iter()
-        .map(|(_, m)| m)
+        .map(|(_, m, _)| m)
         .collect()
     }
 
@@ -254,5 +344,146 @@ mod tests {
             .find(|f| f.rule_id == "forbidden-column-type")
             .expect("rule must fire");
         assert!(hit.is_suppressed());
+    }
+
+    // --- fix producer tests (TDD: written before implementation) ---
+
+    #[test]
+    fn timestamp_fix_clears_rule() {
+        use crate::fix::apply;
+        let sql = "CREATE TABLE t (created timestamp)";
+        let fs = lint_sql(sql, &forbid_opts(&[("timestamp", "timestamptz")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire");
+        let fix = hit
+            .fix
+            .as_ref()
+            .expect("fix must be present for single-token type");
+        let fixed = apply(sql, fix);
+        assert_eq!(fixed, "CREATE TABLE t (created timestamptz)");
+        assert!(
+            lint_sql(&fixed, &forbid_opts(&[("timestamp", "timestamptz")]))
+                .unwrap()
+                .iter()
+                .all(|f| f.rule_id != "forbidden-column-type"),
+            "fixed SQL must not re-trigger forbidden-column-type"
+        );
+    }
+
+    #[test]
+    fn add_column_money_fix_clears_rule() {
+        use crate::fix::apply;
+        let sql = "ALTER TABLE t ADD COLUMN c money";
+        let fs = lint_sql(sql, &forbid_opts(&[("money", "numeric")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire");
+        let fix = hit
+            .fix
+            .as_ref()
+            .expect("fix must be present for single-token type");
+        let fixed = apply(sql, fix);
+        assert_eq!(fixed, "ALTER TABLE t ADD COLUMN c numeric");
+        assert!(
+            lint_sql(&fixed, &forbid_opts(&[("money", "numeric")]))
+                .unwrap()
+                .iter()
+                .all(|f| f.rule_id != "forbidden-column-type"),
+            "fixed SQL must not re-trigger forbidden-column-type"
+        );
+    }
+
+    #[test]
+    fn multi_word_type_fix_is_none() {
+        // `timestamp without time zone` is a multi-word type; ReplaceTokenAt would replace
+        // only the first word, leaving `timestamptz without time zone` — a corrupt rewrite.
+        // The single-token guard must suppress the fix draft while still firing the finding.
+        let sql = "CREATE TABLE t (created timestamp without time zone)";
+        let fs = lint_sql(sql, &forbid_opts(&[("timestamp", "timestamptz")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire — the finding is still valid");
+        assert!(
+            hit.fix.is_none(),
+            "fix must be suppressed for multi-word type (single-token guard)"
+        );
+    }
+
+    #[test]
+    fn typmod_type_fix_is_none() {
+        // `timestamp(6) without time zone` — the typmod `(6)` means ReplaceTokenAt would
+        // yield `timestamptz(6) without time zone` (syntax error). Fix must be suppressed.
+        let sql = "CREATE TABLE t (created timestamp(6) without time zone)";
+        let fs = lint_sql(sql, &forbid_opts(&[("timestamp", "timestamptz")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire — the finding is still valid");
+        assert!(
+            hit.fix.is_none(),
+            "fix must be suppressed for type with typmod (e.g. timestamp(6))"
+        );
+    }
+
+    #[test]
+    fn varchar_with_length_fix_is_none() {
+        // varchar(255) with forbid varchar → text: `text` has no length modifier, so the
+        // replacement would yield `text(255)` — real PG rejects it. Fix must be suppressed.
+        let sql = "CREATE TABLE t (name varchar(255))";
+        let fs = lint_sql(sql, &forbid_opts(&[("varchar", "text")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire — the finding is still valid");
+        assert!(
+            hit.fix.is_none(),
+            "fix must be suppressed for varchar with length modifier"
+        );
+    }
+
+    #[test]
+    fn interval_qualifier_fix_is_none() {
+        // `interval year to month` — interval qualifiers form a multi-word type.
+        // ReplaceTokenAt would yield `numeric year to month` (corrupt). Fix must be suppressed.
+        let sql = "CREATE TABLE t (d interval year to month)";
+        let fs = lint_sql(sql, &forbid_opts(&[("interval", "numeric")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire — the finding is still valid");
+        assert!(
+            hit.fix.is_none(),
+            "fix must be suppressed for interval with qualifier"
+        );
+    }
+
+    #[test]
+    fn trailing_column_constraint_does_not_suppress_fix() {
+        // `timestamp NOT NULL` — NOT NULL is a column constraint, not a type continuation.
+        // The fix must still fire (replacing `timestamp` → `timestamptz`).
+        use crate::fix::apply;
+        let sql = "CREATE TABLE t (created timestamp NOT NULL)";
+        let fs = lint_sql(sql, &forbid_opts(&[("timestamp", "timestamptz")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire");
+        let fix = hit
+            .fix
+            .as_ref()
+            .expect("fix must be present — trailing NOT NULL must not suppress it");
+        let fixed = apply(sql, fix);
+        assert_eq!(fixed, "CREATE TABLE t (created timestamptz NOT NULL)");
+        assert!(
+            lint_sql(&fixed, &forbid_opts(&[("timestamp", "timestamptz")]))
+                .unwrap()
+                .iter()
+                .all(|f| f.rule_id != "forbidden-column-type"),
+            "fixed SQL must not re-trigger forbidden-column-type"
+        );
     }
 }

@@ -122,3 +122,59 @@ fn require_timeout_fix_inserts_before_first_flagged_statement() {
         &sql[at..]
     );
 }
+
+// ---------------------------------------------------------------------------
+// Plan 2 producer integration tests (default LintOptions)
+// ---------------------------------------------------------------------------
+//
+// `require-if-exists` (opt-in flag) and `forbidden-column-type` (requires a
+// configured type map) are not reachable under default `LintOptions`, so they
+// are NOT covered here. Their fix producers are exercised in the respective
+// rule unit tests (Tasks 4 and 6 of Plan 2).
+
+#[test]
+fn drop_index_fix_clears() {
+    assert_clears("DROP INDEX idx;", "drop-index-non-concurrent");
+}
+
+#[test]
+fn reindex_fix_clears() {
+    assert_clears("REINDEX INDEX idx;", "reindex-non-concurrent");
+}
+
+#[test]
+fn detach_partition_fix_clears() {
+    assert_clears(
+        "ALTER TABLE p DETACH PARTITION p1;",
+        "detach-partition-non-concurrent",
+    );
+}
+
+#[test]
+fn add_check_fix_clears() {
+    assert_clears(
+        "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0);",
+        "add-check-without-not-valid",
+    );
+}
+
+#[test]
+fn add_fk_fix_clears() {
+    assert_clears(
+        "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id);",
+        "add-fk-without-not-valid",
+    );
+}
+
+#[test]
+fn prefer_jsonb_fix_clears() {
+    assert_clears("CREATE TABLE t (data json);", "prefer-jsonb");
+}
+
+#[test]
+fn prefer_bigint_fix_clears() {
+    assert_clears(
+        "CREATE TABLE t (id integer PRIMARY KEY);",
+        "prefer-bigint-primary-key",
+    );
+}
