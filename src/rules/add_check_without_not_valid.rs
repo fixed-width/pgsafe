@@ -27,7 +27,15 @@ impl Rule for AddCheckWithoutNotValid {
                         "Add the CHECK with NOT VALID, then run VALIDATE CONSTRAINT separately \
                                (SHARE UPDATE EXCLUSIVE — concurrent reads and writes are allowed)."
                             .into(),
-                    fix: None,
+                    // Fix is only safe when this is the sole ALTER TABLE command; with multiple
+                    // commands StatementBodyEnd is ambiguous — NOT VALID would bind incorrectly.
+                    fix: (super::alter_table_cmds(node).len() == 1).then(|| crate::fix::FixDraft {
+                        title: "Add NOT VALID",
+                        edits: vec![crate::fix::FixDraftEdit {
+                            anchor: crate::fix::FixAnchor::StatementBodyEnd,
+                            replacement: " NOT VALID".into(),
+                        }],
+                    }),
                 });
             }
         }
@@ -56,6 +64,45 @@ impl Rule for AddCheckWithoutNotValid {
 #[cfg(test)]
 mod tests {
     use crate::{lint_sql, LintOptions};
+
+    #[test]
+    fn emits_a_not_valid_fix() {
+        use crate::fix::apply;
+        let sql = "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0);";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-check-without-not-valid")
+            .expect("rule must fire");
+        let fix = f.fix.as_ref().expect("fix present");
+        assert_eq!(fix.title, "Add NOT VALID");
+        let fixed = apply(sql, fix);
+        assert_eq!(
+            fixed,
+            "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0) NOT VALID;"
+        );
+        // Applying it clears the finding.
+        assert!(lint_sql(&fixed, &LintOptions::default())
+            .unwrap()
+            .iter()
+            .all(|f| f.rule_id != "add-check-without-not-valid"));
+    }
+
+    #[test]
+    fn multi_cmd_alter_constraint_fix_is_none() {
+        // Two commands: ADD COLUMN + ADD CONSTRAINT — NOT VALID would be ambiguous at
+        // StatementBodyEnd, so the fix must be None.
+        let sql = "ALTER TABLE t ADD COLUMN x int, ADD CONSTRAINT ck CHECK (a > 0);";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-check-without-not-valid")
+            .expect("rule must fire");
+        assert!(
+            f.fix.is_none(),
+            "multi-cmd ALTER TABLE must not produce a fix"
+        );
+    }
 
     #[test]
     fn flags_check_without_not_valid() {

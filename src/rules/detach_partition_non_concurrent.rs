@@ -87,6 +87,61 @@ mod tests {
     }
 
     #[test]
+    fn multi_cmd_alter_has_no_fix() {
+        // PostgreSQL grammar prevents DETACH PARTITION from being combined with
+        // other ALTER TABLE sub-commands in the same statement, so we synthesise a
+        // two-command AlterTableStmt directly to exercise the single-command gate.
+        use super::super::Rule as _;
+        use pg_query::protobuf::{
+            AlterTableCmd, AlterTableStmt, AlterTableType, Node, PartitionCmd, RangeVar,
+        };
+        use pg_query::NodeEnum;
+
+        let detach_cmd = AlterTableCmd {
+            subtype: AlterTableType::AtDetachPartition as i32,
+            def: Some(Box::new(Node {
+                node: Some(NodeEnum::PartitionCmd(PartitionCmd {
+                    name: Some(RangeVar {
+                        relname: "p1".into(),
+                        ..Default::default()
+                    }),
+                    concurrent: false,
+                    ..Default::default()
+                })),
+            })),
+            ..Default::default()
+        };
+        let other_cmd = AlterTableCmd {
+            subtype: AlterTableType::AtDropColumn as i32,
+            name: "c".into(),
+            ..Default::default()
+        };
+        let node = NodeEnum::AlterTableStmt(AlterTableStmt {
+            relation: Some(RangeVar {
+                relname: "p".into(),
+                ..Default::default()
+            }),
+            cmds: vec![
+                Node {
+                    node: Some(NodeEnum::AlterTableCmd(Box::new(detach_cmd))),
+                },
+                Node {
+                    node: Some(NodeEnum::AlterTableCmd(Box::new(other_cmd))),
+                },
+            ],
+            ..Default::default()
+        });
+
+        let mut out = Vec::new();
+        super::DetachPartitionNonConcurrent.check(&node, &mut out);
+        let h = out.iter().find(|_| true).expect("rule must fire");
+        assert!(
+            h.fix.is_none(),
+            "multi-cmd ALTER TABLE must not produce a fix"
+        );
+    }
+
+    #[test]
     fn emits_a_concurrently_fix() {
         use crate::fix::apply;
         let sql = "ALTER TABLE p DETACH PARTITION p1;";
