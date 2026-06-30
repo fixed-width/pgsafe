@@ -63,8 +63,10 @@ outcomes such as `DROP TABLE` or `RENAME`) never carry one.
 
 `start` and `end` are absolute UTF-8 byte offsets into the submitted SQL string.
 `start == end` means a pure insertion (no bytes are removed).
-The `edits` array is in ascending offset order and the ranges never overlap, so a consumer
-can apply them in order without adjusting subsequent offsets.
+The `edits` array is in ascending offset order and the ranges never overlap. Because each
+edit's offsets reference the original SQL, a consumer can apply them in reverse (last to
+first) without adjusting any offsets, or apply them in forward order while tracking the
+cumulative length change.
 
 The in-browser playground surfaces a **Fix** button on any finding that includes a `fix` object;
 clicking it rewrites the editor content in place.
