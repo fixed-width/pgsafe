@@ -12,8 +12,8 @@ const description =
     <h1>Playground</h1>
     <p class="lede">The real pgsafe analyzer, compiled to WebAssembly and running in your browser. Nothing is sent anywhere.</p>
     <div class="toolbar">
-      <label class="check"><input type="checkbox" id="opt-intx" /> Treat as in a transaction</label>
-      <label>Fail on
+      <label class="field"><input type="checkbox" id="opt-intx" /> Treat as in a transaction</label>
+      <label class="field">Fail on
         <select id="opt-failon">
           <option value="warning">warning</option>
           <option value="error">error</option>
@@ -39,20 +39,21 @@ const description =
   .pg { padding-top: 2rem; }
   .lede { color: var(--fg-dim); max-width: 46rem; }
   .toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin: 1.25rem 0; color: var(--fg-dim); }
-  .toolbar .check { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .toolbar .field { display: inline-flex; align-items: center; gap: 0.5rem; }
   .toolbar select, .toolbar button { background: var(--bg-elev); color: var(--fg); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 6px; padding: 0.35rem 0.6rem; font-family: var(--mono); }
   .toolbar button { cursor: pointer; }
   .toolbar button:hover { border-color: var(--accent); }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
-  #editor { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; min-height: 22rem; }
-  #editor :global(.cm-editor) { height: 100%; min-height: 22rem; }
+  #editor { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; height: 28rem; }
+  #editor :global(.cm-editor) { height: 100%; }
   #editor :global(.cm-editor.cm-focused) { outline: none; }
-  #results { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev); padding: 1rem; min-height: 22rem; font-size: 0.9rem; }
+  #results { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev); padding: 1rem; height: 28rem; overflow-y: auto; font-size: 0.9rem; }
   /* Result rows are built in JS, so they lack Astro's scope attribute — target
      them as :global under the static #results container. */
   #results :global(.status) { color: var(--fg-dim); }
   #results :global(.clean) { color: var(--safe); }
-  #results :global(.finding) { padding: 0.7rem 0; border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+  #results :global(.finding) { padding: 0.7rem 0.5rem; margin: 0 -0.5rem; border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent); border-radius: 6px; }
+  #results :global(.finding:hover) { background: rgba(255, 159, 28, 0.07); border-top-color: transparent; }
   #results :global(.finding:first-child) { border-top: 0; padding-top: 0; }
   #results :global(.finding .head) { display: flex; gap: 0.5rem; align-items: baseline; }
   #results :global(.finding a) { color: var(--accent); }

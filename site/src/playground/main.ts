@@ -1,6 +1,8 @@
 import { EditorView, basicSetup } from "codemirror";
 import { sql, PostgreSQL } from "@codemirror/lang-sql";
 import { oneDark } from "@codemirror/theme-one-dark";
+import { StateField, StateEffect } from "@codemirror/state";
+import { Decoration, type DecorationSet } from "@codemirror/view";
 import { loadLinter, type Envelope, type Finding, type Lint } from "./pgsafe-wasm";
 import { EXAMPLES } from "./examples";
 import { readHash, writeHash } from "./permalink";
@@ -19,18 +21,56 @@ const startDoc =
   "ALTER TABLE users ADD COLUMN email text;\nCREATE INDEX idx_users_email ON users (email);";
 if (initial) intx.checked = !!initial.inTransaction;
 
+// Hovering a finding highlights its line in the editor.
+const setHighlight = StateEffect.define<number | null>();
+const highlightField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setHighlight)) {
+        if (e.value == null) {
+          deco = Decoration.none;
+        } else {
+          const lineNo = Math.max(1, Math.min(e.value, tr.state.doc.lines));
+          const line = tr.state.doc.line(lineNo);
+          deco = Decoration.set([
+            Decoration.line({ class: "cm-hl-line" }).range(line.from),
+          ]);
+        }
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+const highlightTheme = EditorView.theme({
+  // Higher specificity than .cm-activeLine so the hover highlight wins even
+  // when the cursor is on that line, plus an inset bar that shows over any bg.
+  ".cm-line.cm-hl-line": {
+    backgroundColor: "rgba(255, 159, 28, 0.22)",
+    boxShadow: "inset 3px 0 0 0 #ff9f1c",
+  },
+});
+
 const view = new EditorView({
   doc: startDoc,
   extensions: [
     basicSetup,
     sql({ dialect: PostgreSQL }),
     oneDark,
+    highlightField,
+    highlightTheme,
     EditorView.updateListener.of((u) => {
       if (u.docChanged) schedule();
     }),
   ],
   parent: byId("editor"),
 });
+
+function highlightLine(line: number | null): void {
+  view.dispatch({ effects: setHighlight.of(line) });
+}
 
 let lint: Lint | null = null;
 let timer: number | undefined;
@@ -67,6 +107,8 @@ function render(env: Envelope): void {
   for (const f of findings) {
     const el = document.createElement("div");
     el.className = "finding";
+    el.addEventListener("mouseenter", () => highlightLine(f.location.line));
+    el.addEventListener("mouseleave", () => highlightLine(null));
 
     const head = document.createElement("div");
     head.className = "head";
