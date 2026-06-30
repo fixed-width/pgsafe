@@ -286,7 +286,16 @@ export const RULES: Record<string, RuleDoc> = {
       "`ADD COLUMN` with a `serial` type (e.g. `bigserial`) creates a sequence and rewrites every existing row under an `ACCESS EXCLUSIVE` lock.",
     safeRewrite:
       "Add a plain nullable integer column (e.g. `bigint`), create the sequence and backfill existing rows in batches, then `ALTER COLUMN ... SET DEFAULT nextval(...)` and add `NOT NULL` via the safe two-step — do not add `serial` directly to a populated table.",
-    example: { unsafe: "ALTER TABLE users ADD COLUMN seq serial;" },
+    example: {
+      unsafe: "ALTER TABLE users ADD COLUMN seq serial;",
+      safe: [
+        "-- add a plain nullable column (no rewrite), then a sequence default for new rows",
+        "ALTER TABLE users ADD COLUMN seq bigint;",
+        "CREATE SEQUENCE users_seq_seq OWNED BY users.seq;",
+        "ALTER TABLE users ALTER COLUMN seq SET DEFAULT nextval('users_seq_seq');",
+        "-- backfill existing rows in batches, then add NOT NULL via the safe two-step",
+      ].join("\n"),
+    },
     related: ["add-column-identity", "prefer-bigint-primary-key"],
   },
   "add-column-identity": {
@@ -302,6 +311,12 @@ export const RULES: Record<string, RuleDoc> = {
       "Add a plain nullable integer column, backfill existing rows in batches, then attach the identity/sequence — do not add an identity column directly to a populated table.",
     example: {
       unsafe: "ALTER TABLE users ADD COLUMN n int GENERATED ALWAYS AS IDENTITY;",
+      safe: [
+        "-- add a plain nullable column (no rewrite)",
+        "ALTER TABLE users ADD COLUMN n bigint;",
+        "-- backfill existing rows in batches and set NOT NULL (safe two-step), then:",
+        "ALTER TABLE users ALTER COLUMN n ADD GENERATED ALWAYS AS IDENTITY;",
+      ].join("\n"),
     },
     related: ["add-column-serial"],
   },
@@ -319,6 +334,12 @@ export const RULES: Record<string, RuleDoc> = {
     example: {
       unsafe:
         "ALTER TABLE users ADD COLUMN full_name text GENERATED ALWAYS AS (first || ' ' || last) STORED;",
+      safe: [
+        "-- add a plain nullable column (no rewrite)",
+        "ALTER TABLE users ADD COLUMN full_name text;",
+        "-- backfill in batches: UPDATE users SET full_name = first || ' ' || last;",
+        "-- keep it current with a trigger (or compute it in application code)",
+      ].join("\n"),
     },
     related: ["add-column-volatile-default"],
   },

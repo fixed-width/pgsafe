@@ -29,6 +29,12 @@ test('attach-partition shows a safe-rewrite example', async ({ page }) => {
   await expect(page.locator('pre').last()).toContainText('VALIDATE CONSTRAINT');
 });
 
+test('add-column-serial shows a safe-rewrite example', async ({ page }) => {
+  await page.goto('/rules/add-column-serial/');
+  await expect(page.locator('.safe-lbl')).toBeVisible();
+  await expect(page.locator('pre').last()).toContainText('SET DEFAULT nextval');
+});
+
 test('rule prose renders inline code, not literal backticks', async ({ page }) => {
   await page.goto('/rules/require-timeout/');
   await expect(page.locator('.md code').filter({ hasText: "SET lock_timeout = '5s';" })).toBeVisible();
