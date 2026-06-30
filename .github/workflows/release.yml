@@ -88,3 +88,51 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         run: gh release edit "$TAG" --draft=false
+
+  # Publish the crate to crates.io once the GitHub release is live, so a tag yields one aligned set of
+  # artifacts: git tag = GitHub release (binaries) = crates.io version. Requires a CARGO_REGISTRY_TOKEN
+  # repo secret (Settings -> Secrets and variables -> Actions) scoped to publish-update. The gate makes
+  # the job re-runnable: crates.io versions are immutable, so if the version is already up (e.g. a
+  # re-run after a flaky binary upload) it skips instead of hard-failing, and it refuses to publish if
+  # the tag and Cargo.toml version disagree.
+  cargo-publish:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      # pg_query compiles vendored libpg_query (C) via bindgen, which needs libclang for cargo
+      # publish's verify build.
+      - name: Install libclang
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: stable
+
+      - name: Gate on tag/version agreement and not-already-published
+        id: gate
+        run: |
+          set -euo pipefail
+          tag_ver="${GITHUB_REF_NAME#v}"
+          manifest_ver="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name=="pgsafe") | .version')"
+          if [ "$tag_ver" != "$manifest_ver" ]; then
+            echo "::error::tag v$tag_ver does not match Cargo.toml version $manifest_ver"
+            exit 1
+          fi
+          if curl -sf -H 'User-Agent: pgsafe-release-ci (github actions)' \
+              "https://crates.io/api/v1/crates/pgsafe/$tag_ver" >/dev/null; then
+            echo "pgsafe $tag_ver is already on crates.io; skipping publish."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: cargo publish
+        if: steps.gate.outputs.skip == 'false'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked
