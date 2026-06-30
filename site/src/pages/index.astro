@@ -57,8 +57,10 @@ const features = [
 
     <section id="install" class="install">
       <p class="eyebrow">Install</p>
-      <p>Run it in CI with the GitHub Action:</p>
-      <pre><code>{`- uses: fixed-width/pgsafe@v0.8.5
+      <p>Install it locally with a Rust toolchain:</p>
+      <pre><code>cargo install pgsafe</code></pre>
+      <p>Or run it in CI with the GitHub Action:</p>
+      <pre><code>{`- uses: fixed-width/pgsafe@v0.8.6
   with:
     files: "db/migrate/*.sql"`}</code></pre>
       <p>Or grab a prebuilt binary from the <a href="https://github.com/fixed-width/pgsafe/releases/latest" rel="noopener noreferrer">latest release</a> (static Linux and macOS builds).</p>

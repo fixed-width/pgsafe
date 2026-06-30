@@ -12,18 +12,21 @@ database connection and no network access.
 
 ## Install
 
-Download a prebuilt binary from the [latest release](https://github.com/fixed-width/pgsafe/releases/latest)
-(static Linux and macOS builds), verify it against the matching `.sha256`, and put it on your `PATH`:
+Install from [crates.io](https://crates.io/crates/pgsafe) with a Rust toolchain:
+
+```sh
+cargo install pgsafe
+```
+
+Or download a prebuilt binary from the [latest release](https://github.com/fixed-width/pgsafe/releases/latest)
+(static Linux and macOS builds), verify it against the matching `.sha256`, and put it on your `PATH`.
+Either way, confirm it works:
 
 ```sh
 pgsafe --version
 ```
 
-Or build from source with a Rust toolchain:
-
-```sh
-cargo build --release   # target/release/pgsafe
-```
+You can also build from source with `cargo build --release` (binary at `target/release/pgsafe`).
 
 ## Lint a file
 
