@@ -124,6 +124,51 @@ fn require_timeout_fix_inserts_before_first_flagged_statement() {
 }
 
 // ---------------------------------------------------------------------------
+// Regression: require-timeout prologue must land ABOVE leading directive comments
+// ---------------------------------------------------------------------------
+
+#[test]
+fn require_timeout_prologue_lands_above_leading_directive() {
+    // Before the fix: `timeout_fix` anchored at `geoms[first].start` — the first
+    // TOKEN after skipping leading comments. When the statement had a leading
+    // `-- pgsafe:ignore` directive, the prologue was inserted BETWEEN the directive
+    // and the statement. That broke suppression (the directive no longer attached to
+    // the now-displaced statement) and raised a spurious `suppression-unused`.
+    //
+    // After the fix: `timeout_fix` anchors at `geoms[first].raw_start` — the first
+    // non-whitespace byte BEFORE skipping comments — so the prologue goes ABOVE the
+    // entire comment block.
+    let sql = "-- pgsafe:ignore add-index-non-concurrent  built in a maintenance window\n\
+               CREATE INDEX idx_users_email ON users (email);";
+    let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+    let rt_fix = fs
+        .iter()
+        .find(|f| f.rule_id == "require-timeout")
+        .and_then(|f| f.fix.clone())
+        .expect("require-timeout finding must carry a fix");
+    let fixed = apply(sql, &rt_fix);
+    let after = lint_sql(&fixed, &LintOptions::default())
+        .unwrap_or_else(|e| panic!("fixed SQL did not parse:\n{fixed}\n{e}"));
+    assert!(
+        after.iter().all(|f| f.rule_id != "require-timeout"),
+        "require-timeout must be cleared after the fix; fixed SQL:\n{fixed}"
+    );
+    assert!(
+        after.iter().all(|f| f.rule_id != "suppression-unused"),
+        "suppression-unused must not fire; the directive must still attach to the CREATE INDEX; \
+         fixed SQL:\n{fixed}"
+    );
+    let ainc = after
+        .iter()
+        .find(|f| f.rule_id == "add-index-non-concurrent")
+        .expect("add-index-non-concurrent must still be present (suppressed)");
+    assert!(
+        ainc.is_suppressed(),
+        "add-index-non-concurrent must remain suppressed; fixed SQL:\n{fixed}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Plan 2 producer integration tests (default LintOptions)
 // ---------------------------------------------------------------------------
 //
