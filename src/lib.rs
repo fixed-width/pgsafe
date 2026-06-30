@@ -674,7 +674,9 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_if_exists::missing_if_exists(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_if_exists::GUIDANCE.to_string(), None)),
+                .map(|(i, message, draft)| {
+                    (i, message, require_if_exists::GUIDANCE.to_string(), draft)
+                }),
         );
     }
     if options.enabled_rules.contains(do_block::ID)
