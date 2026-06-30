@@ -28,6 +28,7 @@ impl Rule for SetLoggedUnlogged {
                         "There is no online alternative — toggling durability rewrites the table. \
                                Do it in a maintenance window, and avoid it on a large live table."
                             .into(),
+                    fix: None,
                 });
             }
         }

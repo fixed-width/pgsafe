@@ -18,6 +18,7 @@ impl Rule for Truncate {
                 guidance: "For ongoing data removal use a batched DELETE; reserve TRUNCATE for environments \
                            where downtime and data loss are acceptable."
                     .into(),
+                fix: None,
             });
         }
     }

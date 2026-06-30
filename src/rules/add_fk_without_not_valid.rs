@@ -29,6 +29,7 @@ impl Rule for AddFkWithoutNotValid {
                                ALTER TABLE ... VALIDATE CONSTRAINT in a separate statement (it allows \
                                concurrent reads and writes)."
                         .into(),
+                    fix: None,
                 });
             }
         }
@@ -48,6 +49,7 @@ impl Rule for AddFkWithoutNotValid {
                     guidance: "Add the column without the REFERENCES clause, then ADD CONSTRAINT ... \
                                FOREIGN KEY ... NOT VALID, then VALIDATE CONSTRAINT separately."
                         .into(),
+                    fix: None,
                 });
             }
         }

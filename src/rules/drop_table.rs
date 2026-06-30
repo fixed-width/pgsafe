@@ -23,6 +23,7 @@ impl Rule for DropTable {
                     guidance: "Confirm all application references are retired and the table is traffic-free \
                                before dropping; archive the data first if it may be needed."
                         .into(),
+                    fix: None,
                 });
             }
         }

@@ -35,6 +35,7 @@ impl Rule for AlterColumnType {
                                recycle pooled connections or run DISCARD PLANS afterward, or apply it \
                                during a deploy window."
                         .into(),
+                    fix: None,
                 });
             }
         }

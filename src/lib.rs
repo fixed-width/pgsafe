@@ -14,6 +14,7 @@ use pg_query::NodeEnum;
 
 mod do_block;
 mod enum_value;
+mod fix;
 mod fk_index;
 mod forbid_nullable_fk;
 mod forbidden_types;
@@ -132,6 +133,51 @@ pub struct Suppression {
 pub(crate) struct RuleHit {
     pub message: String,
     pub guidance: String,
+    pub fix: Option<crate::fix::FixDraft>,
+}
+
+/// A single text edit within the linted SQL: replace bytes `[start, end)` with
+/// `replacement`. `start == end` is a pure insertion.
+///
+/// All offsets are 0-based byte positions into the linted SQL string and are
+/// guaranteed to fall on UTF-8 character boundaries within the range of the
+/// linted input.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FixEdit {
+    /// 0-based byte offset where the edit begins.
+    pub start: u32,
+    /// 0-based byte offset where the edit ends (`== start` for an insertion).
+    pub end: u32,
+    /// Text to splice in place of `[start, end)`.
+    pub replacement: String,
+}
+
+/// A machine-applicable remediation for a [`Finding`]: a short title plus the
+/// edits that make the statement safe. Present only for findings whose fix is an
+/// unambiguous mechanical change.
+///
+/// # Guarantees (upheld by construction)
+///
+/// A consumer can rely on the following invariants:
+///
+/// - **Non-empty**: `edits` contains at least one edit.
+/// - **Ascending order**: edits are sorted by `start` in ascending order.
+/// - **Non-overlapping**: for each consecutive pair, `prev.end <= next.start`.
+/// - **In-range**: every `start` and `end` offset falls within the byte length
+///   of the linted SQL string.
+/// - **UTF-8 boundaries**: offsets land on UTF-8 character boundaries so that
+///   splicing via `str::replace_range` does not panic.
+///
+/// Apply edits **high-to-low** (sort descending by `start` before splicing) so
+/// that each splice does not shift the byte offsets of earlier edits.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Fix {
+    /// Short label for the fix, e.g. `"Add CONCURRENTLY"`.
+    pub title: String,
+    /// The edits to apply, in ascending `start` order; non-overlapping; at least one.
+    pub edits: Vec<FixEdit>,
 }
 
 /// A safety finding reported for a specific SQL statement.
@@ -158,6 +204,9 @@ pub struct Finding {
     /// A suppressed finding is still reported but does not affect the gate exit code.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub suppression: Option<Suppression>,
+    /// `Some` when this finding has a safe, machine-applicable fix.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub fix: Option<Fix>,
 }
 
 impl Finding {
@@ -262,19 +311,21 @@ pub fn list_rule_ids() -> Vec<&'static str> {
     known_rule_ids()
 }
 
-/// Push one engine-synthesized rule's hits as [`Finding`]s. Each hit is a `(statement_index, message,
-/// guidance)` tuple — the statement index sources the location and snippet, and the message/guidance
-/// are this finding's own. `rule_id` and `severity` are constant for the rule. Centralizes the
-/// location / snippet / `Finding` construction shared by every synthesized block in [`lint_sql`].
+/// Push one engine-synthesized rule's hits as [`Finding`]s. Each hit is a
+/// `(statement_index, message, guidance, fix_draft)` tuple — the statement index sources the
+/// location and snippet, the message/guidance are this finding's own, and the optional draft is
+/// resolved to an absolute [`Fix`] (or `None` when no fix is provided). `rule_id` and `severity`
+/// are constant for the rule. Centralizes the location / snippet / `Finding` construction shared
+/// by every synthesized block in [`lint_sql`].
 fn push_synthesized(
     findings: &mut Vec<Finding>,
     sql: &str,
     geoms: &[suppression::StatementGeom],
     rule_id: &str,
     severity: Severity,
-    hits: impl IntoIterator<Item = (usize, String, String)>,
+    hits: impl IntoIterator<Item = (usize, String, String, Option<crate::fix::FixDraft>)>,
 ) {
-    for (i, message, guidance) in hits {
+    for (i, message, guidance, draft) in hits {
         // The index comes from a rule walking these same `stmts`, so it is always in range; assert
         // it in debug builds to attribute any future rule bug to its source rather than this push.
         debug_assert!(
@@ -283,6 +334,15 @@ fn push_synthesized(
         );
         let g = &geoms[i];
         let (line, column) = line_col(sql, g.start);
+        let fix = draft.as_ref().and_then(|d| {
+            let r = crate::fix::resolve(d, sql, g.start, g.end);
+            debug_assert!(
+                r.is_some(),
+                "rule {rule_id}: fix draft {:?} failed to resolve",
+                d.title
+            );
+            r
+        });
         findings.push(Finding {
             rule_id: rule_id.to_string(),
             severity,
@@ -296,6 +356,7 @@ fn push_synthesized(
             },
             snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
             suppression: None,
+            fix,
         });
     }
 }
@@ -346,6 +407,16 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             }
             rule.check(node, &mut hits);
             for h in hits.drain(..) {
+                let fix = h.fix.as_ref().and_then(|d| {
+                    let r = crate::fix::resolve(d, sql, g.start, g.end);
+                    debug_assert!(
+                        r.is_some(),
+                        "rule {}: fix draft {:?} failed to resolve",
+                        rule.id(),
+                        d.title
+                    );
+                    r
+                });
                 findings.push(Finding {
                     rule_id: rule.id().to_string(),
                     severity: rule.severity(),
@@ -355,6 +426,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     location,
                     snippet: snippet.clone(),
                     suppression: None,
+                    fix,
                 });
             }
         }
@@ -409,6 +481,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                             location,
                             snippet: embedded.trim().to_string(),
                             suppression: None,
+                            fix: None,
                         });
                     }
                 }
@@ -419,21 +492,32 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
         }
     }
     if !options.disabled_rules.contains(timeout::ID) {
+        let timeout_indices =
+            timeout::require_timeout_indices(stmts, options.assume_in_transaction);
+        // Build the fix draft once from the first flagged statement. The prologue is a single
+        // migration-level edit — only the first finding carries it; the rest get None so that a
+        // consumer splicing every finding's fix doesn't insert the prologue N times.
+        let timeout_fix = timeout_indices.first().and_then(|&first| {
+            let start = u32::try_from(geoms[first].start).ok()?;
+            Some(timeout::timeout_fix(start))
+        });
+        // `take()` yields Some for the first iteration, None for every subsequent one.
+        let mut timeout_fix_once = timeout_fix;
         push_synthesized(
             &mut findings,
             sql,
             &geoms,
             timeout::ID,
             Severity::Warning,
-            timeout::require_timeout_indices(stmts, options.assume_in_transaction)
-                .into_iter()
-                .map(|i| {
-                    (
-                        i,
-                        timeout::MESSAGE.to_string(),
-                        timeout::GUIDANCE.to_string(),
-                    )
-                }),
+            timeout_indices.into_iter().map(|i| {
+                let fix = timeout_fix_once.take();
+                (
+                    i,
+                    timeout::MESSAGE.to_string(),
+                    timeout::GUIDANCE.to_string(),
+                    fix,
+                )
+            }),
         );
     }
     let (mut findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);
@@ -449,7 +533,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Error,
             txn::concurrently_in_transaction_indices(stmts, options.assume_in_transaction)
                 .into_iter()
-                .map(|i| (i, txn::MESSAGE.to_string(), txn::GUIDANCE.to_string())),
+                .map(|i| (i, txn::MESSAGE.to_string(), txn::GUIDANCE.to_string(), None)),
         );
     }
     if !options.disabled_rules.contains(identifier::ID) {
@@ -470,6 +554,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     "Shorten the identifier to 63 bytes or fewer so PostgreSQL does not silently \
                      truncate it."
                         .to_string(),
+                    None,
                 ))
             }),
         );
@@ -493,6 +578,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                         "Add a covering index on the referencing column, e.g. \
                          `CREATE INDEX CONCURRENTLY ON {table} ({col});`."
                     ),
+                    None,
                 )
             }),
         );
@@ -511,6 +597,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                         i,
                         enum_value::MESSAGE.to_string(),
                         enum_value::GUIDANCE.to_string(),
+                        None,
                     )
                 }),
         );
@@ -531,6 +618,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                         i,
                         require_pk::MESSAGE.to_string(),
                         require_pk::GUIDANCE.to_string(),
+                        None,
                     )
                 }),
         );
@@ -546,7 +634,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_not_null::nullable_columns(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_not_null::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, require_not_null::GUIDANCE.to_string(), None)),
         );
     }
     if !options.naming_patterns.is_empty() && !options.disabled_rules.contains(naming::ID) {
@@ -558,7 +646,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             naming::naming_violations(stmts, &options.naming_patterns)
                 .into_iter()
-                .map(|(i, message)| (i, message, naming::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, naming::GUIDANCE.to_string(), None)),
         );
     }
     if !options.forbidden_column_types.is_empty()
@@ -572,7 +660,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             forbidden_types::forbidden_violations(stmts, &options.forbidden_column_types)
                 .into_iter()
-                .map(|(i, message)| (i, message, forbidden_types::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, forbidden_types::GUIDANCE.to_string(), None)),
         );
     }
     if options.enabled_rules.contains(require_if_exists::ID)
@@ -586,7 +674,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_if_exists::missing_if_exists(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_if_exists::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, require_if_exists::GUIDANCE.to_string(), None)),
         );
     }
     if options.enabled_rules.contains(do_block::ID)
@@ -603,6 +691,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     i,
                     do_block::MESSAGE.to_string(),
                     do_block::GUIDANCE.to_string(),
+                    None,
                 )
             }),
         );
@@ -618,7 +707,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_comment::missing_comments(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_comment::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, require_comment::GUIDANCE.to_string(), None)),
         );
     }
     if !options.required_columns.is_empty() && !options.disabled_rules.contains(require_columns::ID)
@@ -631,7 +720,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_columns::missing_required_columns(stmts, &options.required_columns)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_columns::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, require_columns::GUIDANCE.to_string(), None)),
         );
     }
     if options.enabled_rules.contains(forbid_nullable_fk::ID)
@@ -645,7 +734,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             forbid_nullable_fk::nullable_fk_columns(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, forbid_nullable_fk::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, forbid_nullable_fk::GUIDANCE.to_string(), None)),
         );
     }
     if !options.severity_overrides.is_empty() {
@@ -921,5 +1010,70 @@ mod tests {
         assert!(f.iter().any(|f| f.rule_id == "add-index-non-concurrent"
             && f.message.starts_with("Inside a DO block:")));
         assert!(f.iter().any(|f| f.rule_id == "unchecked-do-block"));
+    }
+
+    #[test]
+    fn finding_serializes_fix_when_present() {
+        let f = Finding {
+            rule_id: "add-index-non-concurrent".into(),
+            severity: Severity::Error,
+            message: "m".into(),
+            guidance: "g".into(),
+            statement_index: 0,
+            location: Location {
+                byte: 0,
+                line: 1,
+                column: 1,
+            },
+            snippet: "CREATE INDEX i ON t (c)".into(),
+            suppression: None,
+            fix: Some(Fix {
+                title: "Add CONCURRENTLY".into(),
+                edits: vec![FixEdit {
+                    start: 12,
+                    end: 12,
+                    replacement: " CONCURRENTLY".into(),
+                }],
+            }),
+        };
+        let json = serde_json::to_string(&f).unwrap();
+        assert!(
+            json.contains(r#""fix":{"title":"Add CONCURRENTLY""#),
+            "{json}"
+        );
+        assert!(
+            json.contains(r#""edits":[{"start":12,"end":12,"replacement":" CONCURRENTLY"}]"#),
+            "{json}"
+        );
+        // Round-trips back to an equal value.
+        assert_eq!(serde_json::from_str::<Finding>(&json).unwrap(), f);
+    }
+
+    #[test]
+    fn finding_omits_fix_when_absent() {
+        let f = Finding {
+            rule_id: "drop-column".into(),
+            severity: Severity::Warning,
+            message: "m".into(),
+            guidance: "g".into(),
+            statement_index: 0,
+            location: Location {
+                byte: 0,
+                line: 1,
+                column: 1,
+            },
+            snippet: "ALTER TABLE t DROP COLUMN c".into(),
+            suppression: None,
+            fix: None,
+        };
+        assert!(!serde_json::to_string(&f).unwrap().contains("fix"));
+    }
+
+    #[test]
+    fn rule_hit_default_carries_no_fix() {
+        // A rule that emits no fix still produces a finding with fix == None.
+        let fs = lint_sql("DROP TABLE t;", &LintOptions::default()).unwrap();
+        let f = fs.iter().find(|f| f.rule_id == "drop-table").unwrap();
+        assert!(f.fix.is_none());
     }
 }

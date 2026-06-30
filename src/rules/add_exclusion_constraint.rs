@@ -27,6 +27,7 @@ impl Rule for AddExclusionConstraint {
                                Add it during a low-traffic window; on a large table, weigh whether the \
                                constraint is necessary."
                         .into(),
+                    fix: None,
                 });
             }
         }

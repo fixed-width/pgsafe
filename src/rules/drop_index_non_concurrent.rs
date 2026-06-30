@@ -26,6 +26,7 @@ impl Rule for DropIndexNonConcurrent {
                         .into(),
                     guidance: "Use DROP INDEX CONCURRENTLY (outside a transaction block)."
                         .into(),
+                    fix: None,
                 });
             }
         }

@@ -19,6 +19,7 @@ impl Rule for AddTrigger {
                 guidance: "Create the trigger during a low-traffic window; its lock conflicts with \
                            concurrent writes on the table."
                     .into(),
+                fix: None,
             });
         }
     }

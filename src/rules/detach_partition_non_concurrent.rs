@@ -33,6 +33,7 @@ impl Rule for DetachPartitionNonConcurrent {
                                takes only SHARE UPDATE EXCLUSIVE on the parent, so reads and writes keep \
                                working). It must run outside a transaction block."
                         .into(),
+                    fix: None,
                 });
             }
         }

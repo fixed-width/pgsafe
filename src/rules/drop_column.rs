@@ -25,6 +25,7 @@ impl Rule for DropColumn {
                         "Use expand/contract: deploy code that stops using the column first, then \
                                drop it in a later migration."
                             .into(),
+                    fix: None,
                 });
             }
         }

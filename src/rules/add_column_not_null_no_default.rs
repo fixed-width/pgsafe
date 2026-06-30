@@ -48,6 +48,7 @@ impl Rule for AddColumnNotNullNoDefault {
                                CHECK (col IS NOT NULL) NOT VALID + VALIDATE CONSTRAINT, then SET NOT NULL \
                                (PG12+ reuses the validated check and skips the scan)."
                         .into(),
+                    fix: None,
                 });
             }
         }

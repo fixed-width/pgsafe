@@ -31,6 +31,7 @@ impl Rule for AddUniqueConstraint {
                 guidance: "Build the index first with CREATE UNIQUE INDEX CONCURRENTLY, then attach it: \
                            ALTER TABLE ... ADD CONSTRAINT ... UNIQUE USING INDEX idx (a brief lock)."
                     .into(),
+                fix: None,
             });
         }
 
@@ -46,6 +47,7 @@ impl Rule for AddUniqueConstraint {
                            it, then ALTER TABLE ... ADD CONSTRAINT ... UNIQUE USING INDEX idx (a brief \
                            lock)."
                     .into(),
+                fix: None,
             });
         }
     }

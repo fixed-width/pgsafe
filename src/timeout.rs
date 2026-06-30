@@ -79,6 +79,22 @@ fn arg_is_zero(arg: &Node) -> bool {
     }
 }
 
+/// The shared fix for every `require-timeout` finding: insert a single
+/// `SET lock_timeout = '5s';` prologue at byte `first_start` (the first flagged
+/// statement's start), which satisfies the rule for every statement after it.
+pub(crate) fn timeout_fix(first_start: u32) -> crate::fix::FixDraft {
+    crate::fix::FixDraft {
+        title: "Set lock_timeout",
+        edits: vec![crate::fix::FixDraftEdit {
+            anchor: crate::fix::FixAnchor::Absolute {
+                start: first_start,
+                end: first_start,
+            },
+            replacement: "SET lock_timeout = '5s';\n".into(),
+        }],
+    }
+}
+
 /// Statement indices that take a blocking lock while no `lock_timeout` /
 /// `statement_timeout` is in effect. `assume_in_transaction` seeds the
 /// transaction state so a top-of-file `SET LOCAL` in a tool-wrapped migration is
@@ -290,5 +306,23 @@ mod tests {
         )
         .unwrap();
         assert!(!fs.iter().any(|f| f.rule_id == ID));
+    }
+
+    #[test]
+    fn require_timeout_fix_prepends_one_prologue_and_clears_all() {
+        use crate::fix::apply;
+        use crate::{lint_sql, LintOptions};
+        let sql = "CREATE INDEX i ON t (a);\nALTER TABLE t ADD COLUMN x int;";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs.iter().find(|f| f.rule_id == ID).unwrap();
+        let fix = f.fix.as_ref().expect("require-timeout fix present");
+        assert_eq!(fix.title, "Set lock_timeout");
+        let fixed = apply(sql, fix);
+        assert!(fixed.starts_with("SET lock_timeout = '5s';\n"), "{fixed}");
+        // One prologue clears require-timeout for every following statement.
+        assert!(lint_sql(&fixed, &LintOptions::default())
+            .unwrap()
+            .iter()
+            .all(|f| f.rule_id != ID));
     }
 }

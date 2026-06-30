@@ -28,6 +28,7 @@ impl Rule for SetAccessMethod {
                                maintenance window, or create a new table with the target access method, \
                                copy the data in batches, then swap (expand/contract)."
                         .into(),
+                    fix: None,
                 });
             }
         }

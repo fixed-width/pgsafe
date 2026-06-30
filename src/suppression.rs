@@ -312,6 +312,7 @@ pub(crate) fn resolve(
                 location: dir.location,
                 snippet: dir.snippet.clone(),
                 suppression: None,
+                fix: None,
             });
         }
     }

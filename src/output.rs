@@ -5,7 +5,7 @@
 use crate::{Finding, Location, Severity};
 
 /// The version of the JSON output envelope (`schema_version`).
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Minimum finding severity that fails the run (maps to exit code 1).
 #[non_exhaustive]
@@ -184,7 +184,7 @@ pub fn render_errors(reports: &[FileReport]) -> String {
     out
 }
 
-/// Render `reports` as the versioned JSON envelope (`schema_version` 1).
+/// Render `reports` as the versioned JSON envelope (`schema_version` 2).
 ///
 /// # Errors
 /// Returns a message if serialization fails.
@@ -345,7 +345,7 @@ mod tests {
         )];
         let s = render_json(&reports).unwrap();
         let v: serde_json::Value = serde_json::from_str(&s).unwrap();
-        assert_eq!(v["schema_version"], 1);
+        assert_eq!(v["schema_version"], 2);
         assert_eq!(v["files"][0]["file"], "<stdin>");
         assert_eq!(
             v["files"][0]["findings"][0]["rule_id"],
