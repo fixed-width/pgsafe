@@ -94,10 +94,14 @@ function para(cls: string, text: string): HTMLParagraphElement {
 }
 
 function render(env: Envelope): void {
-  const file = env.files?.[0];
   resultsEl.replaceChildren();
-  if (env.error || file?.error) {
-    resultsEl.append(para("status", `Parse error: ${env.error ?? file?.error}`));
+  if ("error" in env) {
+    resultsEl.append(para("status", `pgsafe error: ${env.error}`));
+    return;
+  }
+  const file = env.files[0];
+  if (file?.error) {
+    resultsEl.append(para("status", `Parse error: ${file.error}`));
     return;
   }
   const findings = file?.findings ?? [];
@@ -145,6 +149,7 @@ function run(): void {
   try {
     render(lint(text, { inTransaction: intx.checked }));
   } catch (e) {
+    console.error(e);
     resultsEl.replaceChildren(para("status", `Linter error: ${String(e)}`));
   }
 }
@@ -172,11 +177,16 @@ examplesSel.addEventListener("change", () => {
 
 byId("permalink").addEventListener("click", async () => {
   writeHash({ sql: view.state.doc.toString(), inTransaction: intx.checked });
-  await navigator.clipboard.writeText(location.href);
   const b = byId("permalink");
   const t = b.textContent;
-  b.textContent = "Copied!";
-  setTimeout(() => (b.textContent = t), 1200);
+  try {
+    await navigator.clipboard.writeText(location.href);
+    b.textContent = "Copied!";
+  } catch {
+    // clipboard can be blocked (permission, no focus, insecure context)
+    b.textContent = "Copy from the address bar";
+  }
+  setTimeout(() => (b.textContent = t), 1500);
 });
 
 loadLinter()

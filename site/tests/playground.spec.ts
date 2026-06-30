@@ -34,3 +34,34 @@ test('a pgsafe:ignore directive marks the finding suppressed', async ({ page }) 
   await expect(suppressed).toBeVisible();
   await expect(suppressed.locator('.ignored')).toBeVisible();
 });
+
+test('invalid SQL renders a parse error', async ({ page }) => {
+  await page.goto('/playground/');
+  await expect(page.locator('.finding').first()).toBeVisible({ timeout: 20_000 });
+  await page.locator('.cm-content').click();
+  await page.keyboard.press('ControlOrMeta+A');
+  await page.keyboard.type('this is not valid sql;');
+  await expect(page.locator('#results')).toContainText('Parse error');
+  await expect(page.locator('.finding')).toHaveCount(0);
+});
+
+test('a permalink hash restores the editor and lints it', async ({ page }) => {
+  // Same base64 contract the rule pages use for their "Try it" deep link.
+  const hash = Buffer.from(
+    JSON.stringify({ sql: 'CREATE INDEX i ON t (c);', inTransaction: false }),
+  ).toString('base64');
+  await page.goto(`/playground/#${hash}`);
+  await expect(page.locator('.cm-content')).toContainText('CREATE INDEX i ON t (c)');
+  await expect(
+    page.locator('.finding', { hasText: 'add-index-non-concurrent' }),
+  ).toBeVisible({ timeout: 20_000 });
+});
+
+test('fail-on toggles the gate verdict', async ({ page }) => {
+  await page.goto('/playground/');
+  await expect(page.locator('.finding').first()).toBeVisible({ timeout: 20_000 });
+  // Seeded migration trips a warning (require-timeout) and an error.
+  await expect(page.locator('.gate')).toContainText('would fail');
+  await page.selectOption('#opt-failon', 'never');
+  await expect(page.locator('.gate')).toContainText('would pass');
+});

@@ -3,6 +3,8 @@ on:
   push:
     branches: [master]
     paths: ["site/**", "wasm/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/site.yml"]
+  pull_request:
+    paths: ["site/**", "wasm/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/site.yml"]
   workflow_dispatch:
 
 permissions:
@@ -12,7 +14,7 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -61,6 +63,8 @@ jobs:
 
   deploy:
     needs: build
+    # PRs build (as a gate) but only a push to master deploys.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

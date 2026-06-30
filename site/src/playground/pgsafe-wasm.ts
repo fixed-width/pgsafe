@@ -17,17 +17,21 @@ export interface FileReport {
   findings: Finding[];
   error?: string;
 }
-export interface Envelope {
-  schema_version: number;
-  files: FileReport[];
-  error?: string;
-}
+/** The wasm output is one of two disjoint shapes: a success envelope, or the
+ *  shim's `{error}` object (bad request / render failure). */
+export type Envelope =
+  | { schema_version: number; files: FileReport[] }
+  | { error: string };
 
 export type Lint = (sql: string, opts: { inTransaction: boolean }) => Envelope;
 
 /** Fetch + compile the module once; return a synchronous `lint`. */
 export async function loadLinter(url = "/pgsafe.wasm"): Promise<Lint> {
-  const bytes = await (await fetch(url)).arrayBuffer();
+  const res = await fetch(url);
+  // fetch doesn't reject on 404/500 — guard so a missing wasm doesn't surface
+  // as a confusing WebAssembly CompileError on the error page's HTML.
+  if (!res.ok) throw new Error(`failed to fetch ${url}: ${res.status} ${res.statusText}`);
+  const bytes = await res.arrayBuffer();
   // Legacy-EH module — supported in current Chrome/Firefox/Safari (and Node V8).
   const wasmModule = await WebAssembly.compile(bytes);
 
@@ -54,7 +58,13 @@ export async function loadLinter(url = "/pgsafe.wasm"): Promise<Lint> {
       // A WASI command calls proc_exit on the way out; the shim throws that as
       // WASIProcExit even on a clean exit. Anything else is a real failure.
       if (!(e instanceof WASIProcExit)) throw e;
+      if (e.code !== 0) {
+        const err = new TextDecoder().decode(stderr.data).trim();
+        throw new Error(`linter exited with code ${e.code}${err ? `: ${err}` : ""}`);
+      }
     }
-    return JSON.parse(new TextDecoder().decode(stdout.data)) as Envelope;
+    const out = new TextDecoder().decode(stdout.data);
+    if (!out) throw new Error("linter produced no output");
+    return JSON.parse(out) as Envelope;
   };
 }
