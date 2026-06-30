@@ -126,6 +126,11 @@ function render(env: Envelope): void {
     const link = document.createElement("a");
     link.href = `/rules/${encodeURIComponent(f.rule_id)}/`;
     link.textContent = f.rule_id;
+    // Open the rule reference in a new tab — keep the user's migration + findings
+    // in the playground while they read.
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.title = "Open the rule reference in a new tab";
     head.append(sev, link);
     if (f.suppression) {
       const tag = document.createElement("span");

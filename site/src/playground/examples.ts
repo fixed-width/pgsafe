@@ -19,6 +19,14 @@ export const EXAMPLES: Example[] = [
     sql: "CREATE INDEX CONCURRENTLY idx_users_email ON users (email);",
   },
   {
+    id: "ignore-directive",
+    label: "Ignoring a finding (pgsafe:ignore)",
+    sql: [
+      "-- pgsafe:ignore add-index-non-concurrent  built in a maintenance window",
+      "CREATE INDEX idx_users_email ON users (email);",
+    ].join("\n"),
+  },
+  {
     id: "add-not-null",
     label: "Add a NOT NULL column (unsafe)",
     sql: "ALTER TABLE users ADD COLUMN status text NOT NULL;",
