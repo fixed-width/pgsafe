@@ -143,4 +143,42 @@ mod tests {
             Severity::Error
         );
     }
+
+    #[test]
+    fn not_valid_check_without_validate_is_error() {
+        // ADD CHECK ... NOT VALID with no following VALIDATE does not prepare the child;
+        // ATTACH still runs the full validation scan -> Error. (The primary anti-pattern.)
+        let sql = format!(
+            "ALTER TABLE child ADD CONSTRAINT cc CHECK (id >= 0 AND id < 100) NOT VALID; {ATTACH};"
+        );
+        assert_eq!(attach_finding(findings(&sql)).severity, Severity::Error);
+    }
+
+    #[test]
+    fn validate_on_other_table_does_not_lift_escalation() {
+        // The VALIDATE targets a different table, so child's NOT VALID check stays unvalidated -> Error.
+        let sql = format!(
+            "ALTER TABLE child ADD CONSTRAINT cc CHECK (id >= 0 AND id < 100) NOT VALID; \
+             ALTER TABLE other VALIDATE CONSTRAINT cc; {ATTACH};"
+        );
+        assert_eq!(attach_finding(findings(&sql)).severity, Severity::Error);
+    }
+
+    #[test]
+    fn escalation_is_per_attach_selective() {
+        // Two ATTACHes in one migration: pre-existing child_a escalates (Error); same-migration
+        // populated child_b stays Warning. Escalation is per-statement, not all-or-nothing.
+        let sql = "CREATE TABLE child_b (id int); INSERT INTO child_b VALUES (1); \
+                   ALTER TABLE pa ATTACH PARTITION child_a FOR VALUES FROM (0) TO (100); \
+                   ALTER TABLE pb ATTACH PARTITION child_b FOR VALUES FROM (100) TO (200);";
+        let fs = findings(sql);
+        let sev = |child: &str| {
+            fs.iter()
+                .find(|f| f.rule_id == "attach-partition" && f.snippet.contains(child))
+                .unwrap_or_else(|| panic!("no attach finding for {child}"))
+                .severity
+        };
+        assert_eq!(sev("child_a"), Severity::Error);
+        assert_eq!(sev("child_b"), Severity::Warning);
+    }
 }

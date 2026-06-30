@@ -91,8 +91,9 @@ fn attach_partition_child(node: &NodeEnum) -> Option<String> {
 
 /// For an `ALTER TABLE T ADD CONSTRAINT … CHECK (…)`, returns `(key of T, immediately_valid)`.
 /// `immediately_valid` is `false` for `… NOT VALID` (the constraint is recorded but not enforced
-/// until a later `VALIDATE CONSTRAINT`), mirroring `Constraint.skip_validation`. `None` for any
-/// other node, a non-`ALTER TABLE`, or a non-CHECK constraint.
+/// until a later `VALIDATE CONSTRAINT`), the complement of `Constraint.skip_validation`
+/// (`immediately_valid == !skip_validation`). `None` for any other node, a non-`ALTER TABLE`, or
+/// a non-CHECK constraint.
 fn added_check_constraint(node: &NodeEnum) -> Option<(String, bool)> {
     let NodeEnum::AlterTableStmt(a) = node else {
         return None;
@@ -133,8 +134,10 @@ fn validated_constraint_table(node: &NodeEnum) -> Option<String> {
 /// Statement indices whose `attach-partition` finding should be escalated from `Warning` to
 /// `Error`. A statement qualifies when it is an `ATTACH PARTITION` whose child was **not** created
 /// earlier in this same migration **and** has **no** CHECK constraint prepared on it earlier in the
-/// migration — either a plain `ADD … CHECK`, or an `ADD … CHECK … NOT VALID` later completed by a
-/// `VALIDATE CONSTRAINT`. Such a child may be a pre-existing, live table, so the validation scan
+/// migration — either a plain `ADD … CHECK`, or an `ADD … CHECK … NOT VALID` later followed by a
+/// `VALIDATE CONSTRAINT` on that table (matched name-agnostically, any constraint type — so an
+/// unrelated VALIDATE can also lift escalation; this errs toward not escalating). Such a child may
+/// be a pre-existing, live table, so the validation scan
 /// blocks it under ACCESS EXCLUSIVE for the scan's duration. The CHECK match is name-agnostic
 /// per-child and does not verify the predicate implies the partition bound (it errs toward not
 /// escalating — never toward silence).
@@ -148,7 +151,9 @@ pub(crate) fn attach_escalation_indices(stmts: &[RawStmt]) -> BTreeSet<usize> {
             continue;
         };
         // Decide using state from strictly-earlier statements; an ATTACH statement never also
-        // creates a table or adds/validates a constraint, so the order within the body is moot.
+        // creates a table or adds/validates a constraint, so none of the state-accumulation
+        // branches below can fire on the same iteration — their order in this loop body is
+        // irrelevant.
         if let Some(child) = attach_partition_child(node) {
             if !created.contains(&child) && !check_prepared.contains(&child) {
                 escalate.insert(i);
