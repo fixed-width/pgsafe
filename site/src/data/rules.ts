@@ -477,9 +477,9 @@ export const RULES: Record<string, RuleDoc> = {
     severity: "warning",
     category: "Locking & rewrites",
     summary:
-      "`ATTACH PARTITION` locks and scans the table being attached to validate the partition bound.",
+      "`ATTACH PARTITION` locks and scans the table being attached to validate the partition bound — an error when that table pre-exists (possibly live), a warning when it is built in the same migration.",
     whyUnsafe:
-      "`ATTACH PARTITION` takes an `ACCESS EXCLUSIVE` lock on the table being attached and scans it to validate the partition bound (the parent stays available under `SHARE UPDATE EXCLUSIVE`), so the table being attached is unavailable for the scan's duration.",
+      "`ATTACH PARTITION` takes an `ACCESS EXCLUSIVE` lock on the table being attached and scans it to validate the partition bound (the parent stays available under `SHARE UPDATE EXCLUSIVE`), so the table being attached is unavailable for the scan's duration. pgsafe reports this as an **error** when the attached table is not created in the same migration and has no matching `CHECK` prepared on it — it may be a pre-existing, live table that the scan blocks — and as a **warning** when the child is built in the same migration (not yet in service) or a matching `CHECK` is validated before the `ATTACH`.",
     safeRewrite:
       "Add a `CHECK` constraint on the child matching the partition bound and validate it separately first (`ADD CONSTRAINT ... CHECK (...) NOT VALID`, then `VALIDATE CONSTRAINT`); `ATTACH` then skips the scan and the lock is brief.",
     example: {
