@@ -3,8 +3,13 @@ on:
   push:
     branches: [master]
     paths: ["site/**", "wasm/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/site.yml"]
+  # No paths filter on PRs: `build` is a REQUIRED status check, and a path-filtered required check
+  # never reports on a PR that doesn't touch those paths, leaving the PR permanently "expected"/
+  # blocked (a release.yml- or README-only PR can't merge). So `build` runs on every PR — but the
+  # heavy wasm/site steps are gated on the `gate` step below, so an unrelated PR finishes the job in
+  # seconds without paying the build cost while still reporting the required check. Push stays
+  # path-filtered so deploys only fire on real site changes.
   pull_request:
-    paths: ["site/**", "wasm/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/site.yml"]
   workflow_dispatch:
 
 permissions:
@@ -24,40 +29,83 @@ jobs:
         working-directory: site
     steps:
       - uses: actions/checkout@v4
+
+      # Decide whether the heavy build actually needs to run. Non-PR events (push is already
+      # path-filtered; workflow_dispatch is explicit) always build. On a PR, build only when a
+      # site/wasm/linter file changed — determined from the PR's file list via the API, which works
+      # with the default shallow checkout. The job always completes either way, so the required
+      # `build` check always reports. NOTE: every heavy step below is gated on `gate.outputs.run` —
+      # keep that guard on any step you add here, or it will run on every unrelated PR.
+      - name: Gate — does the site build need to run?
+        id: gate
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "non-PR event ($EVENT) — building"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(gh api --paginate "repos/$REPO/pulls/$PR/files" -q '.[].filename')"
+          if printf '%s\n' "$changed" \
+              | grep -qE '^(site/|wasm/|src/|Cargo\.toml$|Cargo\.lock$|\.github/workflows/site\.yml$)'; then
+            echo "site-relevant files changed — building"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no site/wasm/linter files changed — skipping the heavy build" >> "$GITHUB_STEP_SUMMARY"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: actions/setup-node@v4
+        if: steps.gate.outputs.run == 'true'
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - run: npm ci
+      - if: steps.gate.outputs.run == 'true'
+        run: npm ci
       - name: Install Rust wasm target
+        if: steps.gate.outputs.run == 'true'
         working-directory: .
         run: rustup target add wasm32-wasip1
       - name: Cache cargo + wasm target
+        if: steps.gate.outputs.run == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "wasm"
       - name: Cache wasi-sdk
         id: wasi-sdk
+        if: steps.gate.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: ~/wasi-sdk-33.0-x86_64-linux
           key: wasi-sdk-33
       - name: Install wasi-sdk
-        if: steps.wasi-sdk.outputs.cache-hit != 'true'
+        if: steps.gate.outputs.run == 'true' && steps.wasi-sdk.outputs.cache-hit != 'true'
         working-directory: .
         run: |
           curl -fL -o /tmp/wasi-sdk.tar.gz \
             https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-x86_64-linux.tar.gz
           tar -xzf /tmp/wasi-sdk.tar.gz -C "$HOME"
       - name: Build the playground wasm
+        if: steps.gate.outputs.run == 'true'
         working-directory: .
         run: WASI_SDK_PATH="$HOME/wasi-sdk-33.0-x86_64-linux" wasm/build-web.sh
-      - run: npx astro check
-      - run: npx playwright install --with-deps chromium
-      - run: npm test
-      - run: npm run build
+      - if: steps.gate.outputs.run == 'true'
+        run: npx astro check
+      - if: steps.gate.outputs.run == 'true'
+        run: npx playwright install --with-deps chromium
+      - if: steps.gate.outputs.run == 'true'
+        run: npm test
+      - if: steps.gate.outputs.run == 'true'
+        run: npm run build
       - uses: actions/upload-pages-artifact@v3
+        if: steps.gate.outputs.run == 'true'
         with:
           path: site/dist
 
