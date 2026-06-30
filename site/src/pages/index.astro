@@ -1,0 +1,105 @@
+---
+import Base from "../layouts/Base.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+
+const title = "pgsafe — catch unsafe PostgreSQL migrations before they ship";
+const description =
+  "pgsafe is a static linter that flags PostgreSQL schema migrations likely to lock or break production — no database connection required.";
+
+// A representative finding, shown in the hero terminal.
+const demo = [
+  { sev: "error", id: "add-index-non-concurrent", text: "CREATE INDEX without CONCURRENTLY blocks writes for the whole build." },
+  { sev: "warning", id: "require-timeout", text: "Lock-taking statement with no lock_timeout can pile up the lock queue." },
+];
+
+const features = [
+  { h: "No database needed", p: "Parses SQL with PostgreSQL's real parser. No connection, no network, no credentials." },
+  { h: "Catches lock & break hazards", p: "Flags rewrites, blocking index builds, unvalidated constraints, and changes that break running app code." },
+  { h: "Safe-rewrite guidance", p: "Every finding explains the hazard and the safe way to make the same change." },
+  { h: "CI-ready", p: "Machine-readable JSON, exit codes, and a GitHub Action so a PR fails on an unsafe migration." },
+];
+---
+<Base title={title} description={description}>
+  <Nav />
+  <main class="container">
+    <section class="hero">
+      <h1>Ship Postgres migrations <span class="accent">without fear.</span></h1>
+      <p class="lede">{description}</p>
+      <div class="cta">
+        <a class="btn primary" href="/playground/">Try it in your browser</a>
+        <a class="btn" href="/docs/getting-started/">Get started</a>
+      </div>
+      <div class="term" role="img" aria-label="Example pgsafe output">
+        <div class="term-bar"><span></span><span></span><span></span></div>
+        <pre><code><span class="prompt"><span class="dollar">$</span> pgsafe migration.sql</span>
+{demo.map((f) => (
+  <span><span class={`sev-${f.sev}`}>{f.sev}</span>  <span class="rid">{f.id}</span>{"  "}{f.text}
+</span>
+))}</code></pre>
+      </div>
+    </section>
+
+    <section id="features" class="features">
+      <p class="eyebrow">What it does</p>
+      <ul class="capabilities">
+        {features.map((f) => (
+          <li>
+            <span class="marker" aria-hidden="true">+</span>
+            <div>
+              <h3>{f.h}</h3>
+              <p>{f.p}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+
+    <section id="install" class="install">
+      <p class="eyebrow">Install</p>
+      <p>Run it in CI with the GitHub Action:</p>
+      <pre><code>{`- uses: fixed-width/pgsafe@v0.8.5
+  with:
+    files: "db/migrate/*.sql"`}</code></pre>
+      <p>Or grab a prebuilt binary from the <a href="https://github.com/fixed-width/pgsafe/releases/latest" rel="noopener noreferrer">latest release</a> (static Linux and macOS builds).</p>
+    </section>
+  </main>
+  <Footer />
+</Base>
+
+<style>
+  .hero { padding: 4rem 0 3.5rem; }
+  h1 { font-size: clamp(2rem, 5vw, 3.25rem); font-weight: 700; letter-spacing: -0.02em; line-height: 1.08; margin: 0 0 1rem; }
+  /* Keep "without fear." together so greedy wrapping breaks after "migrations"
+     (subject on line 1, the amber payoff on line 2) and "fear." never orphans. */
+  .accent { color: var(--accent); white-space: nowrap; }
+  .lede { color: var(--fg-dim); font-size: 1.1rem; max-width: 46rem; }
+  .cta { display: flex; gap: 0.75rem; margin: 1.75rem 0 2.5rem; flex-wrap: wrap; }
+  .btn { border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 1.1rem; color: var(--fg); }
+  .btn:hover { border-color: var(--accent); text-decoration: none; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
+  .term { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-elev); }
+  .term-bar { display: flex; gap: 0.4rem; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); }
+  .term-bar span { width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--border); }
+  .term pre { border: 0; margin: 0; border-radius: 0; font-size: 0.85rem; }
+  .prompt { color: var(--fg-dim); }
+  .prompt .dollar { color: var(--accent); }
+  .rid { color: var(--accent); }
+
+  /* Section label — a small amber eyebrow, not a heading. */
+  .eyebrow { color: var(--accent); font-size: 0.78rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 1.25rem; }
+
+  /* Capabilities: terminal-diagnostic rows led by the brand's amber plus — no boxes. */
+  .features { padding: 2.5rem 0; }
+  .capabilities { list-style: none; margin: 0; padding: 0; }
+  .capabilities li { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 1rem; padding: 1.1rem 0; border-top: 1px solid var(--border); }
+  .capabilities li:last-child { border-bottom: 1px solid var(--border); }
+  .marker { color: var(--accent); font-weight: 700; font-size: 1.15rem; line-height: 1.5; }
+  .capabilities h3 { margin: 0 0 0.3rem; color: var(--fg); font-size: 1rem; font-weight: 600; }
+  .capabilities p { margin: 0; color: var(--fg-dim); font-size: 0.95rem; max-width: 44rem; }
+
+  .install { padding: 2.5rem 0; }
+  .install p { color: var(--fg-dim); }
+  .install a { color: var(--accent); }
+</style>

@@ -1,0 +1,74 @@
+name: site
+on:
+  push:
+    branches: [master]
+    paths: ["site/**", "wasm/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/site.yml"]
+  pull_request:
+    paths: ["site/**", "wasm/**", "src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/site.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+      - name: Install Rust wasm target
+        working-directory: .
+        run: rustup target add wasm32-wasip1
+      - name: Cache cargo + wasm target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "wasm"
+      - name: Cache wasi-sdk
+        id: wasi-sdk
+        uses: actions/cache@v4
+        with:
+          path: ~/wasi-sdk-33.0-x86_64-linux
+          key: wasi-sdk-33
+      - name: Install wasi-sdk
+        if: steps.wasi-sdk.outputs.cache-hit != 'true'
+        working-directory: .
+        run: |
+          curl -fL -o /tmp/wasi-sdk.tar.gz \
+            https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-x86_64-linux.tar.gz
+          tar -xzf /tmp/wasi-sdk.tar.gz -C "$HOME"
+      - name: Build the playground wasm
+        working-directory: .
+        run: WASI_SDK_PATH="$HOME/wasi-sdk-33.0-x86_64-linux" wasm/build-web.sh
+      - run: npx astro check
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
+  deploy:
+    needs: build
+    # PRs build (as a gate) but only a push to master deploys.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

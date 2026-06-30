@@ -1,0 +1,83 @@
+---
+import Base from "../../layouts/Base.astro";
+import Nav from "../../components/Nav.astro";
+import Footer from "../../components/Footer.astro";
+import SeverityBadge from "../../components/SeverityBadge.astro";
+import { RULES, RULE_LIST } from "../../data/rules";
+
+export function getStaticPaths() {
+  return RULE_LIST.map((r) => ({ params: { id: r.id }, props: { rule: r } }));
+}
+const { rule } = Astro.props;
+const title = `${rule.id} — pgsafe rule`;
+const description = rule.summary;
+const related = (rule.related ?? []).map((id) => RULES[id]).filter(Boolean);
+// Deep link into the playground with the unsafe example preloaded. The base64
+// of {sql, inTransaction} matches what playground/permalink.ts decodes.
+const tryHref = rule.example
+  ? `/playground/#${Buffer.from(JSON.stringify({ sql: rule.example.unsafe, inTransaction: false })).toString("base64")}`
+  : null;
+---
+<Base title={title} description={description}>
+  <Nav />
+  <main class="container rule-page">
+    <p class="back"><a href="/rules/">← all rules</a></p>
+    <div class="head">
+      <h1><code>{rule.id}</code></h1>
+      <SeverityBadge severity={rule.severity} />
+    </div>
+    <p class="title">{rule.title}</p>
+
+    <h2>Why it's unsafe</h2>
+    <p>{rule.whyUnsafe}</p>
+
+    <h2>Safe rewrite</h2>
+    <p>{rule.safeRewrite}</p>
+
+    {rule.example && (
+      <>
+        <div class="ex-head">
+          <h2>Example</h2>
+          {tryHref && <a class="try" href={tryHref}>Try it in the playground →</a>}
+        </div>
+        <p class="lbl unsafe-lbl">Unsafe</p>
+        <pre><code>{rule.example.unsafe}</code></pre>
+        {rule.example.safe && (
+          <>
+            <p class="lbl safe-lbl">Safe</p>
+            <pre><code>{rule.example.safe}</code></pre>
+          </>
+        )}
+      </>
+    )}
+
+    {related.length > 0 && (
+      <>
+        <h2>Related</h2>
+        <ul class="related">
+          {related.map((r) => (
+            <li><a href={`/rules/${r.id}/`}><code>{r.id}</code></a> — {r.summary}</li>
+          ))}
+        </ul>
+      </>
+    )}
+  </main>
+  <Footer />
+</Base>
+<style>
+  .rule-page { max-width: 50rem; }
+  .back { margin-top: 1.5rem; }
+  .back a { color: var(--fg-dim); }
+  .head { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.5rem; }
+  h1 code { color: var(--accent); font-size: 1.5rem; }
+  .title { color: var(--fg-dim); margin-top: -0.5rem; }
+  h2 { font-size: 1.1rem; margin-top: 2rem; }
+  .ex-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+  .try { font-size: 0.9rem; }
+  .lbl { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.3rem; }
+  .unsafe-lbl { color: var(--error); }
+  .safe-lbl { color: var(--safe); }
+  .related { list-style: none; padding: 0; }
+  .related li { padding: 0.3rem 0; color: var(--fg-dim); }
+  .related code { color: var(--accent); }
+</style>

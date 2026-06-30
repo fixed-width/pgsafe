@@ -1,0 +1,3 @@
+# Run wasm32-wasip1 binaries under wasmtime, so `cargo run --target wasm32-wasip1` works.
+[target.wasm32-wasip1]
+runner = "wasmtime"

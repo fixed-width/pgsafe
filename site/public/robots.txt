@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://pgsafe.fixedwidth.tech/sitemap-index.xml

@@ -1,0 +1,23 @@
+[package]
+name = "pgsafe-wasm"
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+# lib (for host tests) + bin (the WASI command). main.rs uses the lib.
+[lib]
+name = "pgsafe_wasm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "pgsafe-wasm"
+path = "src/main.rs"
+
+[dependencies]
+pgsafe = { path = "..", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints.rust]
+unsafe_code = "forbid"

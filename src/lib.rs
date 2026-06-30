@@ -254,6 +254,14 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids
 }
 
+/// Every lint-rule id this build can emit — the registered AST rules plus the
+/// engine-synthesized/policy rules — in stable order. The public rule catalog,
+/// e.g. for `pgsafe --list-rules` and external tooling.
+#[must_use]
+pub fn list_rule_ids() -> Vec<&'static str> {
+    known_rule_ids()
+}
+
 /// Push one engine-synthesized rule's hits as [`Finding`]s. Each hit is a `(statement_index, message,
 /// guidance)` tuple — the statement index sources the location and snippet, and the message/guidance
 /// are this finding's own. `rule_id` and `severity` are constant for the rule. Centralizes the

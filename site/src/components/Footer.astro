@@ -1,0 +1,27 @@
+---
+const repo = "https://github.com/fixed-width/pgsafe";
+---
+<footer class="ft">
+  <div class="container ft-row">
+    <a class="fw" href="https://fixedwidth.tech" rel="noopener noreferrer" aria-label="A Fixed Width project — fixedwidth.tech">
+      <svg class="fw-mark" viewBox="0 0 64 64" aria-hidden="true">
+        <path d="M16,14 H26 V19 H21 V45 H26 V50 H16 Z" fill="currentColor" />
+        <path d="M48,14 H38 V19 H43 V45 H38 V50 H48 Z" fill="currentColor" />
+        <path class="plus" d="M30,25 H34 V30 H39 V34 H34 V39 H30 V34 H25 V30 H30 Z" />
+      </svg>
+      <span>A <strong>Fixed Width</strong> project</span>
+    </a>
+    <span class="meta">Apache-2.0 · <a href={repo} rel="noopener noreferrer">source</a></span>
+  </div>
+</footer>
+<style>
+  .ft { border-top: 1px solid var(--border); margin-top: 5rem; color: var(--fg-dim); font-size: 0.85rem; }
+  .ft-row { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; justify-content: space-between; align-items: center; padding-top: 1.75rem; padding-bottom: 2.25rem; }
+  .fw { display: inline-flex; align-items: center; gap: 0.55rem; color: var(--fg-dim); }
+  .fw:hover { color: var(--fg); text-decoration: none; }
+  .fw-mark { width: 1.25rem; height: 1.25rem; flex: none; }
+  .fw-mark .plus { fill: var(--accent); }
+  .fw strong { color: var(--fg); font-weight: 600; }
+  .meta a { color: var(--fg-dim); }
+  .meta a:hover { color: var(--accent); }
+</style>

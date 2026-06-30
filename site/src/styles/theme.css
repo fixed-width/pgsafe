@@ -1,0 +1,46 @@
+:root {
+  /* Fixed Width family: amber is the shared accent thread, set on a navy-black
+     ground (the brand ink #15202B is its lighter cousin — amber-on-navy is the
+     logo's own pairing). Green is reserved for the semantic "safe" state. */
+  --bg: #0a0c10;
+  --bg-elev: #11161d;
+  --border: #1d2430;
+  --fg: #f2f5f7;      /* near-white primary text (Fixed Width dark surface) */
+  --fg-dim: #9aa7b4;  /* muted secondary text — ~8:1 on the ground, comfortably readable */
+  --accent: #ff9f1c;        /* Fixed Width amber — brand thread, links, interactive */
+  --accent-ink: #2a1700;    /* near-black text on an amber button */
+  --accent-strong: #ffb84d; /* hover/active amber */
+  --safe: #3fb950;          /* semantic: the safe rewrite */
+  --error: #f85149;         /* severity: error */
+  --warning: #e3b341;       /* severity: warning (yellow-gold, distinct from amber) */
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --max: 72rem;
+}
+* { box-sizing: border-box; }
+html { color-scheme: dark; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 16px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+.container { max-width: var(--max); margin: 0 auto; padding: 0 1.25rem; }
+code, pre { font-family: var(--mono); }
+pre {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 1rem;
+  overflow-x: auto;
+}
+/* Unify Shiki-highlighted code blocks (docs markdown) with the hand-built ones
+   by forcing our surface; the theme keeps its syntax colors, set on this bg. */
+.astro-code { background: var(--bg-elev) !important; }
+.sev-error { color: var(--error); }
+.sev-warning { color: var(--warning); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
