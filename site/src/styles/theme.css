@@ -2,11 +2,11 @@
   /* Fixed Width family: amber is the shared accent thread, set on a navy-black
      ground (the brand ink #15202B is its lighter cousin — amber-on-navy is the
      logo's own pairing). Green is reserved for the semantic "safe" state. */
-  --bg: #0e1117;
-  --bg-elev: #161b22;
-  --border: #243040;
-  --fg: #d7dde4;
-  --fg-dim: #8b97a6;
+  --bg: #0a0c10;
+  --bg-elev: #11161d;
+  --border: #1d2430;
+  --fg: #f2f5f7;      /* near-white primary text (Fixed Width dark surface) */
+  --fg-dim: #9aa7b4;  /* muted secondary text — ~8:1 on the ground, comfortably readable */
   --accent: #ff9f1c;        /* Fixed Width amber — brand thread, links, interactive */
   --accent-ink: #2a1700;    /* near-black text on an amber button */
   --accent-strong: #ffb84d; /* hover/active amber */
