@@ -437,6 +437,9 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
         );
     }
     let (mut findings, new_table_dropped) = newtable::drop_new_table_findings(stmts, findings);
+    // Per-hit severity: ATTACH PARTITION of a pre-existing child (not created/CHECK-prepared in
+    // this migration) is error-grade. Runs before `severity_overrides` so explicit config wins.
+    newtable::escalate_pre_existing_attach(stmts, &mut findings);
     if !options.disabled_rules.contains(txn::ID) {
         push_synthesized(
             &mut findings,

@@ -5,10 +5,10 @@
 
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::{AlterTableType, ObjectType, RangeVar, RawStmt};
+use pg_query::protobuf::{AlterTableType, ConstrType, ObjectType, RangeVar, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::Finding;
+use crate::{Finding, Severity};
 
 /// `RangeVar.relpersistence` for a temporary relation (libpg_query's `RELPERSISTENCE_TEMP`).
 const RELPERSISTENCE_TEMP: &str = "t";
@@ -87,6 +87,117 @@ fn attach_partition_child(node: &NodeEnum) -> Option<String> {
             _ => None,
         }
     })
+}
+
+/// For an `ALTER TABLE T ADD CONSTRAINT … CHECK (…)`, returns `(key of T, immediately_valid)`.
+/// `immediately_valid` is `false` for `… NOT VALID` (the constraint is recorded but not enforced
+/// until a later `VALIDATE CONSTRAINT`), the complement of `Constraint.skip_validation`
+/// (`immediately_valid == !skip_validation`). `None` for any other node, a non-`ALTER TABLE`, or
+/// a non-CHECK constraint.
+fn added_check_constraint(node: &NodeEnum) -> Option<(String, bool)> {
+    let NodeEnum::AlterTableStmt(a) = node else {
+        return None;
+    };
+    let key = a.relation.as_ref().map(rangevar_key)?;
+    a.cmds.iter().find_map(|n| {
+        let NodeEnum::AlterTableCmd(cmd) = n.node.as_ref()? else {
+            return None;
+        };
+        if AlterTableType::try_from(cmd.subtype) != Ok(AlterTableType::AtAddConstraint) {
+            return None;
+        }
+        let NodeEnum::Constraint(con) = cmd.def.as_ref()?.node.as_ref()? else {
+            return None;
+        };
+        if ConstrType::try_from(con.contype) != Ok(ConstrType::ConstrCheck) {
+            return None;
+        }
+        Some((key.clone(), !con.skip_validation))
+    })
+}
+
+/// For an `ALTER TABLE T VALIDATE CONSTRAINT …`, the key of table `T`. `None` for any other node.
+fn validated_constraint_table(node: &NodeEnum) -> Option<String> {
+    let NodeEnum::AlterTableStmt(a) = node else {
+        return None;
+    };
+    let key = a.relation.as_ref().map(rangevar_key)?;
+    a.cmds.iter().find_map(|n| {
+        let NodeEnum::AlterTableCmd(cmd) = n.node.as_ref()? else {
+            return None;
+        };
+        (AlterTableType::try_from(cmd.subtype) == Ok(AlterTableType::AtValidateConstraint))
+            .then(|| key.clone())
+    })
+}
+
+/// Statement indices whose `attach-partition` finding should be escalated from `Warning` to
+/// `Error`. A statement qualifies when it is an `ATTACH PARTITION` whose child was **not** created
+/// earlier in this same migration **and** has **no** CHECK constraint prepared on it earlier in the
+/// migration — either a plain `ADD … CHECK`, or an `ADD … CHECK … NOT VALID` later followed by a
+/// `VALIDATE CONSTRAINT` on that table (matched name-agnostically, any constraint type — so an
+/// unrelated VALIDATE can also lift escalation; this errs toward not escalating). Such a child may
+/// be a pre-existing, live table, so the validation scan
+/// blocks it under ACCESS EXCLUSIVE for the scan's duration. The CHECK match is name-agnostic
+/// per-child and does not verify the predicate implies the partition bound (it errs toward not
+/// escalating — never toward silence).
+pub(crate) fn attach_escalation_indices(stmts: &[RawStmt]) -> BTreeSet<usize> {
+    let mut created: BTreeSet<String> = BTreeSet::new();
+    let mut check_not_valid: BTreeSet<String> = BTreeSet::new();
+    let mut check_prepared: BTreeSet<String> = BTreeSet::new();
+    let mut escalate: BTreeSet<usize> = BTreeSet::new();
+    for (i, raw) in stmts.iter().enumerate() {
+        let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
+            continue;
+        };
+        // Decide using state from strictly-earlier statements; an ATTACH statement never also
+        // creates a table or adds/validates a constraint, so none of the state-accumulation
+        // branches below can fire on the same iteration — their order in this loop body is
+        // irrelevant.
+        if let Some(child) = attach_partition_child(node) {
+            if !created.contains(&child) && !check_prepared.contains(&child) {
+                escalate.insert(i);
+            }
+        }
+        if let Some(key) = created_table_key(node) {
+            created.insert(key);
+        }
+        if let Some((key, immediately_valid)) = added_check_constraint(node) {
+            if immediately_valid {
+                check_prepared.insert(key);
+            } else {
+                check_not_valid.insert(key);
+            }
+        }
+        if let Some(key) = validated_constraint_table(node) {
+            if check_not_valid.contains(&key) {
+                check_prepared.insert(key);
+            }
+        }
+    }
+    escalate
+}
+
+/// Escalate `attach-partition` findings from `Warning` to `Error` for an `ATTACH PARTITION` of a
+/// child that is neither created nor CHECK-prepared earlier in this migration (see
+/// [`attach_escalation_indices`]). The escalated finding gets one sentence appended explaining why
+/// the pre-existing child makes the operation error-grade. All other findings are untouched.
+/// Runs before user `severity_overrides`, so an explicit override still has the final say.
+pub(crate) fn escalate_pre_existing_attach(stmts: &[RawStmt], findings: &mut [Finding]) {
+    let escalate = attach_escalation_indices(stmts);
+    if escalate.is_empty() {
+        return;
+    }
+    for f in findings.iter_mut() {
+        if f.rule_id == "attach-partition" && escalate.contains(&f.statement_index) {
+            f.severity = Severity::Error;
+            f.message.push_str(
+                " The child table is not created in this migration, so it may already be \
+                 receiving traffic; the validation scan blocks it under ACCESS EXCLUSIVE for the \
+                 scan's duration.",
+            );
+        }
+    }
 }
 
 /// The single table a `DROP TABLE` targets, or `None` for a non-table drop or a multi-table
@@ -205,6 +316,98 @@ mod tests {
             .as_ref()
             .unwrap()
             .clone()
+    }
+
+    fn stmts_of(sql: &str) -> Vec<RawStmt> {
+        pg_query::parse(sql).unwrap().protobuf.stmts
+    }
+
+    #[test]
+    fn added_check_constraint_classifies_validity() {
+        assert_eq!(
+            added_check_constraint(&first_node("ALTER TABLE t ADD CONSTRAINT c CHECK (a > 0)")),
+            Some(("t".to_string(), true)) // plain ADD CHECK is immediately valid
+        );
+        assert_eq!(
+            added_check_constraint(&first_node(
+                "ALTER TABLE t ADD CONSTRAINT c CHECK (a > 0) NOT VALID"
+            )),
+            Some(("t".to_string(), false)) // NOT VALID: not enforced until VALIDATE
+        );
+        // A non-CHECK constraint (FK) is not a CHECK preparation.
+        assert_eq!(
+            added_check_constraint(&first_node(
+                "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (x) REFERENCES p (id)"
+            )),
+            None
+        );
+        assert_eq!(
+            added_check_constraint(&first_node("ALTER TABLE t ADD COLUMN x int")),
+            None
+        );
+    }
+
+    #[test]
+    fn validated_constraint_table_matches_validate() {
+        assert_eq!(
+            validated_constraint_table(&first_node("ALTER TABLE t VALIDATE CONSTRAINT c"))
+                .as_deref(),
+            Some("t")
+        );
+        assert_eq!(
+            validated_constraint_table(&first_node("ALTER TABLE t ADD COLUMN x int")),
+            None
+        );
+    }
+
+    #[test]
+    fn escalates_attach_of_pre_existing_child_without_check() {
+        // Pre-existing child, no CHECK prep -> escalate the single statement (index 0).
+        let idx = attach_escalation_indices(&stmts_of(
+            "ALTER TABLE parent ATTACH PARTITION child FOR VALUES FROM (0) TO (100)",
+        ));
+        assert!(idx.contains(&0));
+    }
+
+    #[test]
+    fn does_not_escalate_same_migration_created_child() {
+        // Child created in this migration -> not yet in service -> no escalation.
+        let idx = attach_escalation_indices(&stmts_of(
+            "CREATE TABLE child (id int); \
+             ALTER TABLE parent ATTACH PARTITION child FOR VALUES FROM (0) TO (100)",
+        ));
+        assert!(idx.is_empty());
+    }
+
+    #[test]
+    fn does_not_escalate_when_not_valid_check_then_validated() {
+        // The documented safe rewrite: ADD CHECK ... NOT VALID, then VALIDATE, then ATTACH.
+        let idx = attach_escalation_indices(&stmts_of(
+            "ALTER TABLE child ADD CONSTRAINT cc CHECK (id >= 0 AND id < 100) NOT VALID; \
+             ALTER TABLE child VALIDATE CONSTRAINT cc; \
+             ALTER TABLE parent ATTACH PARTITION child FOR VALUES FROM (0) TO (100)",
+        ));
+        assert!(idx.is_empty());
+    }
+
+    #[test]
+    fn does_not_escalate_when_plain_check_present() {
+        // A plain (immediately valid) ADD CHECK before the ATTACH also prepares the child.
+        let idx = attach_escalation_indices(&stmts_of(
+            "ALTER TABLE child ADD CONSTRAINT cc CHECK (id >= 0 AND id < 100); \
+             ALTER TABLE parent ATTACH PARTITION child FOR VALUES FROM (0) TO (100)",
+        ));
+        assert!(idx.is_empty());
+    }
+
+    #[test]
+    fn escalates_when_not_valid_check_never_validated() {
+        // ADD CHECK ... NOT VALID without a following VALIDATE does not let ATTACH skip the scan.
+        let idx = attach_escalation_indices(&stmts_of(
+            "ALTER TABLE child ADD CONSTRAINT cc CHECK (id >= 0 AND id < 100) NOT VALID; \
+             ALTER TABLE parent ATTACH PARTITION child FOR VALUES FROM (0) TO (100)",
+        ));
+        assert!(idx.contains(&1));
     }
 
     #[test]
