@@ -337,7 +337,7 @@ fn push_synthesized(
         let fix = draft.as_ref().and_then(|d| {
             let r = crate::fix::resolve(d, sql, g.start, g.end);
             debug_assert!(
-                r.is_some(),
+                r.is_some() || d.may_legitimately_not_resolve(),
                 "rule {rule_id}: fix draft {:?} failed to resolve",
                 d.title
             );
@@ -410,7 +410,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                 let fix = h.fix.as_ref().and_then(|d| {
                     let r = crate::fix::resolve(d, sql, g.start, g.end);
                     debug_assert!(
-                        r.is_some(),
+                        r.is_some() || d.may_legitimately_not_resolve(),
                         "rule {}: fix draft {:?} failed to resolve",
                         rule.id(),
                         d.title

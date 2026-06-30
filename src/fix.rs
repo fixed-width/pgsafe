@@ -38,6 +38,17 @@ pub(crate) struct FixDraft {
     pub edits: Vec<FixDraftEdit>,
 }
 
+impl FixDraft {
+    /// Whether this draft may legitimately resolve to `None` rather than that
+    /// indicating a producer bug. `ReplaceTokenAt` can fail for a quoted or
+    /// schema-qualified type token; keyword/statement/absolute anchors cannot.
+    pub(crate) fn may_legitimately_not_resolve(&self) -> bool {
+        self.edits
+            .iter()
+            .any(|e| matches!(e.anchor, FixAnchor::ReplaceTokenAt(_)))
+    }
+}
+
 /// Resolve a draft against the source. `start`/`end` are the statement's byte
 /// span (`geoms[i].start/end`). Returns `None` if any anchor can't be located,
 /// or if the draft carries no edits (upholding "fix present ⇒ at least one edit").
@@ -285,6 +296,26 @@ mod tests {
             apply(sql, &fix),
             "-- é\nCREATE INDEX CONCURRENTLY i ON t (c);"
         );
+    }
+
+    #[test]
+    fn replace_token_drafts_may_not_resolve() {
+        let d = FixDraft {
+            title: "t",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::ReplaceTokenAt(0),
+                replacement: "x".into(),
+            }],
+        };
+        assert!(d.may_legitimately_not_resolve());
+        let k = FixDraft {
+            title: "t",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::AfterKeyword("INDEX"),
+                replacement: " y".into(),
+            }],
+        };
+        assert!(!k.may_legitimately_not_resolve());
     }
 
     #[test]
