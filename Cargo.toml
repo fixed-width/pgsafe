@@ -1,6 +1,6 @@
 [package]
 name = "pgsafe"
-version = "0.8.5"
+version = "0.8.6"
 edition = "2021"
 description = "Static safety linter for PostgreSQL DDL migrations — catches unsafe schema changes before they lock or break production."
 license = "Apache-2.0"
@@ -10,6 +10,10 @@ categories = ["development-tools", "database"]
 repository = "https://github.com/fixed-width/pgsafe"
 rust-version = "1.80"
 documentation = "https://docs.rs/pgsafe"
+# Ship only what a crate consumer needs. The website, the GitHub Action, CI
+# workflows, and dev scripts live in the repo but have no place in the package.
+# (target/ is gitignore'd and wasm/ is auto-excluded as a nested package.)
+exclude = ["site/", "wasm/", "scripts/", ".github/", "action.yml"]
 
 [dependencies]
 pg_query = "6.1"
