@@ -173,6 +173,46 @@ function appendInline(parent: HTMLElement, text: string): void {
   if (last < text.length) parent.appendChild(document.createTextNode(text.slice(last)));
 }
 
+/** Map a UTF-8 byte offset (what the wasm reports) to a CodeMirror (UTF-16)
+ *  string index. 1:1 for ASCII; correct past multi-byte characters. */
+function byteToChar(text: string, targetByte: number): number {
+  let byte = 0;
+  let i = 0;
+  while (i < text.length && byte < targetByte) {
+    const cp = text.codePointAt(i)!;
+    byte += cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
+    i += cp > 0xffff ? 2 : 1;
+  }
+  return i;
+}
+
+/** Apply a finding's fix to the editor. The edits are non-overlapping and
+ *  ascending (engine contract), so CodeMirror composes them in one transaction;
+ *  the resulting docChanged re-lints. */
+function applyFixToEditor(fix: NonNullable<Finding["fix"]>): void {
+  if (fix.edits.length === 0) {
+    console.error("applyFixToEditor: fix has no edits", fix);
+    return;
+  }
+  const text = view.state.doc.toString();
+  view.dispatch({
+    changes: fix.edits.map((e) => ({
+      from: byteToChar(text, e.start),
+      to: byteToChar(text, e.end),
+      insert: e.replacement,
+    })),
+  });
+}
+
+/** Insert a one-click ignore directive above the finding's statement. The reason
+ *  marks its provenance (and satisfies pgsafe's suppression-missing-reason rule). */
+function ignoreFinding(f: Finding): void {
+  const lineNo = Math.max(1, Math.min(f.location.line, view.state.doc.lines));
+  const from = view.state.doc.line(lineNo).from;
+  const directive = `-- pgsafe:ignore ${f.rule_id}  acknowledged in the pgsafe playground\n`;
+  view.dispatch({ changes: { from, to: from, insert: directive } });
+}
+
 function render(env: Envelope): void {
   // Re-rendering replaces the finding rows, so any hovered row is gone without
   // a mouseleave — clear its stale line highlight before rebuilding.
@@ -191,6 +231,12 @@ function render(env: Envelope): void {
   }
   const findings = file?.findings ?? [];
   setClaimLines(findings);
+  // Capture the doc this render was computed against. Button click handlers
+  // compare view.state.doc to this reference — identical object means the doc
+  // hasn't changed since lint; a different object means a re-lint is pending
+  // and the byte offsets are stale, so we bail rather than splice at the wrong
+  // position or throw a CodeMirror RangeError.
+  const lintedDoc = view.state.doc;
   if (!findings.length) {
     resultsEl.append(para("clean", "✓ No findings — this migration looks safe."));
     return;
@@ -228,7 +274,46 @@ function render(env: Envelope): void {
     const msg = document.createElement("p");
     msg.className = "msg";
     appendInline(msg, f.message);
-    el.append(head, msg, para("loc", loc));
+    if (f.suppression) {
+      el.append(head, msg, para("loc", loc));
+    } else {
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      if (f.fix) {
+        const fixBtn = document.createElement("button");
+        fixBtn.type = "button";
+        fixBtn.className = "fix";
+        fixBtn.textContent = f.fix.title || "Fix";
+        fixBtn.title = "Apply this fix to the migration";
+        const thisFix = f.fix;
+        fixBtn.addEventListener("click", () => {
+          if (view.state.doc !== lintedDoc) return; // doc changed since this lint; a re-lint is pending
+          try {
+            applyFixToEditor(thisFix);
+          } catch (e) {
+            console.error("Fix failed:", e);
+            resultsEl.prepend(para("status", `Could not apply fix: ${String(e)}`));
+          }
+        });
+        actions.append(fixBtn);
+      }
+      const ignoreBtn = document.createElement("button");
+      ignoreBtn.type = "button";
+      ignoreBtn.className = "ignore";
+      ignoreBtn.textContent = "Ignore";
+      ignoreBtn.title = "Insert a pgsafe:ignore directive for this finding";
+      ignoreBtn.addEventListener("click", () => {
+        if (view.state.doc !== lintedDoc) return; // doc changed since this lint; a re-lint is pending
+        try {
+          ignoreFinding(f);
+        } catch (e) {
+          console.error("Ignore failed:", e);
+          resultsEl.prepend(para("status", `Could not ignore finding: ${String(e)}`));
+        }
+      });
+      actions.append(ignoreBtn);
+      el.append(head, msg, para("loc", loc), actions);
+    }
     resultsEl.append(el);
   }
   resultsEl.append(

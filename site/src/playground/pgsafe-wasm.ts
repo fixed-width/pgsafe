@@ -11,6 +11,9 @@ export interface Finding {
   /** Present when an inline `-- pgsafe:ignore <rule>` directive matched this
    *  finding: it's still reported but excluded from the gate. */
   suppression?: { reason: string };
+  /** Present when the finding has a safe, machine-applicable fix (mirrors the
+   *  Rust `Fix`): edits are absolute UTF-8 byte offsets into the submitted SQL. */
+  fix?: { title: string; edits: { start: number; end: number; replacement: string }[] };
 }
 export interface FileReport {
   file: string;

@@ -20,7 +20,7 @@ The `--format json` output is a versioned envelope:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "files": [
     {
       "file": "migration.sql",
@@ -40,6 +40,36 @@ Pipe it into `jq` to filter:
 ```sh
 pgsafe --format json migration.sql | jq '.files[].findings[] | select(.severity == "error")'
 ```
+
+### The `fix` object
+
+Some findings carry an optional `fix` object describing an unambiguous mechanical remediation —
+for example, adding `CONCURRENTLY` to a `CREATE INDEX`. Advisory findings (`warning`-only
+outcomes such as `DROP TABLE` or `RENAME`) never carry one.
+
+```json
+{
+  "rule_id": "add-index-non-concurrent",
+  "severity": "error",
+  "message": "CREATE INDEX without CONCURRENTLY takes an AccessExclusiveLock ...",
+  "fix": {
+    "title": "Add CONCURRENTLY",
+    "edits": [
+      { "start": 12, "end": 12, "replacement": " CONCURRENTLY" }
+    ]
+  }
+}
+```
+
+`start` and `end` are absolute UTF-8 byte offsets into the submitted SQL string.
+`start == end` means a pure insertion (no bytes are removed).
+The `edits` array is in ascending offset order and the ranges never overlap. Because each
+edit's offsets reference the original SQL, a consumer can apply them in reverse (last to
+first) without adjusting any offsets, or apply them in forward order while tracking the
+cumulative length change.
+
+The in-browser playground surfaces a **Fix** button on any finding that includes a `fix` object;
+clicking it rewrites the editor content in place.
 
 ## Severity & gating
 
