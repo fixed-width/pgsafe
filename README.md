@@ -8,12 +8,15 @@ changes likely to lock or break production — no database connection, no networ
 
 ## Install
 
-Download a prebuilt binary from the [latest release](https://github.com/fixed-width/pgsafe/releases/latest)
-(static Linux and macOS), or build from source:
+Install from [crates.io](https://crates.io/crates/pgsafe) with a Rust toolchain:
 
 ```sh
-cargo build --release   # target/release/pgsafe
+cargo install pgsafe
 ```
+
+Or download a prebuilt binary from the [latest release](https://github.com/fixed-width/pgsafe/releases/latest)
+(static Linux and macOS), or build from source with `cargo build --release` (binary at
+`target/release/pgsafe`).
 
 ## Quickstart
 
@@ -26,7 +29,7 @@ pgsafe --list-rules                  # every rule this build checks
 Run it in CI with the [GitHub Action](https://pgsafe.fixedwidth.tech/docs/ci/):
 
 ```yaml
-- uses: fixed-width/pgsafe@v0.8.5
+- uses: fixed-width/pgsafe@v0.8.6
   with:
     files: "db/migrate/*.sql"
 ```
