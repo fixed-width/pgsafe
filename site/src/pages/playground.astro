@@ -1,0 +1,63 @@
+---
+import Base from "../layouts/Base.astro";
+import Nav from "../components/Nav.astro";
+import Footer from "../components/Footer.astro";
+const title = "pgsafe playground — lint PostgreSQL migrations in your browser";
+const description =
+  "Paste a PostgreSQL migration and see pgsafe's findings instantly — the real linter, running in your browser via WebAssembly.";
+---
+<Base title={title} description={description}>
+  <Nav />
+  <main class="container pg">
+    <h1>Playground</h1>
+    <p class="lede">The real pgsafe analyzer, compiled to WebAssembly and running in your browser. Nothing is sent anywhere.</p>
+    <div class="toolbar">
+      <label class="check"><input type="checkbox" id="opt-intx" /> Treat as in a transaction</label>
+      <label>Fail on
+        <select id="opt-failon">
+          <option value="warning">warning</option>
+          <option value="error">error</option>
+          <option value="never">never</option>
+        </select>
+      </label>
+      <select id="examples" aria-label="Load an example">
+        <option value="">Load an example…</option>
+      </select>
+      <button id="permalink" type="button">Copy link</button>
+    </div>
+    <div class="grid">
+      <div id="editor" aria-label="SQL editor"></div>
+      <section id="results" aria-live="polite"><p class="status" id="status">Loading the linter…</p></section>
+    </div>
+  </main>
+  <Footer />
+</Base>
+<script>
+  import "../playground/main.ts";
+</script>
+<style>
+  .pg { padding-top: 2rem; }
+  .lede { color: var(--fg-dim); max-width: 46rem; }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin: 1.25rem 0; color: var(--fg-dim); }
+  .toolbar .check { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .toolbar select, .toolbar button { background: var(--bg-elev); color: var(--fg); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 6px; padding: 0.35rem 0.6rem; font-family: var(--mono); }
+  .toolbar button { cursor: pointer; }
+  .toolbar button:hover { border-color: var(--accent); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.25rem; align-items: start; }
+  #editor { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; min-height: 22rem; }
+  #editor :global(.cm-editor) { height: 100%; min-height: 22rem; }
+  #editor :global(.cm-editor.cm-focused) { outline: none; }
+  #results { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev); padding: 1rem; min-height: 22rem; font-size: 0.9rem; }
+  /* Result rows are built in JS, so they lack Astro's scope attribute — target
+     them as :global under the static #results container. */
+  #results :global(.status) { color: var(--fg-dim); }
+  #results :global(.clean) { color: var(--safe); }
+  #results :global(.finding) { padding: 0.7rem 0; border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+  #results :global(.finding:first-child) { border-top: 0; padding-top: 0; }
+  #results :global(.finding .head) { display: flex; gap: 0.5rem; align-items: baseline; }
+  #results :global(.finding a) { color: var(--accent); }
+  #results :global(.finding .msg) { color: var(--fg); margin: 0.25rem 0; }
+  #results :global(.finding .loc) { color: var(--fg-dim); font-size: 0.8rem; margin: 0; }
+  #results :global(.gate) { margin-top: 0.75rem; color: var(--fg-dim); padding-top: 0.5rem; border-top: 1px solid var(--border); }
+  @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
+</style>
