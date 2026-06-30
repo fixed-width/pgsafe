@@ -29,9 +29,16 @@ pub(crate) fn missing_if_exists(stmts: &[RawStmt]) -> Vec<(usize, String, Option
             NodeEnum::IndexStmt(idx) if !idx.if_not_exists => {
                 // Anchor after CONCURRENTLY when present so the clause lands in the right spot.
                 let anchor_kw = if idx.concurrent { "CONCURRENTLY" } else { "INDEX" };
+                // IF NOT EXISTS requires a named index; `CREATE INDEX ON t (x)` (unnamed) does
+                // not accept IF NOT EXISTS — inserting it produces a parse error.
+                let fix = if !idx.idxname.is_empty() {
+                    Some(if_not_exists_draft(anchor_kw))
+                } else {
+                    None
+                };
                 Some((
                     "CREATE INDEX without IF NOT EXISTS is not idempotent — it errors if the index already exists.",
-                    Some(if_not_exists_draft(anchor_kw)),
+                    fix,
                 ))
             }
             NodeEnum::CreateSeqStmt(s) if !s.if_not_exists => Some((
@@ -344,5 +351,39 @@ mod tests {
             f.fix.is_none(),
             "unmapped DROP form must not emit a fix draft"
         );
+    }
+
+    #[test]
+    fn unnamed_create_index_finding_fires_but_fix_is_none() {
+        // `CREATE INDEX ON t (x)` — unnamed, valid PG syntax, but IF NOT EXISTS requires a
+        // name. The finding must still fire; only the fix is suppressed.
+        let fs = lint_sql("CREATE INDEX ON t (x)", &enabled()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "require-if-exists")
+            .expect("finding must fire for unnamed CREATE INDEX");
+        assert!(
+            f.fix.is_none(),
+            "unnamed CREATE INDEX must not emit a fix draft"
+        );
+    }
+
+    #[test]
+    fn drop_index_concurrently_fix_inserts_if_exists_after_concurrently() {
+        // `DROP INDEX CONCURRENTLY idx` — IF EXISTS must land after CONCURRENTLY.
+        use crate::fix::apply;
+        let sql = "DROP INDEX CONCURRENTLY idx";
+        let fs = lint_sql(sql, &enabled()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "require-if-exists")
+            .expect("finding present");
+        let fix = f.fix.as_ref().expect("fix present");
+        let fixed = apply(sql, fix);
+        assert_eq!(fixed, "DROP INDEX CONCURRENTLY IF EXISTS idx");
+        assert!(lint_sql(&fixed, &enabled())
+            .unwrap()
+            .iter()
+            .all(|f| f.rule_id != "require-if-exists"));
     }
 }

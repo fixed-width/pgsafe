@@ -102,4 +102,22 @@ mod tests {
             .expect("rule must fire for REINDEX SYSTEM");
         assert!(f.fix.is_none(), "REINDEX SYSTEM must not produce a fix");
     }
+
+    #[test]
+    fn emits_a_concurrently_fix_for_table() {
+        use crate::fix::apply;
+        let sql = "REINDEX TABLE t;";
+        let fs = findings(sql);
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "reindex-non-concurrent")
+            .expect("rule must fire for REINDEX TABLE");
+        let fix = f.fix.as_ref().expect("fix present");
+        assert_eq!(fix.title, "Add CONCURRENTLY");
+        let fixed = apply(sql, fix);
+        assert_eq!(fixed, "REINDEX TABLE CONCURRENTLY t;");
+        assert!(findings(&fixed)
+            .iter()
+            .all(|f| f.rule_id != "reindex-non-concurrent"));
+    }
 }

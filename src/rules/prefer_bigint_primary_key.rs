@@ -42,7 +42,7 @@ fn bigint_fix(ty: &str, col: &ColumnDef) -> Option<FixDraft> {
     let at = u32::try_from(tn.location).ok()?;
     // NOTE: a user who explicitly writes the catalog-qualified form (e.g. `pg_catalog.int4`)
     // would have `location` point at `pg_catalog`, so the replacement would corrupt the output.
-    // We accept this: catalog-qualifying a built-in type is essentially unheard of in real DDL.
+    // The resolver's ReplaceTokenAt dot-guard detects the `.` and suppresses the fix (returns None).
     Some(FixDraft {
         title: "Use bigint",
         edits: vec![FixDraftEdit {

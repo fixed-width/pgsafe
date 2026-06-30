@@ -36,8 +36,8 @@ pub(crate) fn canonical_type(spelling: &str) -> Option<String> {
 }
 
 /// Returns `true` when the type token starting at byte `at` in `sql` is a single SQL word —
-/// not a multi-word type like `timestamp without time zone` or `double precision`, and not
-/// schema-qualified like `pg_catalog.text`.
+/// not a multi-word type like `timestamp without time zone` or `double precision`, not
+/// schema-qualified like `pg_catalog.text`, and not followed by a type modifier like `(6)`.
 ///
 /// Accepted risk: a schema-qualified custom type (`myschema.mytype`) written without
 /// qualification cannot be distinguished here from a bare single-word type; the `.` guard
@@ -55,11 +55,33 @@ fn is_single_token_type(sql: &str, at: usize) -> bool {
         return false;
     }
     let after = rest[tok_len..].trim_start();
-    // A continuation word or schema-qualifier dot means the written type spans multiple tokens.
-    const CONT: [&str; 6] = ["with", "without", "varying", "precision", "time", "zone"];
+    // A schema-qualifier dot means the written type is qualified (e.g. `pg_catalog.text`).
     if after.starts_with('.') {
         return false;
     }
+    // A `(` means the type carries a modifier (e.g. `timestamp(6)`, `varchar(255)`). The
+    // replacement type may not accept that modifier, so suppress the fix.
+    if after.starts_with('(') {
+        return false;
+    }
+    // A continuation word means the written type spans multiple tokens. This covers both
+    // `timestamp without time zone` / `double precision` and interval qualifiers like
+    // `interval year to month`.
+    const CONT: [&str; 13] = [
+        "with",
+        "without",
+        "varying",
+        "precision",
+        "time",
+        "zone",
+        "year",
+        "month",
+        "day",
+        "hour",
+        "minute",
+        "second",
+        "to",
+    ];
     let next_word: String = after
         .chars()
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
@@ -388,6 +410,80 @@ mod tests {
         assert!(
             hit.fix.is_none(),
             "fix must be suppressed for multi-word type (single-token guard)"
+        );
+    }
+
+    #[test]
+    fn typmod_type_fix_is_none() {
+        // `timestamp(6) without time zone` — the typmod `(6)` means ReplaceTokenAt would
+        // yield `timestamptz(6) without time zone` (syntax error). Fix must be suppressed.
+        let sql = "CREATE TABLE t (created timestamp(6) without time zone)";
+        let fs = lint_sql(sql, &forbid_opts(&[("timestamp", "timestamptz")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire — the finding is still valid");
+        assert!(
+            hit.fix.is_none(),
+            "fix must be suppressed for type with typmod (e.g. timestamp(6))"
+        );
+    }
+
+    #[test]
+    fn varchar_with_length_fix_is_none() {
+        // varchar(255) with forbid varchar → text: `text` has no length modifier, so the
+        // replacement would yield `text(255)` — real PG rejects it. Fix must be suppressed.
+        let sql = "CREATE TABLE t (name varchar(255))";
+        let fs = lint_sql(sql, &forbid_opts(&[("varchar", "text")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire — the finding is still valid");
+        assert!(
+            hit.fix.is_none(),
+            "fix must be suppressed for varchar with length modifier"
+        );
+    }
+
+    #[test]
+    fn interval_qualifier_fix_is_none() {
+        // `interval year to month` — interval qualifiers form a multi-word type.
+        // ReplaceTokenAt would yield `numeric year to month` (corrupt). Fix must be suppressed.
+        let sql = "CREATE TABLE t (d interval year to month)";
+        let fs = lint_sql(sql, &forbid_opts(&[("interval", "numeric")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire — the finding is still valid");
+        assert!(
+            hit.fix.is_none(),
+            "fix must be suppressed for interval with qualifier"
+        );
+    }
+
+    #[test]
+    fn trailing_column_constraint_does_not_suppress_fix() {
+        // `timestamp NOT NULL` — NOT NULL is a column constraint, not a type continuation.
+        // The fix must still fire (replacing `timestamp` → `timestamptz`).
+        use crate::fix::apply;
+        let sql = "CREATE TABLE t (created timestamp NOT NULL)";
+        let fs = lint_sql(sql, &forbid_opts(&[("timestamp", "timestamptz")])).unwrap();
+        let hit = fs
+            .iter()
+            .find(|f| f.rule_id == "forbidden-column-type")
+            .expect("rule must fire");
+        let fix = hit
+            .fix
+            .as_ref()
+            .expect("fix must be present — trailing NOT NULL must not suppress it");
+        let fixed = apply(sql, fix);
+        assert_eq!(fixed, "CREATE TABLE t (created timestamptz NOT NULL)");
+        assert!(
+            lint_sql(&fixed, &forbid_opts(&[("timestamp", "timestamptz")]))
+                .unwrap()
+                .iter()
+                .all(|f| f.rule_id != "forbidden-column-type"),
+            "fixed SQL must not re-trigger forbidden-column-type"
         );
     }
 }

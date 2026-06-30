@@ -157,4 +157,21 @@ mod tests {
             .iter()
             .all(|f| f.rule_id != "add-fk-without-not-valid"));
     }
+
+    #[test]
+    fn multi_command_fk_fix_is_none() {
+        // Multiple commands in one ALTER TABLE — the fix is suppressed because StatementBodyEnd
+        // is ambiguous when len > 1 (NOT VALID would bind to the wrong command).
+        let sql =
+            "ALTER TABLE t ADD COLUMN x int, ADD CONSTRAINT fk FOREIGN KEY (x) REFERENCES u (id);";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-fk-without-not-valid")
+            .expect("rule must fire");
+        assert!(
+            f.fix.is_none(),
+            "multi-command ALTER must not emit a fix (StatementBodyEnd ambiguous)"
+        );
+    }
 }

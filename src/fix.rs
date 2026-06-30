@@ -40,6 +40,11 @@ impl FixDraft {
     /// Whether this draft may legitimately resolve to `None` rather than that
     /// indicating a producer bug. `ReplaceTokenAt` can fail for a quoted or
     /// schema-qualified type token; keyword/statement/absolute anchors cannot.
+    ///
+    /// Note: this whitelists ANY draft that contains at least one `ReplaceTokenAt` edit —
+    /// including drafts from producers that pre-screen at the producer level (e.g.
+    /// forbidden-column-type's `is_single_token_type`), so they also get the relaxation;
+    /// production behaviour is unchanged because those producers already suppress the draft.
     pub(crate) fn may_legitimately_not_resolve(&self) -> bool {
         self.edits
             .iter()
@@ -71,7 +76,17 @@ pub(crate) fn resolve(draft: &FixDraft, sql: &str, start: usize, end: usize) -> 
             }
             FixAnchor::ReplaceTokenAt(at) => {
                 let at = at as usize;
-                (at, at + token_len(sql.get(at..)?)?)
+                let tok = token_len(sql.get(at..)?)?;
+                // If the token is immediately followed (after optional whitespace) by `.`, it is
+                // a schema qualifier (e.g. `pg_catalog.json`). Replacing it would produce corrupt
+                // SQL (e.g. `jsonb.json`), so suppress the fix by returning None.
+                if sql
+                    .get(at + tok..)
+                    .is_some_and(|s| s.trim_start().starts_with('.'))
+                {
+                    return None;
+                }
+                (at, at + tok)
             }
         };
         edits.push(FixEdit {
@@ -314,6 +329,21 @@ mod tests {
             }],
         };
         assert!(!k.may_legitimately_not_resolve());
+    }
+
+    #[test]
+    fn replace_token_at_suppresses_schema_qualifier() {
+        // `pg_catalog.json` — `pg_catalog` is at byte 0, immediately followed by `.`.
+        // Replacing it would produce `jsonb.json` (corrupt), so the engine must return None.
+        let sql = "pg_catalog.json";
+        let d = FixDraft {
+            title: "Use jsonb",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::ReplaceTokenAt(0),
+                replacement: "jsonb".into(),
+            }],
+        };
+        assert!(resolve(&d, sql, 0, sql.len()).is_none());
     }
 
     #[test]
