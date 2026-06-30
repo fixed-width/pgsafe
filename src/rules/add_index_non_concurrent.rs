@@ -25,7 +25,13 @@ impl Rule for AddIndexNonConcurrent {
                                CONCURRENTLY build leaves an INVALID index: drop it with DROP INDEX \
                                CONCURRENTLY and retry, or rebuild with REINDEX INDEX CONCURRENTLY."
                             .into(),
-                    fix: None,
+                    fix: Some(crate::fix::FixDraft {
+                        title: "Add CONCURRENTLY",
+                        edits: vec![crate::fix::FixDraftEdit {
+                            anchor: crate::fix::FixAnchor::AfterKeyword("INDEX"),
+                            replacement: " CONCURRENTLY".into(),
+                        }],
+                    }),
                 });
             }
         }
@@ -52,6 +58,26 @@ mod tests {
         )
         .unwrap();
         assert!(findings
+            .iter()
+            .all(|f| f.rule_id != "add-index-non-concurrent"));
+    }
+
+    #[test]
+    fn emits_a_concurrently_fix() {
+        use crate::fix::apply;
+        let sql = "CREATE INDEX idx ON t (col);";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-index-non-concurrent")
+            .unwrap();
+        let fix = f.fix.as_ref().expect("fix present");
+        assert_eq!(fix.title, "Add CONCURRENTLY");
+        let fixed = apply(sql, fix);
+        assert_eq!(fixed, "CREATE INDEX CONCURRENTLY idx ON t (col);");
+        // Applying it clears the finding.
+        assert!(lint_sql(&fixed, &LintOptions::default())
+            .unwrap()
             .iter()
             .all(|f| f.rule_id != "add-index-non-concurrent"));
     }
