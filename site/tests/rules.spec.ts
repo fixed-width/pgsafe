@@ -22,3 +22,10 @@ test('nav exposes Rules and Docs', async ({ page }) => {
   await expect(page.locator('header.nav')).toContainText('Rules');
   await expect(page.locator('header.nav')).toContainText('Docs');
 });
+
+test('rule prose renders inline code, not literal backticks', async ({ page }) => {
+  await page.goto('/rules/require-timeout/');
+  await expect(page.locator('.md code').filter({ hasText: "SET lock_timeout = '5s';" })).toBeVisible();
+  // no raw markdown backticks left anywhere in the page body
+  await expect(page.locator('main')).not.toContainText('`');
+});

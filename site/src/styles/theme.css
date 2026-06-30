@@ -41,6 +41,8 @@ pre {
 /* Unify Shiki-highlighted code blocks (docs markdown) with the hand-built ones
    by forcing our surface; the theme keeps its syntax colors, set on this bg. */
 .astro-code { background: var(--bg-elev) !important; }
+/* Inline code rendered from rules.ts prose (set:html via lib/md). */
+.md code { background: var(--bg-elev); border: 1px solid rgba(255, 255, 255, 0.16); border-radius: 5px; padding: 0.03rem 0.3rem; font-size: 0.9em; color: var(--fg); }
 .sev-error { color: var(--error); }
 .sev-warning { color: var(--warning); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
