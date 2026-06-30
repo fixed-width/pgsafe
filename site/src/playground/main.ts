@@ -53,6 +53,54 @@ const highlightTheme = EditorView.theme({
   },
 });
 
+// Claimed lines get an editor-style wavy underline by severity, so the user can
+// see at a glance which lines carry findings. Red (error) wins over yellow
+// (warning) when a line has both. Suppressed (ignored) findings aren't
+// underlined — they're acknowledged, and the results panel already dims them.
+const setClaims = StateEffect.define<Map<number, "error" | "warning">>();
+const claimsField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(setClaims)) {
+        // Resolve finding lines to line-start positions, letting error win over
+        // warning when both land on the same line.
+        const worst = new Map<number, "error" | "warning">();
+        for (const [ln, sev] of e.value) {
+          const lineNo = Math.max(1, Math.min(ln, tr.state.doc.lines));
+          const from = tr.state.doc.line(lineNo).from;
+          if (sev === "error" || !worst.has(from)) worst.set(from, sev);
+        }
+        deco = Decoration.set(
+          [...worst.entries()]
+            .sort((a, b) => a[0] - b[0])
+            .map(([from, sev]) =>
+              Decoration.line({
+                class: sev === "error" ? "cm-claim-error" : "cm-claim-warning",
+              }).range(from),
+            ),
+          true,
+        );
+      }
+    }
+    return deco;
+  },
+  provide: (f) => EditorView.decorations.from(f),
+});
+const claimsTheme = EditorView.theme({
+  ".cm-line.cm-claim-error": {
+    textDecoration: "underline wavy #f85149", // --error
+    textDecorationSkipInk: "none",
+    textUnderlineOffset: "3px",
+  },
+  ".cm-line.cm-claim-warning": {
+    textDecoration: "underline wavy #e3b341", // --warning
+    textDecorationSkipInk: "none",
+    textUnderlineOffset: "3px",
+  },
+});
+
 const view = new EditorView({
   doc: startDoc,
   extensions: [
@@ -61,6 +109,8 @@ const view = new EditorView({
     oneDark,
     highlightField,
     highlightTheme,
+    claimsField,
+    claimsTheme,
     EditorView.updateListener.of((u) => {
       if (u.docChanged) schedule();
     }),
@@ -70,6 +120,20 @@ const view = new EditorView({
 
 function highlightLine(line: number | null): void {
   view.dispatch({ effects: setHighlight.of(line) });
+}
+
+// Push the per-line worst severity to the editor so claimed lines are
+// underlined. Error takes priority over warning on a line that has both.
+function setClaimLines(findings: Finding[]): void {
+  const worst = new Map<number, "error" | "warning">();
+  for (const f of findings) {
+    if (f.suppression) continue; // ignored findings aren't underlined
+    const sev = f.severity === "error" ? "error" : "warning";
+    if (sev === "error" || !worst.has(f.location.line)) {
+      worst.set(f.location.line, sev);
+    }
+  }
+  view.dispatch({ effects: setClaims.of(worst) });
 }
 
 let lint: Lint | null = null;
@@ -115,15 +179,18 @@ function render(env: Envelope): void {
   highlightLine(null);
   resultsEl.replaceChildren();
   if ("error" in env) {
+    setClaimLines([]);
     resultsEl.append(para("status", `pgsafe error: ${env.error}`));
     return;
   }
   const file = env.files[0];
   if (file?.error) {
+    setClaimLines([]);
     resultsEl.append(para("status", `Parse error: ${file.error}`));
     return;
   }
   const findings = file?.findings ?? [];
+  setClaimLines(findings);
   if (!findings.length) {
     resultsEl.append(para("clean", "✓ No findings — this migration looks safe."));
     return;
