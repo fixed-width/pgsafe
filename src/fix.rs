@@ -9,6 +9,7 @@
 use crate::{Fix, FixEdit};
 
 /// Where an edit attaches, in terms a rule can express without the source text.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum FixAnchor {
     /// Absolute byte span the rule computed itself (e.g. from a node `location`).
     Absolute { start: u32, end: u32 },
@@ -23,11 +24,13 @@ pub(crate) enum FixAnchor {
     ReplaceTokenAt(u32),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FixDraftEdit {
     pub anchor: FixAnchor,
     pub replacement: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FixDraft {
     pub title: &'static str,
     pub edits: Vec<FixDraftEdit>,

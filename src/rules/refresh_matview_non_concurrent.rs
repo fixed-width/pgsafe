@@ -26,6 +26,7 @@ impl Rule for RefreshMatviewNonConcurrent {
                         "Use REFRESH MATERIALIZED VIEW CONCURRENTLY (requires a unique index on \
                                the matview) so reads are not blocked during the rebuild."
                             .into(),
+                    fix: None,
                 });
             }
         }

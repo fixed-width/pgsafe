@@ -78,6 +78,7 @@ impl Rule for PreferBigintPrimaryKey {
                                        Migrating a live int primary key to bigint later is a major, \
                                        painful operation — start with bigint."
                                 .into(),
+                            fix: None,
                         });
                     }
                 }

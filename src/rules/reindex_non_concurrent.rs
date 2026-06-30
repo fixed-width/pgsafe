@@ -26,6 +26,7 @@ impl Rule for ReindexNonConcurrent {
                     guidance: "Use REINDEX INDEX CONCURRENTLY (PG12+, outside a transaction); on older \
                                servers use pg_repack or a maintenance window."
                         .into(),
+                    fix: None,
                 });
             }
         }

@@ -43,6 +43,7 @@ impl Rule for Rename {
                        dual-write, migrate readers, then drop the old name — or use a view to alias \
                        during the transition."
                 .into(),
+            fix: None,
         });
     }
 }

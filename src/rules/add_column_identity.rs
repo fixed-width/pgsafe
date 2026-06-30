@@ -28,6 +28,7 @@ impl Rule for AddColumnIdentity {
                                then attach the identity/sequence — do not add an identity column \
                                directly to a populated table."
                             .into(),
+                    fix: None,
                 });
             }
         }

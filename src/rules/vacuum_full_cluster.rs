@@ -32,6 +32,7 @@ impl Rule for VacuumFullOrCluster {
                 guidance: "Use pg_repack for online table/space maintenance; plain VACUUM (no FULL) takes \
                            only SHARE UPDATE EXCLUSIVE and allows concurrent reads and writes."
                     .into(),
+                fix: None,
             });
         }
     }

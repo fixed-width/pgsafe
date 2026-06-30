@@ -21,6 +21,7 @@ impl Rule for PreferJsonb {
                                only preserves exact input text and duplicate/key order, which is rarely \
                                needed."
                         .into(),
+                    fix: None,
                 });
             }
         }

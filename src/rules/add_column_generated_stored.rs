@@ -27,6 +27,7 @@ impl Rule for AddColumnGeneratedStored {
                                and keep it current with a trigger or in application code — do not add \
                                a STORED generated column directly to a populated table."
                         .into(),
+                    fix: None,
                 });
             }
         }

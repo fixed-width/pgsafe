@@ -33,6 +33,7 @@ impl Rule for AddPrimaryKeyWithoutIndex {
                 guidance: "Build the index with CREATE UNIQUE INDEX CONCURRENTLY, then attach it: \
                            ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY USING INDEX idx."
                     .into(),
+                fix: None,
             });
         }
 
@@ -46,6 +47,7 @@ impl Rule for AddPrimaryKeyWithoutIndex {
                            (ALTER TABLE ... ADD CONSTRAINT ... PRIMARY KEY USING INDEX idx) \
                            and SET NOT NULL."
                     .into(),
+                fix: None,
             });
         }
     }

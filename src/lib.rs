@@ -133,6 +133,7 @@ pub struct Suppression {
 pub(crate) struct RuleHit {
     pub message: String,
     pub guidance: String,
+    pub fix: Option<crate::fix::FixDraft>,
 }
 
 /// A single text edit within the linted SQL: replace bytes `[start, end)` with
@@ -291,19 +292,21 @@ pub fn list_rule_ids() -> Vec<&'static str> {
     known_rule_ids()
 }
 
-/// Push one engine-synthesized rule's hits as [`Finding`]s. Each hit is a `(statement_index, message,
-/// guidance)` tuple — the statement index sources the location and snippet, and the message/guidance
-/// are this finding's own. `rule_id` and `severity` are constant for the rule. Centralizes the
-/// location / snippet / `Finding` construction shared by every synthesized block in [`lint_sql`].
+/// Push one engine-synthesized rule's hits as [`Finding`]s. Each hit is a
+/// `(statement_index, message, guidance, fix_draft)` tuple — the statement index sources the
+/// location and snippet, the message/guidance are this finding's own, and the optional draft is
+/// resolved to an absolute [`Fix`] (or `None` when no fix is provided). `rule_id` and `severity`
+/// are constant for the rule. Centralizes the location / snippet / `Finding` construction shared
+/// by every synthesized block in [`lint_sql`].
 fn push_synthesized(
     findings: &mut Vec<Finding>,
     sql: &str,
     geoms: &[suppression::StatementGeom],
     rule_id: &str,
     severity: Severity,
-    hits: impl IntoIterator<Item = (usize, String, String)>,
+    hits: impl IntoIterator<Item = (usize, String, String, Option<crate::fix::FixDraft>)>,
 ) {
-    for (i, message, guidance) in hits {
+    for (i, message, guidance, draft) in hits {
         // The index comes from a rule walking these same `stmts`, so it is always in range; assert
         // it in debug builds to attribute any future rule bug to its source rather than this push.
         debug_assert!(
@@ -312,6 +315,9 @@ fn push_synthesized(
         );
         let g = &geoms[i];
         let (line, column) = line_col(sql, g.start);
+        let fix = draft
+            .as_ref()
+            .and_then(|d| crate::fix::resolve(d, sql, g.start, g.end));
         findings.push(Finding {
             rule_id: rule_id.to_string(),
             severity,
@@ -325,7 +331,7 @@ fn push_synthesized(
             },
             snippet: sql.get(g.start..g.end).unwrap_or("").trim().to_string(),
             suppression: None,
-            fix: None,
+            fix,
         });
     }
 }
@@ -376,6 +382,10 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             }
             rule.check(node, &mut hits);
             for h in hits.drain(..) {
+                let fix = h
+                    .fix
+                    .as_ref()
+                    .and_then(|d| crate::fix::resolve(d, sql, g.start, g.end));
                 findings.push(Finding {
                     rule_id: rule.id().to_string(),
                     severity: rule.severity(),
@@ -385,7 +395,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     location,
                     snippet: snippet.clone(),
                     suppression: None,
-                    fix: None,
+                    fix,
                 });
             }
         }
@@ -464,6 +474,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                         i,
                         timeout::MESSAGE.to_string(),
                         timeout::GUIDANCE.to_string(),
+                        None,
                     )
                 }),
         );
@@ -481,7 +492,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Error,
             txn::concurrently_in_transaction_indices(stmts, options.assume_in_transaction)
                 .into_iter()
-                .map(|i| (i, txn::MESSAGE.to_string(), txn::GUIDANCE.to_string())),
+                .map(|i| (i, txn::MESSAGE.to_string(), txn::GUIDANCE.to_string(), None)),
         );
     }
     if !options.disabled_rules.contains(identifier::ID) {
@@ -502,6 +513,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     "Shorten the identifier to 63 bytes or fewer so PostgreSQL does not silently \
                      truncate it."
                         .to_string(),
+                    None,
                 ))
             }),
         );
@@ -525,6 +537,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                         "Add a covering index on the referencing column, e.g. \
                          `CREATE INDEX CONCURRENTLY ON {table} ({col});`."
                     ),
+                    None,
                 )
             }),
         );
@@ -543,6 +556,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                         i,
                         enum_value::MESSAGE.to_string(),
                         enum_value::GUIDANCE.to_string(),
+                        None,
                     )
                 }),
         );
@@ -563,6 +577,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                         i,
                         require_pk::MESSAGE.to_string(),
                         require_pk::GUIDANCE.to_string(),
+                        None,
                     )
                 }),
         );
@@ -578,7 +593,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_not_null::nullable_columns(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_not_null::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, require_not_null::GUIDANCE.to_string(), None)),
         );
     }
     if !options.naming_patterns.is_empty() && !options.disabled_rules.contains(naming::ID) {
@@ -590,7 +605,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             naming::naming_violations(stmts, &options.naming_patterns)
                 .into_iter()
-                .map(|(i, message)| (i, message, naming::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, naming::GUIDANCE.to_string(), None)),
         );
     }
     if !options.forbidden_column_types.is_empty()
@@ -604,7 +619,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             forbidden_types::forbidden_violations(stmts, &options.forbidden_column_types)
                 .into_iter()
-                .map(|(i, message)| (i, message, forbidden_types::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, forbidden_types::GUIDANCE.to_string(), None)),
         );
     }
     if options.enabled_rules.contains(require_if_exists::ID)
@@ -618,7 +633,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_if_exists::missing_if_exists(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_if_exists::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, require_if_exists::GUIDANCE.to_string(), None)),
         );
     }
     if options.enabled_rules.contains(do_block::ID)
@@ -635,6 +650,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
                     i,
                     do_block::MESSAGE.to_string(),
                     do_block::GUIDANCE.to_string(),
+                    None,
                 )
             }),
         );
@@ -650,7 +666,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_comment::missing_comments(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_comment::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, require_comment::GUIDANCE.to_string(), None)),
         );
     }
     if !options.required_columns.is_empty() && !options.disabled_rules.contains(require_columns::ID)
@@ -663,7 +679,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             require_columns::missing_required_columns(stmts, &options.required_columns)
                 .into_iter()
-                .map(|(i, message)| (i, message, require_columns::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, require_columns::GUIDANCE.to_string(), None)),
         );
     }
     if options.enabled_rules.contains(forbid_nullable_fk::ID)
@@ -677,7 +693,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             Severity::Warning,
             forbid_nullable_fk::nullable_fk_columns(stmts)
                 .into_iter()
-                .map(|(i, message)| (i, message, forbid_nullable_fk::GUIDANCE.to_string())),
+                .map(|(i, message)| (i, message, forbid_nullable_fk::GUIDANCE.to_string(), None)),
         );
     }
     if !options.severity_overrides.is_empty() {
@@ -1010,5 +1026,13 @@ mod tests {
             fix: None,
         };
         assert!(!serde_json::to_string(&f).unwrap().contains("fix"));
+    }
+
+    #[test]
+    fn rule_hit_default_carries_no_fix() {
+        // A rule that emits no fix still produces a finding with fix == None.
+        let fs = lint_sql("DROP TABLE t;", &LintOptions::default()).unwrap();
+        let f = fs.iter().find(|f| f.rule_id == "drop-table").unwrap();
+        assert!(f.fix.is_none());
     }
 }

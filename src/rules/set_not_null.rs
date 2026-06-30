@@ -28,6 +28,7 @@ impl Rule for SetNotNull {
                                CONSTRAINT, then SET NOT NULL (it reuses the validated check and skips \
                                the scan). Drop the helper CHECK afterward if you like."
                         .into(),
+                    fix: None,
                 });
             }
         }

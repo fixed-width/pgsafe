@@ -27,6 +27,7 @@ impl Rule for AddCheckWithoutNotValid {
                         "Add the CHECK with NOT VALID, then run VALIDATE CONSTRAINT separately \
                                (SHARE UPDATE EXCLUSIVE — concurrent reads and writes are allowed)."
                             .into(),
+                    fix: None,
                 });
             }
         }
@@ -45,6 +46,7 @@ impl Rule for AddCheckWithoutNotValid {
                     guidance: "Add the column without the CHECK, then ADD CONSTRAINT ... CHECK (...) \
                                NOT VALID, then VALIDATE CONSTRAINT separately (SHARE UPDATE EXCLUSIVE)."
                         .into(),
+                    fix: None,
                 });
             }
         }

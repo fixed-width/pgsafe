@@ -27,6 +27,7 @@ impl Rule for AttachPartition {
                                then VALIDATE CONSTRAINT); ATTACH then skips the scan and the lock is \
                                brief."
                         .into(),
+                    fix: None,
                 });
             }
         }

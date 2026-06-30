@@ -25,6 +25,7 @@ impl Rule for AddIndexNonConcurrent {
                                CONCURRENTLY build leaves an INVALID index: drop it with DROP INDEX \
                                CONCURRENTLY and retry, or rebuild with REINDEX INDEX CONCURRENTLY."
                             .into(),
+                    fix: None,
                 });
             }
         }

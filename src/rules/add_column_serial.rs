@@ -48,6 +48,7 @@ impl Rule for AddColumnSerial {
                                nextval(...) and add NOT NULL via the safe two-step — do not add serial \
                                directly to a populated table."
                         .into(),
+                    fix: None,
                 });
             }
         }

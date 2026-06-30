@@ -24,6 +24,7 @@ impl Rule for DropConstraint {
                     guidance: "Confirm no application logic or replication setup depends on the \
                                constraint before dropping it."
                         .into(),
+                    fix: None,
                 });
             }
         }

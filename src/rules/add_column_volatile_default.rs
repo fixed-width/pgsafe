@@ -53,6 +53,7 @@ impl Rule for AddColumnVolatileDefault {
                                batches, then ALTER COLUMN ... SET DEFAULT for new rows (add NOT NULL \
                                via the safe two-step if needed)."
                         .into(),
+                    fix: None,
                 });
             }
         }
