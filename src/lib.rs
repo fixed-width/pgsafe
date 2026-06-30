@@ -498,7 +498,10 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
         // migration-level edit — only the first finding carries it; the rest get None so that a
         // consumer splicing every finding's fix doesn't insert the prologue N times.
         let timeout_fix = timeout_indices.first().and_then(|&first| {
-            let start = u32::try_from(geoms[first].start).ok()?;
+            // Anchor at `raw_start` (before any leading comment block) so the prologue
+            // lands ABOVE a leading `-- pgsafe:ignore` directive, not between it and
+            // the statement. When there is no leading comment, `raw_start == start`.
+            let start = u32::try_from(geoms[first].raw_start).ok()?;
             Some(timeout::timeout_fix(start))
         });
         // `take()` yields Some for the first iteration, None for every subsequent one.

@@ -120,6 +120,15 @@ pub(crate) struct StatementGeom {
     pub index: usize,
     /// Byte offset of the statement's first real token (after skipping leading whitespace and comments).
     pub start: usize,
+    /// Byte offset of the statement's first non-whitespace byte, taken from `stmt_location` BEFORE
+    /// skipping any leading comment block. When the statement has no leading comments,
+    /// `raw_start == start`. Otherwise it points at the statement's leading comment region — the
+    /// anchor for a statement-level prologue insertion, so the prologue lands ABOVE an own-line
+    /// leading directive rather than between the directive and the statement body. (Edge: pg_query
+    /// folds a preceding statement's *same-line* trailing comment into this statement's extent, so
+    /// for a statement preceded by such a trailing comment `raw_start` may coincide with it; the
+    /// common own-line-comment case is exact.)
+    pub raw_start: usize,
     /// Byte offset one past the statement's last non-whitespace character.
     pub end: usize,
     /// 1-based line number of the statement's first real token.
@@ -157,14 +166,18 @@ pub(crate) fn geometry(
         let slice = sql.get(off..raw_end).unwrap_or("");
         let lead = slice.len() - slice.trim_start().len();
         let trail = slice.len() - slice.trim_end().len();
-        // Start after leading whitespace, then also skip any leading comments.
-        let start = skip_leading_comments(sql, off + lead, &comment_spans);
+        // `content_start` is the first non-whitespace byte — the start of any leading
+        // comment block, or the first keyword if there are no leading comments.
+        let content_start = off + lead;
+        // `start` advances past any leading comments to the statement's first real token.
+        let start = skip_leading_comments(sql, content_start, &comment_spans);
         let end = raw_end.saturating_sub(trail).max(start);
         let first_line = line_col(sql, start).0;
         let last_line = line_col(sql, end.saturating_sub(1).max(start)).0;
         out.push(StatementGeom {
             index,
             start,
+            raw_start: content_start,
             end,
             first_line,
             last_line,
