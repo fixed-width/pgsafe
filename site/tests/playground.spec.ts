@@ -5,6 +5,8 @@ test('playground lints the seeded migration and links to the rule', async ({ pag
   const finding = page.locator('.finding', { hasText: 'add-index-non-concurrent' });
   await expect(finding).toBeVisible({ timeout: 20_000 }); // wasm load + lint
   await expect(finding.locator('a')).toHaveAttribute('href', '/rules/add-index-non-concurrent/');
+  // Opens in a new tab so the user keeps their migration in the playground.
+  await expect(finding.locator('a')).toHaveAttribute('target', '_blank');
 });
 
 test('a safe (CONCURRENTLY) example reports no findings', async ({ page }) => {
@@ -33,6 +35,15 @@ test('a pgsafe:ignore directive marks the finding suppressed', async ({ page }) 
   const suppressed = page.locator('.finding.suppressed', { hasText: 'add-index-non-concurrent' });
   await expect(suppressed).toBeVisible();
   await expect(suppressed.locator('.ignored')).toBeVisible();
+});
+
+test('the pgsafe:ignore example loads and shows a suppressed finding', async ({ page }) => {
+  await page.goto('/playground/');
+  await expect(page.locator('.finding').first()).toBeVisible({ timeout: 20_000 });
+  await page.selectOption('#examples', 'ignore-directive');
+  await expect(
+    page.locator('.finding.suppressed', { hasText: 'add-index-non-concurrent' }),
+  ).toBeVisible();
 });
 
 test('invalid SQL renders a parse error', async ({ page }) => {
