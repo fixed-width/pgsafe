@@ -464,6 +464,15 @@ export const RULES: Record<string, RuleDoc> = {
     example: {
       unsafe:
         "ALTER TABLE measurement ATTACH PARTITION measurement_y2021 FOR VALUES FROM ('2021-01-01') TO ('2022-01-01');",
+      safe: [
+        "-- add a matching, validated CHECK first so ATTACH can skip the scan",
+        "ALTER TABLE measurement_y2021",
+        "  ADD CONSTRAINT measurement_y2021_bound",
+        "  CHECK (logdate >= '2021-01-01' AND logdate < '2022-01-01') NOT VALID;",
+        "ALTER TABLE measurement_y2021 VALIDATE CONSTRAINT measurement_y2021_bound;",
+        "ALTER TABLE measurement ATTACH PARTITION measurement_y2021",
+        "  FOR VALUES FROM ('2021-01-01') TO ('2022-01-01');",
+      ].join("\n"),
     },
     related: ["detach-partition-non-concurrent"],
   },

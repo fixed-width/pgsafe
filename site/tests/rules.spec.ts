@@ -23,6 +23,12 @@ test('nav exposes Rules and Docs', async ({ page }) => {
   await expect(page.locator('header.nav')).toContainText('Docs');
 });
 
+test('attach-partition shows a safe-rewrite example', async ({ page }) => {
+  await page.goto('/rules/attach-partition/');
+  await expect(page.locator('.safe-lbl')).toBeVisible();
+  await expect(page.locator('pre').last()).toContainText('VALIDATE CONSTRAINT');
+});
+
 test('rule prose renders inline code, not literal backticks', async ({ page }) => {
   await page.goto('/rules/require-timeout/');
   await expect(page.locator('.md code').filter({ hasText: "SET lock_timeout = '5s';" })).toBeVisible();
