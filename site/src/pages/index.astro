@@ -32,7 +32,7 @@ const features = [
       </div>
       <div class="term" role="img" aria-label="Example pgsafe output">
         <div class="term-bar"><span></span><span></span><span></span></div>
-        <pre><code><span class="prompt">$ pgsafe migration.sql</span>
+        <pre><code><span class="prompt"><span class="dollar">$</span> pgsafe migration.sql</span>
 {demo.map((f) => (
   <span><span class={`sev-${f.sev}`}>{f.sev}</span>  <span class="rid">{f.id}</span>{"  "}{f.text}
 </span>
@@ -41,19 +41,22 @@ const features = [
     </section>
 
     <section id="features" class="features">
-      <h2>What it does</h2>
-      <div class="grid">
+      <p class="eyebrow">What it does</p>
+      <ul class="capabilities">
         {features.map((f) => (
-          <article class="card">
-            <h3>{f.h}</h3>
-            <p>{f.p}</p>
-          </article>
+          <li>
+            <span class="marker" aria-hidden="true">+</span>
+            <div>
+              <h3>{f.h}</h3>
+              <p>{f.p}</p>
+            </div>
+          </li>
         ))}
-      </div>
+      </ul>
     </section>
 
     <section id="install" class="install">
-      <h2>Install</h2>
+      <p class="eyebrow">Install</p>
       <p>Run it in CI with the GitHub Action:</p>
       <pre><code>{`- uses: fixed-width/pgsafe@v0.8.5
   with:
@@ -65,25 +68,36 @@ const features = [
 </Base>
 
 <style>
-  .hero { padding: 4rem 0 3rem; }
-  h1 { font-size: clamp(2rem, 5vw, 3.25rem); line-height: 1.1; margin: 0 0 1rem; }
+  .hero { padding: 4rem 0 3.5rem; }
+  h1 { font-size: clamp(2rem, 5vw, 3.25rem); font-weight: 700; letter-spacing: -0.02em; line-height: 1.08; margin: 0 0 1rem; }
   .accent { color: var(--accent); }
   .lede { color: var(--fg-dim); font-size: 1.1rem; max-width: 46rem; }
   .cta { display: flex; gap: 0.75rem; margin: 1.75rem 0 2.5rem; flex-wrap: wrap; }
   .btn { border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 1.1rem; color: var(--fg); }
   .btn:hover { border-color: var(--accent); text-decoration: none; }
-  .btn.primary { background: var(--accent-dim); border-color: var(--accent-dim); color: #06120a; font-weight: 600; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+  .btn.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
   .term { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg-elev); }
   .term-bar { display: flex; gap: 0.4rem; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); }
   .term-bar span { width: 0.7rem; height: 0.7rem; border-radius: 50%; background: var(--border); }
   .term pre { border: 0; margin: 0; border-radius: 0; font-size: 0.85rem; }
   .prompt { color: var(--fg-dim); }
+  .prompt .dollar { color: var(--accent); }
   .rid { color: var(--accent); }
-  .features { padding: 2rem 0; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem; margin-top: 1.25rem; }
-  .card { border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; background: var(--bg-elev); }
-  .card h3 { margin: 0 0 0.5rem; color: var(--fg); font-size: 1rem; }
-  .card p { margin: 0; color: var(--fg-dim); font-size: 0.92rem; }
-  .install { padding: 2rem 0; }
-  .install h2, .features h2 { font-size: 1.5rem; }
+
+  /* Section label — a small amber eyebrow, not a heading. */
+  .eyebrow { color: var(--accent); font-size: 0.78rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; margin: 0 0 1.25rem; }
+
+  /* Capabilities: terminal-diagnostic rows led by the brand's amber plus — no boxes. */
+  .features { padding: 2.5rem 0; }
+  .capabilities { list-style: none; margin: 0; padding: 0; }
+  .capabilities li { display: grid; grid-template-columns: auto 1fr; gap: 0.5rem 1rem; padding: 1.1rem 0; border-top: 1px solid var(--border); }
+  .capabilities li:last-child { border-bottom: 1px solid var(--border); }
+  .marker { color: var(--accent); font-weight: 700; font-size: 1.15rem; line-height: 1.5; }
+  .capabilities h3 { margin: 0 0 0.3rem; color: var(--fg); font-size: 1rem; font-weight: 600; }
+  .capabilities p { margin: 0; color: var(--fg-dim); font-size: 0.95rem; max-width: 44rem; }
+
+  .install { padding: 2.5rem 0; }
+  .install p { color: var(--fg-dim); }
+  .install a { color: var(--accent); }
 </style>

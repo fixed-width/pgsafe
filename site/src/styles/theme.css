@@ -1,13 +1,18 @@
 :root {
-  --bg: #0b0f0e;
-  --bg-elev: #111716;
-  --border: #1f2a28;
-  --fg: #d7e0dd;
-  --fg-dim: #8aa39d;
-  --accent: #3fb950;       /* terminal green */
-  --accent-dim: #2ea043;
-  --error: #f85149;        /* severity: error */
-  --warning: #d29922;      /* severity: warning */
+  /* Fixed Width family: amber is the shared accent thread, set on a navy-black
+     ground (the brand ink #15202B is its lighter cousin — amber-on-navy is the
+     logo's own pairing). Green is reserved for the semantic "safe" state. */
+  --bg: #0e1117;
+  --bg-elev: #161b22;
+  --border: #243040;
+  --fg: #d7dde4;
+  --fg-dim: #8b97a6;
+  --accent: #ff9f1c;        /* Fixed Width amber — brand thread, links, interactive */
+  --accent-ink: #2a1700;    /* near-black text on an amber button */
+  --accent-strong: #ffb84d; /* hover/active amber */
+  --safe: #3fb950;          /* semantic: the safe rewrite */
+  --error: #f85149;         /* severity: error */
+  --warning: #e3b341;       /* severity: warning (yellow-gold, distinct from amber) */
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --max: 72rem;
 }
