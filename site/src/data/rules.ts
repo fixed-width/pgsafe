@@ -571,6 +571,13 @@ export const RULES: Record<string, RuleDoc> = {
     example: {
       unsafe:
         "BEGIN;\nALTER TYPE mood ADD VALUE 'happy';\nUPDATE surveys SET mood = 'happy';\nCOMMIT;",
+      safe: [
+        "-- migration 1: add the value and let it commit",
+        "ALTER TYPE mood ADD VALUE 'happy';",
+        "",
+        "-- migration 2 (separate, after the first commits): now safe to use it",
+        "UPDATE surveys SET mood = 'happy';",
+      ].join("\n"),
     },
     related: ["concurrently-in-transaction"],
   },
