@@ -14,6 +14,7 @@ use pg_query::NodeEnum;
 
 mod do_block;
 mod enum_value;
+mod fix;
 mod fk_index;
 mod forbid_nullable_fk;
 mod forbidden_types;

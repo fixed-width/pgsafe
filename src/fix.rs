@@ -1,0 +1,265 @@
+//! Auto-fix construction: a rule emits a [`FixDraft`] (anchor + replacement); the
+//! engine resolves it to absolute byte [`crate::FixEdit`]s using the source text
+//! and the statement's byte span. A draft that can't be located resolves to
+//! `None`, so an un-locatable fix is simply omitted rather than misapplied.
+
+// Consumers (rules) are added in subsequent tasks; allow dead-code until they land.
+#![allow(dead_code)]
+
+use crate::{Fix, FixEdit};
+
+/// Where an edit attaches, in terms a rule can express without the source text.
+pub(crate) enum FixAnchor {
+    /// Absolute byte span the rule computed itself (e.g. from a node `location`).
+    Absolute { start: u32, end: u32 },
+    /// Insert at the statement's first-token byte (`span.start`).
+    StatementStart,
+    /// Insert at the statement body's end (`span.end`, before any `;`).
+    StatementBodyEnd,
+    /// Insert immediately after the first whole-word, ASCII-case-insensitive
+    /// occurrence of this keyword within the statement span.
+    AfterKeyword(&'static str),
+    /// Replace the identifier token starting at this absolute byte offset.
+    ReplaceTokenAt(u32),
+}
+
+pub(crate) struct FixDraftEdit {
+    pub anchor: FixAnchor,
+    pub replacement: String,
+}
+
+pub(crate) struct FixDraft {
+    pub title: &'static str,
+    pub edits: Vec<FixDraftEdit>,
+}
+
+/// Resolve a draft against the source. `start`/`end` are the statement's byte
+/// span (`geoms[i].start/end`). Returns `None` if any anchor can't be located.
+pub(crate) fn resolve(draft: &FixDraft, sql: &str, start: usize, end: usize) -> Option<Fix> {
+    let mut edits = Vec::with_capacity(draft.edits.len());
+    for e in &draft.edits {
+        let (s, en) = match e.anchor {
+            FixAnchor::Absolute { start, end } => (start as usize, end as usize),
+            FixAnchor::StatementStart => (start, start),
+            FixAnchor::StatementBodyEnd => (end, end),
+            FixAnchor::AfterKeyword(kw) => {
+                let at = keyword_end(sql.get(start..end)?, kw)? + start;
+                (at, at)
+            }
+            FixAnchor::ReplaceTokenAt(at) => {
+                let at = at as usize;
+                (at, at + token_len(sql.get(at..)?)?)
+            }
+        };
+        edits.push(FixEdit {
+            start: u32::try_from(s).ok()?,
+            end: u32::try_from(en).ok()?,
+            replacement: e.replacement.clone(),
+        });
+    }
+    edits.sort_by_key(|e| e.start);
+    Some(Fix {
+        title: draft.title.to_string(),
+        edits,
+    })
+}
+
+/// Byte offset one past the first whole-word, case-insensitive match of `kw` in
+/// `hay`. Whole-word = not flanked by ASCII alphanumerics or `_`.
+fn keyword_end(hay: &str, kw: &str) -> Option<usize> {
+    let (hl, kl) = (hay.as_bytes(), kw.as_bytes());
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut i = 0;
+    while i + kl.len() <= hl.len() {
+        if hl[i..i + kl.len()].eq_ignore_ascii_case(kl)
+            && (i == 0 || !is_word(hl[i - 1]))
+            && (i + kl.len() == hl.len() || !is_word(hl[i + kl.len()]))
+        {
+            return Some(i + kl.len());
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Byte length of the identifier token at the start of `s` (ASCII alphanumerics
+/// and `_`). `None` if `s` doesn't start with one.
+fn token_len(s: &str) -> Option<usize> {
+    let n = s
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        .count();
+    (n > 0).then_some(n)
+}
+
+/// Apply a fix to `sql`, returning the rewritten string. Edits are applied high
+/// offset to low so earlier splices don't shift later ones.
+pub(crate) fn apply(sql: &str, fix: &Fix) -> String {
+    let mut out = sql.to_string();
+    let mut edits = fix.edits.clone();
+    edits.sort_by_key(|e| std::cmp::Reverse(e.start));
+    for e in edits {
+        out.replace_range(e.start as usize..e.end as usize, &e.replacement);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Fix, FixEdit};
+
+    // statement: "CREATE INDEX i ON t (c)" spanning bytes [0, 23)
+    const SQL: &str = "CREATE INDEX i ON t (c);";
+
+    #[test]
+    fn after_keyword_inserts_past_the_word() {
+        let d = FixDraft {
+            title: "Add CONCURRENTLY",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::AfterKeyword("INDEX"),
+                replacement: " CONCURRENTLY".into(),
+            }],
+        };
+        let fix = resolve(&d, SQL, 0, 23).unwrap();
+        // "CREATE INDEX" ends at byte 12.
+        assert_eq!(
+            fix.edits,
+            vec![FixEdit {
+                start: 12,
+                end: 12,
+                replacement: " CONCURRENTLY".into()
+            }]
+        );
+        assert_eq!(apply(SQL, &fix), "CREATE INDEX CONCURRENTLY i ON t (c);");
+    }
+
+    #[test]
+    fn after_keyword_is_case_insensitive_and_word_bounded() {
+        let sql = "create index idx_index ON t (c);"; // 'index' also appears inside idx_index
+        let d = FixDraft {
+            title: "Add CONCURRENTLY",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::AfterKeyword("INDEX"),
+                replacement: " CONCURRENTLY".into(),
+            }],
+        };
+        let fix = resolve(&d, sql, 0, sql.len() - 1).unwrap();
+        // Matches the keyword at bytes [7,12), not the substring inside idx_index.
+        assert_eq!(
+            apply(sql, &fix),
+            "create index CONCURRENTLY idx_index ON t (c);"
+        );
+    }
+
+    #[test]
+    fn after_keyword_absent_resolves_to_none() {
+        let d = FixDraft {
+            title: "x",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::AfterKeyword("MATERIALIZED"),
+                replacement: " z".into(),
+            }],
+        };
+        assert!(resolve(&d, SQL, 0, 23).is_none());
+    }
+
+    #[test]
+    fn statement_body_end_inserts_before_semicolon() {
+        // span end is 23 (before the ';'); body-end insert lands there.
+        let d = FixDraft {
+            title: "Add NOT VALID",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::StatementBodyEnd,
+                replacement: " NOT VALID".into(),
+            }],
+        };
+        let fix = resolve(&d, SQL, 0, 23).unwrap();
+        assert_eq!(
+            fix.edits,
+            vec![FixEdit {
+                start: 23,
+                end: 23,
+                replacement: " NOT VALID".into()
+            }]
+        );
+        assert_eq!(apply(SQL, &fix), "CREATE INDEX i ON t (c) NOT VALID;");
+    }
+
+    #[test]
+    fn statement_start_inserts_a_prologue() {
+        let d = FixDraft {
+            title: "Set lock_timeout",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::StatementStart,
+                replacement: "SET lock_timeout = '5s';\n".into(),
+            }],
+        };
+        let fix = resolve(&d, SQL, 0, 23).unwrap();
+        assert_eq!(
+            apply(SQL, &fix),
+            "SET lock_timeout = '5s';\nCREATE INDEX i ON t (c);"
+        );
+    }
+
+    #[test]
+    fn replace_token_at_swaps_the_identifier() {
+        let sql = "ALTER TABLE t ADD COLUMN c json;"; // 'json' starts at byte 27
+        let d = FixDraft {
+            title: "Use jsonb",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::ReplaceTokenAt(27),
+                replacement: "jsonb".into(),
+            }],
+        };
+        let fix = resolve(&d, sql, 0, sql.len() - 1).unwrap();
+        assert_eq!(
+            fix.edits,
+            vec![FixEdit {
+                start: 27,
+                end: 31,
+                replacement: "jsonb".into()
+            }]
+        );
+        assert_eq!(apply(sql, &fix), "ALTER TABLE t ADD COLUMN c jsonb;");
+    }
+
+    #[test]
+    fn apply_handles_multiple_edits_high_to_low() {
+        let fix = Fix {
+            title: "t".into(),
+            edits: vec![
+                FixEdit {
+                    start: 0,
+                    end: 0,
+                    replacement: "A".into(),
+                },
+                FixEdit {
+                    start: 3,
+                    end: 3,
+                    replacement: "B".into(),
+                },
+            ],
+        };
+        assert_eq!(apply("xyz", &fix), "AxyzB");
+    }
+
+    #[test]
+    fn after_keyword_offsets_are_byte_correct_past_multibyte() {
+        // a multi-byte char (é, 2 bytes) before the keyword must not desync offsets.
+        let sql = "-- é\nCREATE INDEX i ON t (c);";
+        let stmt_start = sql.find("CREATE").unwrap();
+        let d = FixDraft {
+            title: "Add CONCURRENTLY",
+            edits: vec![FixDraftEdit {
+                anchor: FixAnchor::AfterKeyword("INDEX"),
+                replacement: " CONCURRENTLY".into(),
+            }],
+        };
+        let fix = resolve(&d, sql, stmt_start, sql.len() - 1).unwrap();
+        assert_eq!(
+            apply(sql, &fix),
+            "-- é\nCREATE INDEX CONCURRENTLY i ON t (c);"
+        );
+    }
+}
