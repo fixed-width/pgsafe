@@ -97,7 +97,7 @@ function run(): void {
   try {
     render(lint(text, { inTransaction: intx.checked }));
   } catch (e) {
-    resultsEl.innerHTML = `<p class="status">Linter error: ${String(e)}</p>`;
+    resultsEl.replaceChildren(para("status", `Linter error: ${String(e)}`));
   }
 }
 
