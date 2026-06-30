@@ -6,6 +6,12 @@ import { Decoration, type DecorationSet } from "@codemirror/view";
 import { loadLinter, type Envelope, type Finding, type Lint } from "./pgsafe-wasm";
 import { EXAMPLES } from "./examples";
 import { readHash, writeHash } from "./permalink";
+import catalog from "../data/rules.catalog.json" with { type: "json" };
+
+/** Real lint rules — the ones a `pgsafe:ignore` directive can suppress and that
+ *  have a /rules/<id>/ page. The suppression-* hygiene diagnostics are NOT here:
+ *  ignoring one would itself trip suppression-unknown-rule, and there is no rule page. */
+const KNOWN_RULES = new Set<string>((catalog as { rules: string[] }).rules);
 
 const byId = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -252,15 +258,24 @@ function render(env: Envelope): void {
     const sev = document.createElement("span");
     sev.className = f.severity === "error" ? "sev-error" : "sev-warning";
     sev.textContent = f.severity;
-    const link = document.createElement("a");
-    link.href = `/rules/${encodeURIComponent(f.rule_id)}/`;
-    link.textContent = f.rule_id;
-    // Open the rule reference in a new tab — keep the user's migration + findings
-    // in the playground while they read.
-    link.target = "_blank";
-    link.rel = "noopener";
-    link.title = "Open the rule reference in a new tab";
-    head.append(sev, link);
+    let ruleEl: HTMLElement;
+    if (KNOWN_RULES.has(f.rule_id)) {
+      const link = document.createElement("a");
+      link.href = `/rules/${encodeURIComponent(f.rule_id)}/`;
+      link.textContent = f.rule_id;
+      // Open the rule reference in a new tab — keep the user's migration + findings
+      // in the playground while they read.
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.title = "Open the rule reference in a new tab";
+      ruleEl = link;
+    } else {
+      const span = document.createElement("span");
+      span.className = "rule";
+      span.textContent = f.rule_id;
+      ruleEl = span;
+    }
+    head.append(sev, ruleEl);
     if (f.suppression) {
       const tag = document.createElement("span");
       tag.className = "ignored";
@@ -297,22 +312,28 @@ function render(env: Envelope): void {
         });
         actions.append(fixBtn);
       }
-      const ignoreBtn = document.createElement("button");
-      ignoreBtn.type = "button";
-      ignoreBtn.className = "ignore";
-      ignoreBtn.textContent = "Ignore";
-      ignoreBtn.title = "Insert a pgsafe:ignore directive for this finding";
-      ignoreBtn.addEventListener("click", () => {
-        if (view.state.doc !== lintedDoc) return; // doc changed since this lint; a re-lint is pending
-        try {
-          ignoreFinding(f);
-        } catch (e) {
-          console.error("Ignore failed:", e);
-          resultsEl.prepend(para("status", `Could not ignore finding: ${String(e)}`));
-        }
-      });
-      actions.append(ignoreBtn);
-      el.append(head, msg, para("loc", loc), actions);
+      if (KNOWN_RULES.has(f.rule_id)) {
+        const ignoreBtn = document.createElement("button");
+        ignoreBtn.type = "button";
+        ignoreBtn.className = "ignore";
+        ignoreBtn.textContent = "Ignore";
+        ignoreBtn.title = "Insert a pgsafe:ignore directive for this finding";
+        ignoreBtn.addEventListener("click", () => {
+          if (view.state.doc !== lintedDoc) return; // doc changed since this lint; a re-lint is pending
+          try {
+            ignoreFinding(f);
+          } catch (e) {
+            console.error("Ignore failed:", e);
+            resultsEl.prepend(para("status", `Could not ignore finding: ${String(e)}`));
+          }
+        });
+        actions.append(ignoreBtn);
+      }
+      if (actions.childElementCount > 0) {
+        el.append(head, msg, para("loc", loc), actions);
+      } else {
+        el.append(head, msg, para("loc", loc));
+      }
     }
     resultsEl.append(el);
   }

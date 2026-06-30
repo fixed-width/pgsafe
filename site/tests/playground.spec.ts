@@ -176,6 +176,27 @@ test('require-timeout shows a single Fix button that clears all its findings', a
   await expect(page.locator('.finding', { hasText: 'require-timeout' })).toHaveCount(0);
 });
 
+test('suppression-unused finding has no Ignore button and no rule link', async ({ page }) => {
+  // A well-formed ignore directive for a real rule, but that rule produces no finding on
+  // "SELECT 1;" — pgsafe emits a suppression-unused warning.  Ignoring that meta-diagnostic
+  // would itself trip suppression-unknown-rule, so the Ignore button must be absent, and
+  // there is no /rules/suppression-unused/ page so the rule id must not be a link.
+  const hash = Buffer.from(
+    JSON.stringify({
+      sql: '-- pgsafe:ignore add-index-non-concurrent  not here\nSELECT 1;',
+      inTransaction: false,
+    }),
+  ).toString('base64');
+  await page.goto(`/playground/#${hash}`);
+  const finding = page.locator('.finding', { hasText: 'suppression-unused' });
+  await expect(finding).toBeVisible({ timeout: 20_000 });
+  // No Ignore button on a meta-diagnostic — clicking one would produce suppression-unknown-rule.
+  await expect(finding.getByRole('button', { name: 'Ignore' })).toHaveCount(0);
+  // Rule id rendered as a plain span, not a link — /rules/suppression-unused/ would 404.
+  await expect(finding.locator('a')).toHaveCount(0);
+  await expect(finding.locator('span.rule')).toContainText('suppression-unused');
+});
+
 test('re-linting clears a stale hover highlight (no phantom highlight on a clean migration)', async ({ page }) => {
   await page.goto('/playground/');
   await expect(page.locator('.finding').first()).toBeVisible({ timeout: 20_000 });
