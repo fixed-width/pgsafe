@@ -222,6 +222,43 @@ fn require_timeout_prologue_lands_above_leading_directive_non_first_stmt() {
     );
 }
 
+/// Same hazard as above, but the leading directive is a MULTI-LINE block comment.
+/// The anchor walk must climb over the block comment's continuation/closing line
+/// (`   reason */`), not stop below it — otherwise the prologue lands between `*/`
+/// and `CREATE INDEX`, re-firing the suppressed rule and raising suppression-unused.
+#[test]
+fn require_timeout_prologue_lands_above_multiline_block_comment_directive() {
+    let sql = "CREATE TABLE t (data json); -- pgsafe:ignore prefer-jsonb  ok\n\
+               /* pgsafe:ignore add-index-non-concurrent\n\
+               \x20  reason */\n\
+               CREATE INDEX i ON existing (col);";
+    let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+    let rt_fix = fs
+        .iter()
+        .find(|f| f.rule_id == "require-timeout")
+        .and_then(|f| f.fix.clone())
+        .expect("require-timeout finding must carry a fix");
+    let fixed = apply(sql, &rt_fix);
+    let after = lint_sql(&fixed, &LintOptions::default())
+        .unwrap_or_else(|e| panic!("fixed SQL did not parse:\n{fixed}\n{e}"));
+    assert!(
+        after.iter().all(|f| f.rule_id != "require-timeout"),
+        "require-timeout must be cleared after the fix; fixed SQL:\n{fixed}"
+    );
+    assert!(
+        after.iter().all(|f| f.rule_id != "suppression-unused"),
+        "suppression-unused must not fire; fixed SQL:\n{fixed}"
+    );
+    let ainc = after
+        .iter()
+        .find(|f| f.rule_id == "add-index-non-concurrent")
+        .expect("add-index-non-concurrent must still be present (suppressed)");
+    assert!(
+        ainc.is_suppressed(),
+        "add-index-non-concurrent must remain suppressed; fixed SQL:\n{fixed}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Plan 2 producer integration tests (default LintOptions)
 // ---------------------------------------------------------------------------

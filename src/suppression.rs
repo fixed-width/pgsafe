@@ -191,9 +191,13 @@ fn line_start(sql: &str, pos: usize) -> usize {
     sql[..pos].rfind('\n').map_or(0, |i| i + 1)
 }
 
-/// Whether `sql[ls..le]` (a line's content, not including the trailing `\n`) is
-/// an own-line comment: its first non-whitespace byte is the start of a comment
-/// span. A blank line returns `false`.
+/// Whether `sql[ls..le]` (a line's content, not including the trailing `\n`) is a
+/// comment-only line: every non-whitespace byte lies inside a comment span. A
+/// blank line returns `false`. This recognises `--` and single-line `/* */`
+/// comments (whose first byte starts a span) as well as the continuation and
+/// closing lines of a multi-line block comment (e.g. `   reason */`), whose bytes
+/// fall inside the single span that opened on an earlier line — so the prologue
+/// anchor walk does not stop partway through a block comment.
 fn is_own_line_comment(sql: &str, ls: usize, le: usize, spans: &[(usize, usize)]) -> bool {
     let line = match sql.get(ls..le) {
         Some(s) => s,
@@ -205,7 +209,11 @@ fn is_own_line_comment(sql: &str, ls: usize, le: usize, spans: &[(usize, usize)]
     if first >= le {
         return false;
     }
-    spans.iter().any(|&(s, _)| s == first)
+    // Byte of the last non-whitespace char on the line (used only for span
+    // containment comparisons, so a multi-byte boundary is harmless).
+    let last = ls + line.trim_end().len() - 1;
+    let covered = |b: usize| spans.iter().any(|&(s, e)| s <= b && b < e);
+    covered(first) && covered(last)
 }
 
 /// Compute the prologue-insertion anchor for the statement whose first token is at
