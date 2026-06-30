@@ -8,6 +8,9 @@ export interface Finding {
   statement_index: number;
   location: { byte: number; line: number; column: number };
   snippet: string;
+  /** Present when an inline `-- pgsafe:ignore <rule>` directive matched this
+   *  finding: it's still reported but excluded from the gate. */
+  suppression?: { reason: string };
 }
 export interface FileReport {
   file: string;

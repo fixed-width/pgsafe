@@ -82,7 +82,8 @@ function schedule(): void {
 function gatePasses(findings: Finding[]): boolean {
   const level = failon.value;
   if (level === "never") return true;
-  return !findings.some((f) => level === "warning" || f.severity === "error");
+  const active = findings.filter((f) => !f.suppression); // ignored findings don't gate
+  return !active.some((f) => level === "warning" || f.severity === "error");
 }
 
 function para(cls: string, text: string): HTMLParagraphElement {
@@ -106,7 +107,7 @@ function render(env: Envelope): void {
   }
   for (const f of findings) {
     const el = document.createElement("div");
-    el.className = "finding";
+    el.className = f.suppression ? "finding suppressed" : "finding";
     el.addEventListener("mouseenter", () => highlightLine(f.location.line));
     el.addEventListener("mouseleave", () => highlightLine(null));
 
@@ -119,12 +120,17 @@ function render(env: Envelope): void {
     link.href = `/rules/${encodeURIComponent(f.rule_id)}/`;
     link.textContent = f.rule_id;
     head.append(sev, link);
+    if (f.suppression) {
+      const tag = document.createElement("span");
+      tag.className = "ignored";
+      tag.textContent = "ignored";
+      head.append(tag);
+    }
 
-    el.append(
-      head,
-      para("msg", f.message),
-      para("loc", `line ${f.location.line}, col ${f.location.column}`),
-    );
+    const loc = f.suppression
+      ? `ignored — ${f.suppression.reason} · line ${f.location.line}`
+      : `line ${f.location.line}, col ${f.location.column}`;
+    el.append(head, para("msg", f.message), para("loc", loc));
     resultsEl.append(el);
   }
   resultsEl.append(
