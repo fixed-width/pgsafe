@@ -1,9 +1,10 @@
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::ConstrType;
+use pg_query::protobuf::{ColumnDef, ConstrType};
 use pg_query::NodeEnum;
 
 use super::Rule;
+use crate::fix::{FixAnchor, FixDraft, FixDraftEdit};
 use crate::RuleHit;
 
 pub struct PreferBigintPrimaryKey;
@@ -21,6 +22,32 @@ const SMALL_INT_TYPES: &[&str] = &[
     "serial2",
     "smallserial",
 ];
+
+/// Build a fix draft that upgrades a small-integer type to `bigint` or `bigserial`.
+///
+/// Serial aliases (`serial`, `serial2`, `serial4`, `smallserial`) carry implicit
+/// auto-increment sequence semantics; upgrading them to plain `bigint` would silently
+/// drop that, so they become `bigserial` instead.
+///
+/// Guards: `type_name` must be `Some` and `location >= 0` (pg_query sets -1 when the
+/// source position is unknown).
+fn bigint_fix(ty: &str, col: &ColumnDef) -> Option<FixDraft> {
+    let replacement = if matches!(ty, "serial" | "serial2" | "serial4" | "smallserial") {
+        "bigserial"
+    } else {
+        "bigint"
+    };
+    let tn = col.type_name.as_ref()?;
+    // pg_query sets location to -1 when the source position is unknown; reject those.
+    let at = u32::try_from(tn.location).ok()?;
+    Some(FixDraft {
+        title: "Use bigint",
+        edits: vec![FixDraftEdit {
+            anchor: FixAnchor::ReplaceTokenAt(at),
+            replacement: replacement.into(),
+        }],
+    })
+}
 
 impl Rule for PreferBigintPrimaryKey {
     fn id(&self) -> &'static str {
@@ -78,7 +105,7 @@ impl Rule for PreferBigintPrimaryKey {
                                        Migrating a live int primary key to bigint later is a major, \
                                        painful operation — start with bigint."
                                 .into(),
-                            fix: None,
+                            fix: bigint_fix(&ty, col),
                         });
                     }
                 }
@@ -137,5 +164,70 @@ mod tests {
     fn ignores_add_primary_key_on_existing_column() {
         // The pre-existing column's type isn't in the SQL — documented limitation.
         assert!(!fires("ALTER TABLE t ADD PRIMARY KEY (id)"));
+    }
+
+    #[test]
+    fn emits_bigint_fix_on_integer_pk_and_clears() {
+        use crate::fix::apply;
+        let sql = "CREATE TABLE t (id integer PRIMARY KEY)";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "prefer-bigint-primary-key")
+            .unwrap();
+        let fix = f.fix.as_ref().expect("fix present");
+        assert_eq!(fix.title, "Use bigint");
+        let fixed = apply(sql, fix);
+        assert_eq!(fixed, "CREATE TABLE t (id bigint PRIMARY KEY)");
+        assert!(
+            lint_sql(&fixed, &LintOptions::default())
+                .unwrap()
+                .iter()
+                .all(|f| f.rule_id != "prefer-bigint-primary-key"),
+            "fixed SQL must not re-trigger prefer-bigint-primary-key"
+        );
+    }
+
+    #[test]
+    fn emits_bigserial_fix_on_serial_pk_and_clears() {
+        use crate::fix::apply;
+        let sql = "CREATE TABLE t (id serial PRIMARY KEY)";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "prefer-bigint-primary-key")
+            .unwrap();
+        let fix = f.fix.as_ref().expect("fix present");
+        let fixed = apply(sql, fix);
+        // serial → bigserial preserves the auto-increment sequence; plain bigint would not.
+        assert_eq!(fixed, "CREATE TABLE t (id bigserial PRIMARY KEY)");
+        assert!(
+            lint_sql(&fixed, &LintOptions::default())
+                .unwrap()
+                .iter()
+                .all(|f| f.rule_id != "prefer-bigint-primary-key"),
+            "fixed SQL must not re-trigger prefer-bigint-primary-key"
+        );
+    }
+
+    #[test]
+    fn emits_bigint_fix_on_table_level_pk_and_clears() {
+        use crate::fix::apply;
+        let sql = "CREATE TABLE t (id int, PRIMARY KEY (id))";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "prefer-bigint-primary-key")
+            .unwrap();
+        let fix = f.fix.as_ref().expect("fix present");
+        let fixed = apply(sql, fix);
+        assert_eq!(fixed, "CREATE TABLE t (id bigint, PRIMARY KEY (id))");
+        assert!(
+            lint_sql(&fixed, &LintOptions::default())
+                .unwrap()
+                .iter()
+                .all(|f| f.rule_id != "prefer-bigint-primary-key"),
+            "fixed SQL must not re-trigger prefer-bigint-primary-key"
+        );
     }
 }
