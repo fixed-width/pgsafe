@@ -1,7 +1,7 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: Configuration — pgsafe
-description: Configure pgsafe with .pgsafe.toml, suppress findings, and select which files to lint.
+description: Configure pgsafe with pgsafe.toml, suppress findings, and select which files to lint.
 ---
 
 # Configuration
@@ -14,7 +14,7 @@ nearest config file (stopping at the `.git` boundary). The hidden name `.pgsafe.
 works; if a directory holds both, the plain `pgsafe.toml` wins. Every key is optional.
 
 For a fully-annotated starting point covering every option, run `pgsafe --example-config`
-(it prints to stdout): `pgsafe --example-config > .pgsafe.toml`.
+(it prints to stdout): `pgsafe --example-config > pgsafe.toml`.
 
 ```toml
 # Default flags (an explicit CLI flag still wins over these).

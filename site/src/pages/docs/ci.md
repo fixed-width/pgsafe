@@ -52,7 +52,7 @@ All inputs are optional.
 | `version` | the pinned ref | pgsafe release to download, e.g. `v0.8.1`. Falls back to the latest release if the pinned ref has no binary. |
 | `files` | `*.sql` | One or more globs selecting which changed files to lint, comma- or newline-separated; linted if it matches any. `*` spans `/`, so `*.sql` matches any depth and `db/migrate/*.sql` scopes to one tree. |
 | `fail-on` | `warning` | Minimum severity that fails the check: `error`, `warning`, or `never`. |
-| `config` | discovery | Path to a `.pgsafe.toml`. Empty uses pgsafe's own [config discovery](/docs/config/). |
+| `config` | discovery | Path to a `pgsafe.toml`. Empty uses pgsafe's own [config discovery](/docs/config/). |
 | `working-directory` | `.` | Directory to lint from. |
 | `verify-provenance` | `true` | Verify the binary's SLSA build provenance with `gh attestation verify` before use. Set `false` to pin a release built before provenance (pre-v0.8.3). |
 
