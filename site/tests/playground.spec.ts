@@ -124,6 +124,58 @@ test('fail-on toggles the gate verdict', async ({ page }) => {
   await expect(page.locator('.gate')).toContainText('would pass');
 });
 
+test('Fix button applies the fix and clears the finding', async ({ page }) => {
+  const hash = Buffer.from(
+    JSON.stringify({ sql: 'CREATE INDEX i ON t (a);', inTransaction: false }),
+  ).toString('base64');
+  await page.goto(`/playground/#${hash}`);
+  const finding = page.locator('.finding', { hasText: 'add-index-non-concurrent' });
+  await expect(finding).toBeVisible({ timeout: 20_000 });
+  await finding.getByRole('button', { name: /CONCURRENTLY|Fix/ }).click();
+  // The editor now carries the fix and the finding is gone.
+  await expect(page.locator('.cm-content')).toContainText('CREATE INDEX CONCURRENTLY i ON t (a)');
+  await expect(page.locator('.finding', { hasText: 'add-index-non-concurrent' })).toHaveCount(0);
+});
+
+test('Ignore button inserts a provenance directive and suppresses the finding', async ({ page }) => {
+  const hash = Buffer.from(
+    JSON.stringify({ sql: 'CREATE INDEX i ON t (a);', inTransaction: false }),
+  ).toString('base64');
+  await page.goto(`/playground/#${hash}`);
+  const finding = page.locator('.finding', { hasText: 'add-index-non-concurrent' });
+  await expect(finding).toBeVisible({ timeout: 20_000 });
+  await finding.getByRole('button', { name: 'Ignore' }).click();
+  await expect(page.locator('.cm-content')).toContainText('pgsafe:ignore add-index-non-concurrent');
+  // The finding is now rendered as suppressed (dimmed + "ignored" tag).
+  await expect(page.locator('.finding.suppressed', { hasText: 'add-index-non-concurrent' })).toBeVisible();
+});
+
+test('multi-byte SQL: Fix applies at the correct offset', async ({ page }) => {
+  // A non-ASCII comment before the statement shifts byte offsets vs char indices.
+  const hash = Buffer.from(
+    JSON.stringify({ sql: '-- café\nCREATE INDEX i ON t (a);', inTransaction: false }),
+  ).toString('base64');
+  await page.goto(`/playground/#${hash}`);
+  await expect(page.locator('.finding', { hasText: 'add-index-non-concurrent' })).toBeVisible({ timeout: 20_000 });
+  await page.locator('.finding', { hasText: 'add-index-non-concurrent' }).getByRole('button', { name: /CONCURRENTLY|Fix/ }).click();
+  await expect(page.locator('.cm-content')).toContainText('-- café');
+  await expect(page.locator('.cm-content')).toContainText('CREATE INDEX CONCURRENTLY i ON t (a)');
+});
+
+test('require-timeout shows a single Fix button that clears all its findings', async ({ page }) => {
+  const hash = Buffer.from(
+    JSON.stringify({ sql: 'CREATE INDEX i ON t (a);\nDROP TABLE other;', inTransaction: false }),
+  ).toString('base64');
+  await page.goto(`/playground/#${hash}`);
+  await expect(page.locator('.finding').first()).toBeVisible({ timeout: 20_000 });
+  // Exactly one require-timeout row carries a Fix button (the first flagged finding).
+  const timeoutRows = page.locator('.finding', { hasText: 'require-timeout' });
+  await expect(timeoutRows.locator('button.fix')).toHaveCount(1);
+  await timeoutRows.locator('button.fix').click();
+  await expect(page.locator('.cm-content')).toContainText("SET lock_timeout = '5s';");
+  await expect(page.locator('.finding', { hasText: 'require-timeout' })).toHaveCount(0);
+});
+
 test('re-linting clears a stale hover highlight (no phantom highlight on a clean migration)', async ({ page }) => {
   await page.goto('/playground/');
   await expect(page.locator('.finding').first()).toBeVisible({ timeout: 20_000 });
