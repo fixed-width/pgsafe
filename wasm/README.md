@@ -51,7 +51,7 @@ encodes, each discovered against a concrete failure:
    behind `-D_WASI_EMULATED_*`; the matching `-lwasi-emulated-*` archives are
    linked.
 4. **Missing headers** — wasi-libc has no `netdb.h`, `pwd.h`, `grp.h`,
-   `sys/wait.h`, `syslog.h`. `libpg_query` includes them for types only (the
+   `sys/wait.h`, `syslog.h`. `libpg_query` includes them for types/constants only (the
    parser never uses them), so minimal stubs in `wasi-shims/` satisfy the
    compile.
 5. **`wasi-shims/prelude.h`** (force-included via `-include`): defines the BSD

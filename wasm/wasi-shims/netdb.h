@@ -3,8 +3,8 @@
  * wasi-libc has no networking name resolution. libpg_query (the PostgreSQL
  * parser) transitively #includes <netdb.h> through pqcomm.h/ip.h for types,
  * but the parser code path never resolves hosts, so type + prototype
- * declarations are enough to compile. If any of these are actually called,
- * the link fails with an undefined symbol (see wasi-shims/stubs.c). */
+ * declarations are enough to compile. These are prototype-only (no
+ * definitions), so any real call would be an unresolved symbol at link time. */
 #ifndef PGSAFE_WASI_SHIM_NETDB_H
 #define PGSAFE_WASI_SHIM_NETDB_H
 

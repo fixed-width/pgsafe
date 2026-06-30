@@ -11,8 +11,8 @@ export AR_wasm32_wasip1="$WASI_SDK_PATH/bin/llvm-ar"
 # must be enabled at compile time with -D_WASI_EMULATED_* and linked below.
 WASI_EMUL_DEFS="-D_WASI_EMULATED_SIGNAL -D_WASI_EMULATED_MMAN -D_WASI_EMULATED_PROCESS_CLOCKS -D_WASI_EMULATED_GETPID"
 # Stub headers for the few POSIX headers wasi-libc lacks (netdb.h, pwd.h,
-# grp.h, sys/wait.h). libpg_query includes them for types only; the parser
-# never uses them. -I before the sysroot so the stubs resolve.
+# grp.h, sys/wait.h, syslog.h). libpg_query includes them for types/constants
+# only; the parser never uses them. -I before the sysroot so the stubs resolve.
 SHIM_DIR="$(cd "$(dirname "$0")/wasi-shims" && pwd)"
 # -include force-prepends the prelude (missing errno constants + sigsetjmp map).
 SHIM_FLAGS="-I$SHIM_DIR -include $SHIM_DIR/prelude.h"
@@ -23,6 +23,7 @@ export CFLAGS_wasm32_wasip1="$SHIM_FLAGS --sysroot=$WASI_SDK_PATH/share/wasi-sys
 # clang (above).
 export LIBCLANG_PATH="$WASI_SDK_PATH/lib"
 CLANG_BUILTIN_INC=$(set -- "$WASI_SDK_PATH"/lib/clang/*/include; echo "$1")
+[ -d "$CLANG_BUILTIN_INC" ] || { echo "error: clang builtin include dir not found under $WASI_SDK_PATH/lib/clang" >&2; exit 1; }
 # -fvisibility=default is REQUIRED: wasm32 defaults function visibility to
 # hidden, and bindgen silently skips hidden-visibility functions — without this
 # the bindings contain types/consts but ZERO functions, and pg_query won't link.

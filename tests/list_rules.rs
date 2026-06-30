@@ -9,8 +9,8 @@ fn list_rules_human_lists_known_ids() {
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let ids: Vec<&str> = stdout.lines().collect();
-    assert!(ids.contains(&"add-index-non-concurrent"), "got: {stdout}");
-    assert_eq!(ids.len(), pgsafe::list_rule_ids().len());
+    // Exact, ordered match — catches a rename/reorder that preserves the count.
+    assert_eq!(ids, pgsafe::list_rule_ids(), "got: {stdout}");
 }
 
 #[test]
@@ -23,7 +23,12 @@ fn list_rules_json_is_a_versioned_envelope() {
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     let v: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(v["schema_version"], 1);
-    let rules = v["rules"].as_array().unwrap();
-    assert_eq!(rules.len(), pgsafe::list_rule_ids().len());
-    assert!(rules.iter().any(|r| r == "add-index-non-concurrent"));
+    let rules: Vec<&str> = v["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r.as_str().unwrap())
+        .collect();
+    // JSON and the human list must be the same ordered set as the catalog.
+    assert_eq!(rules, pgsafe::list_rule_ids());
 }

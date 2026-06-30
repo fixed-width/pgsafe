@@ -1,4 +1,5 @@
-/* Force-included (clang -include) before every translation unit.
+/* Pulled in by the force-included prelude.h (which clang -include's), so it
+ * lands before every translation unit.
  *
  * wasi-libc's <errno.h> omits a number of BSD/Linux errno constants that
  * Postgres's src/port/strerror.c (and a few others) reference in switch arms.
