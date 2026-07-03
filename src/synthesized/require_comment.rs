@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{ObjectType, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::{lintable_create_relation, qualified_key, rangevar_key};
+use super::newtable::{lintable_create_relation, qualified_key, rangevar_key};
 use crate::rules::defined_columns;
 
 pub(crate) const ID: &str = "require-comment";

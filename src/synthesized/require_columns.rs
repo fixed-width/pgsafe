@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pg_query::protobuf::RawStmt;
 use pg_query::NodeEnum;
 
-use crate::newtable::{lintable_create_relation, rangevar_key};
+use super::newtable::{lintable_create_relation, rangevar_key};
 use crate::rules::defined_columns;
 
 pub(crate) const ID: &str = "require-columns";

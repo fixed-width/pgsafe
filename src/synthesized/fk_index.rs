@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pg_query::protobuf::{ConstrType, Node, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::rangevar_key;
+use super::newtable::rangevar_key;
 use crate::rules::{column_has_constraint, defined_columns, defined_table_constraints};
 
 pub(crate) const ID: &str = "fk-without-covering-index";

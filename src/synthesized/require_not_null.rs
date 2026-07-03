@@ -8,7 +8,7 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{AlterTableType, ColumnDef, ConstrType, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::{lintable_create_relation, rangevar_key};
+use super::newtable::{lintable_create_relation, rangevar_key};
 use crate::rules::{
     alter_table_cmds, column_base_type, column_has_constraint, defined_columns,
     defined_table_constraints,

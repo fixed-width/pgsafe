@@ -21,7 +21,7 @@ const CANDIDATES: &[&str] = &["pgsafe.toml", ".pgsafe.toml"];
 /// The annotated example config (`pgsafe --example-config`). Every option is shown, commented
 /// out, so the file is a valid no-op as-is. Kept in sync with the schema by `example_config_*`
 /// tests below.
-pub(crate) const EXAMPLE_CONFIG: &str = include_str!("../config-example.toml");
+pub(crate) const EXAMPLE_CONFIG: &str = include_str!("../../config-example.toml");
 
 /// A config problem. Rendered by the CLI as `error: {0}` and mapped to exit 2.
 #[derive(Debug)]
