@@ -8,9 +8,12 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::{
-    config, gate, lint_input, render_errors, render_github, render_human, render_json, FailOn,
-    FileReport, Format, LintOptions,
+    gate, lint_input, render_errors, render_github, render_human, render_json, FailOn, FileReport,
+    Format, LintOptions,
 };
+
+mod config;
+mod gitdiff;
 
 /// The flags shared by every pgsafe-style CLI. Flatten this into a larger
 /// `clap` parser to inherit them.
@@ -257,7 +260,7 @@ fn select_inputs(
             if args.paths.iter().any(|p| p == "-") {
                 return Err("`-` (stdin) cannot be combined with --git-diff".to_string());
             }
-            let files = crate::gitdiff::changed_sql_files(reference, &args.paths)?;
+            let files = gitdiff::changed_sql_files(reference, &args.paths)?;
             read_files(&files)
         }
         None => {

@@ -14,6 +14,18 @@ The library core builds without `clap` (the CLI lives behind the default `cli` f
 cargo build --no-default-features   # compiles the embeddable core, no binary
 ```
 
+## Source layout
+
+The linter has two families of checks plus the engine that drives them:
+
+| Path | What lives there |
+|------|------------------|
+| `src/lib.rs` | The engine entry point, `lint_sql`: parse the SQL, run every registered rule per statement, then hand off to `synthesized::run_all`, then apply severity overrides and resolve `-- pgsafe:ignore` suppressions. |
+| `src/rules/` | **Registered AST rules** — one `Rule` trait impl per file, listed in `rules/mod.rs`. Each matches a single statement's parse node. Adding one: drop in a new file and add it to the `RULES` vec; its `id()` flows into the public catalog automatically. |
+| `src/synthesized/` | **Engine-synthesized lints** — checks that are *not* `Rule` impls: the always-on cross-statement checks (`txn`, `timeout`, `identifier`, `fk_index`, `enum_value`) and the opt-in/config-gated policy lints (`require_pk`, `naming`, …), all dispatched by `run_all`. Adding one: add the module, dispatch it in `run_all`, and add its `ID` to `known_rule_ids` in `lib.rs`. The `newtable` and `plpgsql` submodules are shared helpers, not rules. |
+| `src/cli/` | The `cli`-feature front end: arg parsing (`CommonArgs`), `pgsafe.toml` discovery/parsing (`config`), and `--git-diff` file selection (`gitdiff`). |
+| `src/output.rs`, `src/fix.rs`, `src/suppression.rs` | Rendering (human/JSON/GitHub), auto-fix lowering, and inline-suppression parsing/resolution. |
+
 ## Benchmarks
 
 ```sh

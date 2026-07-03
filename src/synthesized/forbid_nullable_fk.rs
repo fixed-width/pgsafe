@@ -8,8 +8,8 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{ConstrType, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::{lintable_create_relation, rangevar_key};
-use crate::require_not_null::{column_satisfied, columns_set_not_null, pk_column_names};
+use super::newtable::{lintable_create_relation, rangevar_key};
+use super::require_not_null::{column_satisfied, columns_set_not_null, pk_column_names};
 use crate::rules::{column_has_constraint, defined_columns, defined_table_constraints};
 
 pub(crate) const ID: &str = "forbid-nullable-fk";

@@ -1,6 +1,6 @@
 //! Policy lint (opt-in, off by default): flag a `DO` block that contains SQL pgsafe cannot statically
 //! analyze — a dynamic `EXECUTE`, or a body that would not parse. Static statements inside a `DO`
-//! block are linted by default (see [`crate::plpgsql`]); this rule surfaces only the residual blind
+//! block are linted by default (see [`super::plpgsql`]); this rule surfaces only the residual blind
 //! spot. The residue signal is computed in `lint_sql`; this module holds the rule's identity and copy.
 
 /// The rule id.

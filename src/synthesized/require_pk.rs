@@ -7,7 +7,7 @@ use std::collections::BTreeSet;
 use pg_query::protobuf::{ConstrType, RawStmt};
 use pg_query::NodeEnum;
 
-use crate::newtable::{lintable_create_relation, rangevar_key};
+use super::newtable::{lintable_create_relation, rangevar_key};
 use crate::rules::{column_has_constraint, defined_columns, defined_table_constraints};
 
 pub(crate) const ID: &str = "require-primary-key";
