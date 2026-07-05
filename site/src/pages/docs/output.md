@@ -81,6 +81,12 @@ unified diff:
 pgsafe --diff db/migrate/003_add_index.sql
 ```
 
+The output is a standard unified diff, so it pipes straight into `git apply`:
+
+```sh
+pgsafe --diff db/migrate/003_add_index.sql | git apply
+```
+
 Or apply it — in place for a file, to stdout when reading from stdin:
 
 ```sh

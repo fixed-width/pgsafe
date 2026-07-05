@@ -34,6 +34,12 @@ Findings that have an unambiguous mechanical rewrite carry a fix. Preview them:
 pgsafe --diff db/migrate/003_add_index.sql
 ```
 
+The output is a standard unified diff, so it pipes straight into `git apply`:
+
+```sh
+pgsafe --diff db/migrate/003_add_index.sql | git apply
+```
+
 Apply them in place (or to stdout when reading stdin):
 
 ```sh
