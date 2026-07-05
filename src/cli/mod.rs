@@ -13,6 +13,7 @@ use crate::{
 };
 
 mod config;
+mod fix;
 mod gitdiff;
 
 /// The flags shared by every pgsafe-style CLI. Flatten this into a larger
@@ -53,6 +54,13 @@ pub struct CommonArgs {
     /// envelope with `--format json`) and exit.
     #[arg(long)]
     pub list_rules: bool,
+    /// Apply fixes in place (files) or to stdout (stdin). Human-output only;
+    /// cannot combine with --diff or --format json/github.
+    #[arg(long, conflicts_with = "diff")]
+    pub fix: bool,
+    /// Preview the fixes --fix would apply as a unified diff; writes nothing.
+    #[arg(long)]
+    pub diff: bool,
 }
 
 /// The `pgsafe` binary's top-level parser.
@@ -158,6 +166,27 @@ pub fn run(args: CommonArgs) -> ExitCode {
             }
         }
         return ExitCode::SUCCESS;
+    }
+    if args.fix || args.diff {
+        if matches!(args.format, Some(Format::Json | Format::Github)) {
+            eprintln!(
+                "error: --fix/--diff cannot be combined with --format json or --format github"
+            );
+            return ExitCode::from(2);
+        }
+        let r = match resolve(&args) {
+            Ok(r) => r,
+            Err(msg) => {
+                eprintln!("error: {msg}");
+                return ExitCode::from(2);
+            }
+        };
+        let mode = if args.fix {
+            fix::Mode::Apply
+        } else {
+            fix::Mode::Diff
+        };
+        return fix::run(&r, mode);
     }
     let r = match resolve(&args) {
         Ok(r) => r,

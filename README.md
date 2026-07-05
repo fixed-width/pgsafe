@@ -26,6 +26,24 @@ pgsafe --format json migration.sql   # machine-readable
 pgsafe --list-rules                  # every rule this build checks
 ```
 
+### Applying fixes
+
+Findings that have an unambiguous mechanical rewrite carry a fix. Preview them:
+
+```sh
+pgsafe --diff db/migrate/003_add_index.sql
+```
+
+Apply them in place (or to stdout when reading stdin):
+
+```sh
+pgsafe --fix db/migrate/003_add_index.sql
+```
+
+`--fix` and `--diff` are human-output only and cannot be combined with each other
+or with `--format json`/`--format github`. A `-- pgsafe:ignore` finding is never
+auto-fixed. After `--fix`, the exit code reflects re-linting the fixed file.
+
 Run it in CI with the [GitHub Action](https://pgsafe.fixedwidth.tech/docs/ci/):
 
 ```yaml
