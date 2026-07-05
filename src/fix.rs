@@ -189,6 +189,21 @@ pub(crate) fn apply_all(sql: &str, fixes: &[&Fix]) -> Applied {
         applied += 1;
     }
     accepted.sort_by_key(|e| e.start);
+    debug_assert!(
+        accepted.windows(2).all(|w| w[0].end <= w[1].start),
+        "apply_all produced overlapping merged edits"
+    );
+    // Uphold the Fix.edits invariant ("at least one edit"): never hand `apply` an
+    // empty-edits Fix. An empty accepted set means nothing to splice — the input is
+    // returned unchanged.
+    if accepted.is_empty() {
+        return Applied {
+            sql: sql.to_string(),
+            edits: accepted,
+            applied,
+            skipped_overlapping,
+        };
+    }
     let merged = Fix {
         title: String::new(),
         edits: accepted.clone(),
