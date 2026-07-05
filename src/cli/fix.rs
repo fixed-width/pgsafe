@@ -157,4 +157,37 @@ mod tests {
              +CREATE INDEX i ON t (c);\n"
         );
     }
+
+    #[test]
+    fn two_hunks_running_delta_shifts_second_hunk_new_start() {
+        // Lines: 0 "CREATE INDEX i ON a (c);", 1 "SELECT 1;", 2 "SELECT 2;",
+        //        3 "CREATE INDEX j ON b (c);". "CREATE INDEX" on line 3 starts at byte 45,
+        //        so the insertion point after it is byte 57.
+        let sql = "CREATE INDEX i ON a (c);\nSELECT 1;\nSELECT 2;\nCREATE INDEX j ON b (c);\n";
+        let edits = vec![
+            FixEdit {
+                start: 0,
+                end: 0,
+                replacement: "SET lock_timeout = '5s';\n".into(),
+            },
+            FixEdit {
+                start: 57,
+                end: 57,
+                replacement: " CONCURRENTLY".into(),
+            },
+        ];
+        let out = render_diff("f.sql", sql, &edits);
+        assert_eq!(
+            out,
+            "--- f.sql\n\
+             +++ f.sql (fixed)\n\
+             @@ -1,1 +1,2 @@\n\
+             -CREATE INDEX i ON a (c);\n\
+             +SET lock_timeout = '5s';\n\
+             +CREATE INDEX i ON a (c);\n\
+             @@ -4,1 +5,1 @@\n\
+             -CREATE INDEX j ON b (c);\n\
+             +CREATE INDEX CONCURRENTLY j ON b (c);\n"
+        );
+    }
 }
