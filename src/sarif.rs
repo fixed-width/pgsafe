@@ -160,7 +160,7 @@ pub fn render_sarif(reports: &[FileReport]) -> Result<String, String> {
     let mut results: Vec<SarifResult> = Vec::new();
     let mut notifications: Vec<Notification> = Vec::new();
     let mut execution_successful = true;
-    let mut fp_ordinals: HashMap<(String, String, String), u32> = HashMap::new();
+    let mut fp_ordinals: HashMap<(&str, &str, &str), u32> = HashMap::new();
 
     for r in reports {
         if let Some(err) = &r.error {
@@ -192,11 +192,15 @@ pub fn render_sarif(reports: &[FileReport]) -> Result<String, String> {
             } else {
                 Vec::new()
             };
-            // Line-independent fingerprint; the per-(file, rule, snippet) ordinal keeps
-            // byte-identical statements distinct without depending on line numbers.
+            // Line-independent fingerprint: rule_id + the trimmed statement text + a
+            // per-(file, rule, snippet) ordinal (no line/column). GitHub scopes alert
+            // identity by (file path + fingerprint), so the path is intentionally not
+            // hashed — identical statements in different files share a value but stay
+            // distinct by path (mirrors GitHub's own path-less primaryLocationLineHash).
             let ordinal = {
-                let key = (r.name.clone(), f.rule_id.clone(), f.snippet.clone());
-                let n = fp_ordinals.entry(key).or_insert(0);
+                let n = fp_ordinals
+                    .entry((r.name.as_str(), f.rule_id.as_str(), f.snippet.as_str()))
+                    .or_insert(0);
                 let cur = *n;
                 *n += 1;
                 cur
@@ -560,5 +564,81 @@ mod tests {
                 .to_string()
         };
         assert_ne!(fp("add-index-non-concurrent"), fp("drop-table"));
+    }
+
+    #[test]
+    fn same_rule_different_snippet_get_distinct_fingerprints() {
+        // Two different statements of the SAME rule: each is the first occurrence of its
+        // own (rule, snippet), so both get ordinal 0 — the only differing hash input is the
+        // snippet. Distinct fingerprints therefore prove `snippet` participates in the hash.
+        let reports = vec![lint_input(
+            "m.sql",
+            "CREATE INDEX i ON t (x);\nCREATE INDEX j ON u (y);",
+            &LintOptions::default(),
+        )];
+        let v = value(&reports);
+        let fps: Vec<String> = v["runs"][0]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["ruleId"] == "add-index-non-concurrent")
+            .map(|r| {
+                r["partialFingerprints"]["pgsafe/v1"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(fps.len(), 2);
+        assert_ne!(fps[0], fps[1]);
+    }
+
+    #[test]
+    fn cross_file_identical_statements_share_fingerprint_by_design() {
+        // The file path is intentionally NOT hashed: GitHub scopes alert identity by
+        // (path + fingerprint), so identical statements in two files SHARE a fingerprint
+        // value and stay distinct by their differing `artifactLocation.uri`. This pins
+        // that intended behavior (it mirrors GitHub's own path-less primaryLocationLineHash).
+        let stmt = "CREATE INDEX i ON t (x);";
+        let reports = vec![
+            lint_input("a.sql", stmt, &LintOptions::default()),
+            lint_input("b.sql", stmt, &LintOptions::default()),
+        ];
+        let v = value(&reports);
+        let fp_for = |uri: &str| -> String {
+            v["runs"][0]["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| {
+                    r["ruleId"] == "add-index-non-concurrent"
+                        && r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == uri
+                })
+                .unwrap()["partialFingerprints"]["pgsafe/v1"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(fp_for("a.sql"), fp_for("b.sql"));
+    }
+
+    #[test]
+    fn suppressed_finding_still_carries_a_fingerprint() {
+        // A dismissed alert needs a stable identity too — suppressed findings keep a
+        // fingerprint (they are emitted as results, just marked suppressed).
+        let sql = "-- pgsafe:ignore add-index-non-concurrent  maintenance window\n\
+                   CREATE INDEX i ON t (x);";
+        let reports = vec![lint_input("m.sql", sql, &LintOptions::default())];
+        let v = value(&reports);
+        let r = v["runs"][0]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["ruleId"] == "add-index-non-concurrent")
+            .unwrap()
+            .clone();
+        assert_eq!(r["suppressions"][0]["kind"], "inSource");
+        let fp = r["partialFingerprints"]["pgsafe/v1"].as_str().unwrap();
+        assert_eq!(fp.len(), 16);
     }
 }
