@@ -254,3 +254,19 @@ fn fix_write_error_exits_2() {
         .code(2)
         .stderr(predicate::str::contains(f.to_str().unwrap()));
 }
+
+#[test]
+fn fix_write_is_atomic_no_temp_left_behind() {
+    let dir = tempdir().unwrap();
+    let f = dir.path().join("m.sql");
+    fs::write(&f, "CREATE INDEX i ON t (x);\n").unwrap();
+    let _ = pgsafe().arg("--fix").arg(&f).assert();
+    // Fixed content written, and no leftover *.tmp sibling.
+    assert!(fs::read_to_string(&f).unwrap().contains("CONCURRENTLY"));
+    let siblings: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+        .collect();
+    assert!(siblings.is_empty(), "temp file left behind: {siblings:?}");
+}

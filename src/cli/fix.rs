@@ -83,7 +83,7 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                 if name == STDIN_NAME {
                     print!("{}", applied.sql);
                 } else if changed {
-                    if let Err(e) = std::fs::write(name, &applied.sql) {
+                    if let Err(e) = write_atomic(name, &applied.sql) {
                         eprintln!("error: {name}: {e}");
                         had_error = true;
                         continue;
@@ -135,6 +135,32 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+/// Write `contents` to `path` atomically: refuse a read-only target (preserving the
+/// "read-only file exits 2" behavior), then write a sibling temp and rename it over
+/// the target (atomic within the directory; replaces on Unix and Windows). A failure
+/// after the temp is created removes it, so no stray temp is left behind.
+fn write_atomic(path: &str, contents: &str) -> std::io::Result<()> {
+    use std::io::ErrorKind;
+    if let Ok(meta) = std::fs::metadata(path) {
+        if meta.permissions().readonly() {
+            return Err(std::io::Error::new(
+                ErrorKind::PermissionDenied,
+                "destination is read-only",
+            ));
+        }
+    }
+    let tmp = format!("{path}.pgsafe.{}.tmp", std::process::id());
+    if let Err(e) = std::fs::write(&tmp, contents) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// 0-based line index containing byte offset `off` (clamped to the last line).
