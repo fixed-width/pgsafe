@@ -78,24 +78,17 @@ To apply a fix from the command line, see [Usage](/docs/usage/).
 
 `--format sarif` emits SARIF 2.1.0, for upload to GitHub code scanning:
 
-```yaml
-- run: pgsafe --format sarif db/migrate/*.sql > pgsafe.sarif
-- uses: github/codeql-action/upload-sarif@v3
-  # pgsafe exits non-zero when findings gate, so upload the results regardless:
-  if: always()
-  with:
-    sarif_file: pgsafe.sarif
+```sh
+pgsafe --format sarif db/migrate/*.sql > pgsafe.sarif
 ```
 
 Findings (including `-- pgsafe:ignore`-suppressed ones, marked dismissed via SARIF
 `suppressions`) become SARIF results; a file that fails to parse becomes a tool-execution
-notification instead of a result.
+notification instead of a result. A findings run (exit 1) and a parse error (exit 2) both
+still write valid SARIF; a configuration or I/O error (exit 2) writes none.
 
-A findings run (exit 1) and a parse error (exit 2) both still write valid SARIF, so
-`if: always()` uploads the results in the common cases. A configuration or I/O error
-(e.g. an unreadable path) exits 2 *without* writing SARIF — the resulting 0-byte file
-then (correctly) fails the upload. Pass repo-relative migration paths: absolute paths and
-stdin don't map back to files GitHub can annotate as code-scanning alerts.
+To upload this into GitHub code scanning from a workflow, see
+[CI & GitHub Action](/docs/ci/).
 
 ## Severity & gating
 
