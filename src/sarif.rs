@@ -333,4 +333,40 @@ mod tests {
         assert_eq!(v["runs"][0]["results"].as_array().unwrap().len(), 0);
         assert_eq!(v["runs"][0]["invocations"][0]["executionSuccessful"], true);
     }
+
+    #[test]
+    fn a_rule_firing_twice_dedups_into_one_rules_entry() {
+        let reports = vec![lint_input(
+            "m.sql",
+            "CREATE INDEX i ON a (x);\nCREATE INDEX j ON b (y);",
+            &LintOptions::default(),
+        )];
+        let v = value(&reports);
+        let rules = v["runs"][0]["tool"]["driver"]["rules"].as_array().unwrap();
+        // add-index-non-concurrent appears exactly once in rules[].
+        let rule_count = rules
+            .iter()
+            .filter(|rd| rd["id"] == "add-index-non-concurrent")
+            .count();
+        assert_eq!(rule_count, 1);
+        // both results for that rule share one ruleIndex, which resolves back to it.
+        let results = v["runs"][0]["results"].as_array().unwrap();
+        let idxs: Vec<u64> = results
+            .iter()
+            .filter(|r| r["ruleId"] == "add-index-non-concurrent")
+            .map(|r| r["ruleIndex"].as_u64().unwrap())
+            .collect();
+        assert_eq!(idxs.len(), 2);
+        assert_eq!(idxs[0], idxs[1]);
+        let idx = usize::try_from(idxs[0]).unwrap();
+        assert_eq!(rules[idx]["id"], "add-index-non-concurrent");
+    }
+
+    #[test]
+    fn empty_reports_is_valid_sarif() {
+        let v: serde_json::Value = serde_json::from_str(&render_sarif(&[]).unwrap()).unwrap();
+        assert_eq!(v["version"], "2.1.0");
+        assert_eq!(v["runs"][0]["results"].as_array().unwrap().len(), 0);
+        assert_eq!(v["runs"][0]["invocations"][0]["executionSuccessful"], true);
+    }
 }
