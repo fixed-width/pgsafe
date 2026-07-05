@@ -79,7 +79,7 @@ mod tests {
             .expect("rule must fire");
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Add NOT VALID");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(
             fixed,
             "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id) NOT VALID;"
@@ -102,7 +102,7 @@ mod tests {
             .find(|f| f.rule_id == "add-fk-without-not-valid")
             .expect("rule must fire");
         let fix = f.fix.as_ref().expect("fix present");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(
             fixed,
             "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id) NOT VALID"

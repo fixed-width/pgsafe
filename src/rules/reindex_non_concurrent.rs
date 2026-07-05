@@ -85,7 +85,7 @@ mod tests {
             .unwrap();
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Add CONCURRENTLY");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "REINDEX INDEX CONCURRENTLY idx;");
         // Applying it clears the finding.
         assert!(findings(&fixed)
@@ -114,7 +114,7 @@ mod tests {
             .expect("rule must fire for REINDEX TABLE");
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Add CONCURRENTLY");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "REINDEX TABLE CONCURRENTLY t;");
         assert!(findings(&fixed)
             .iter()

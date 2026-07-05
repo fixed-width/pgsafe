@@ -180,7 +180,7 @@ mod tests {
             .unwrap();
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Use bigint");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "CREATE TABLE t (id bigint PRIMARY KEY)");
         assert!(
             lint_sql(&fixed, &LintOptions::default())
@@ -201,7 +201,7 @@ mod tests {
             .find(|f| f.rule_id == "prefer-bigint-primary-key")
             .unwrap();
         let fix = f.fix.as_ref().expect("fix present");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         // serial → bigserial preserves the auto-increment sequence; plain bigint would not.
         assert_eq!(fixed, "CREATE TABLE t (id bigserial PRIMARY KEY)");
         assert!(
@@ -223,7 +223,7 @@ mod tests {
             .find(|f| f.rule_id == "prefer-bigint-primary-key")
             .unwrap();
         let fix = f.fix.as_ref().expect("fix present");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "CREATE TABLE t (id bigint, PRIMARY KEY (id))");
         assert!(
             lint_sql(&fixed, &LintOptions::default())

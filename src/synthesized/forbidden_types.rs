@@ -361,7 +361,7 @@ mod tests {
             .fix
             .as_ref()
             .expect("fix must be present for single-token type");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "CREATE TABLE t (created timestamptz)");
         assert!(
             lint_sql(&fixed, &forbid_opts(&[("timestamp", "timestamptz")]))
@@ -385,7 +385,7 @@ mod tests {
             .fix
             .as_ref()
             .expect("fix must be present for single-token type");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "ALTER TABLE t ADD COLUMN c numeric");
         assert!(
             lint_sql(&fixed, &forbid_opts(&[("money", "numeric")]))
@@ -476,7 +476,7 @@ mod tests {
             .fix
             .as_ref()
             .expect("fix must be present — trailing NOT NULL must not suppress it");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "CREATE TABLE t (created timestamptz NOT NULL)");
         assert!(
             lint_sql(&fixed, &forbid_opts(&[("timestamp", "timestamptz")]))
