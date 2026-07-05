@@ -58,9 +58,8 @@ Run it in CI with the [GitHub Action](https://pgsafe.fixedwidth.tech/docs/ci/):
 
 ```yaml
 - run: pgsafe --format sarif db/migrate/*.sql > pgsafe.sarif
-  # pgsafe exits non-zero when findings gate, so let the upload run regardless:
-  if: always()
 - uses: github/codeql-action/upload-sarif@v3
+  # pgsafe exits non-zero when findings gate, so upload the results regardless:
   if: always()
   with:
     sarif_file: pgsafe.sarif
