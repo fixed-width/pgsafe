@@ -1,10 +1,112 @@
 //! Fix-mode CLI: apply fixes (`--fix`) or preview them as a unified diff (`--diff`).
 
-use crate::FixEdit;
+use std::process::ExitCode;
+
+use super::ResolvedRun;
+use crate::{gate, lint_input, Fix, FixEdit};
+
+/// Stdin inputs carry this display-name (see `cli::mod::read_inputs`).
+const STDIN_NAME: &str = "<stdin>";
+
+/// Which fix-mode operation to run.
+pub(super) enum Mode {
+    /// Apply fixes: rewrite files in place; stdin → fixed SQL on stdout.
+    Apply,
+    /// Preview fixes as a unified diff; write nothing.
+    Diff,
+}
+
+/// Run fix mode over the resolved inputs. Summaries go to stderr; `--fix` on
+/// stdin and all `--diff` output go to stdout. Exit: 2 on any parse/IO error;
+/// otherwise `--fix` gates on the post-fix re-lint, `--diff` on the original
+/// findings → 1 if gated findings remain, else 0.
+pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
+    let mut had_error = false;
+    let mut gated = false;
+
+    for (name, sql) in &r.inputs {
+        let report = lint_input(name.clone(), sql, &r.options_for(name));
+        if let Some(err) = &report.error {
+            eprintln!("error: {name}: {err}");
+            had_error = true;
+            continue;
+        }
+        // Fixes from non-suppressed findings only; count non-suppressed unfixable.
+        let fixes: Vec<&Fix> = report
+            .findings
+            .iter()
+            .filter(|f| !f.is_suppressed())
+            .filter_map(|f| f.fix.as_ref())
+            .collect();
+        let unfixable = report
+            .findings
+            .iter()
+            .filter(|f| !f.is_suppressed() && f.fix.is_none())
+            .count();
+
+        let applied = crate::fix::apply_all(sql, &fixes);
+
+        match mode {
+            Mode::Diff => {
+                print!("{}", render_diff(name, sql, &applied.edits));
+                if gate(&report.findings, r.fail_on) {
+                    gated = true;
+                }
+            }
+            Mode::Apply => {
+                let changed = applied.sql != *sql;
+                if name == STDIN_NAME {
+                    print!("{}", applied.sql);
+                } else if changed {
+                    if let Err(e) = std::fs::write(name, &applied.sql) {
+                        eprintln!("error: {name}: {e}");
+                        had_error = true;
+                        continue;
+                    }
+                }
+                if changed {
+                    let mut note = String::new();
+                    if unfixable > 0 {
+                        note.push_str(&format!("{unfixable} unfixable"));
+                    }
+                    if applied.skipped_overlapping > 0 {
+                        if !note.is_empty() {
+                            note.push_str(", ");
+                        }
+                        note.push_str(&format!(
+                            "{} skipped-overlapping",
+                            applied.skipped_overlapping
+                        ));
+                    }
+                    let suffix = if note.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({note})")
+                    };
+                    eprintln!("fixed {} findings in {name}{suffix}", applied.applied);
+                }
+                // Exit gate: re-lint the (possibly rewritten) text.
+                let after = lint_input(name.clone(), &applied.sql, &r.options_for(name));
+                if after.error.is_some() {
+                    had_error = true;
+                } else if gate(&after.findings, r.fail_on) {
+                    gated = true;
+                }
+            }
+        }
+    }
+
+    if had_error {
+        ExitCode::from(2)
+    } else if gated {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    }
+}
 
 /// 0-based line index containing byte offset `off` (clamped to the last line).
 /// `line_starts` are the byte offsets of each line's first character.
-#[allow(dead_code)] // called by fix-mode orchestration in Task 3
 fn line_of(line_starts: &[usize], off: usize) -> usize {
     match line_starts.binary_search(&off) {
         Ok(i) => i,
@@ -15,7 +117,6 @@ fn line_of(line_starts: &[usize], off: usize) -> usize {
 /// Render `edits` against `original` as a unified diff. Edits (ascending,
 /// non-overlapping) are grouped into hunks by the original lines they touch;
 /// each hunk shows the touched original lines (`-`) and the spliced result (`+`).
-#[allow(dead_code)] // called by fix-mode orchestration in Task 3
 pub(super) fn render_diff(name: &str, original: &str, edits: &[FixEdit]) -> String {
     if edits.is_empty() {
         return String::new();
@@ -98,7 +199,6 @@ pub(super) fn render_diff(name: &str, original: &str, edits: &[FixEdit]) -> Stri
 
 /// Append a newline if the slice doesn't already end with one (last line of a
 /// file with no trailing newline), so each diff line is newline-terminated.
-#[allow(dead_code)] // called by fix-mode orchestration in Task 3
 fn ensure_nl(s: &str) -> String {
     if s.ends_with('\n') {
         s.to_string()

@@ -141,7 +141,6 @@ fn token_len(s: &str) -> Option<usize> {
 
 /// Apply a fix to `sql`, returning the rewritten string. Edits are applied high
 /// offset to low so earlier splices don't shift later ones.
-#[allow(dead_code)] // not yet wired to the CLI; called from tests only
 pub(crate) fn apply(sql: &str, fix: &Fix) -> String {
     let mut out = sql.to_string();
     let mut edits = fix.edits.clone();
@@ -153,7 +152,6 @@ pub(crate) fn apply(sql: &str, fix: &Fix) -> String {
 }
 
 /// Outcome of composing a set of fixes onto one input.
-#[allow(dead_code)] // wired to the CLI in Task 3
 pub(crate) struct Applied {
     /// The rewritten SQL after all accepted fixes were spliced.
     pub sql: String,
@@ -170,7 +168,6 @@ pub(crate) struct Applied {
 /// is atomic (all of its edits apply, or the whole fix is skipped). The accepted
 /// edits are collected into one merged [`Fix`] and spliced by the single-fix
 /// [`apply`] primitive, which orders the splices high-to-low internally.
-#[allow(dead_code)] // wired to the CLI in Task 3
 pub(crate) fn apply_all(sql: &str, fixes: &[&Fix]) -> Applied {
     let mut accepted: Vec<FixEdit> = Vec::new();
     let mut applied = 0usize;
