@@ -13,6 +13,7 @@ use crate::{
 };
 
 mod config;
+mod fix;
 mod gitdiff;
 
 /// The flags shared by every pgsafe-style CLI. Flatten this into a larger
