@@ -35,6 +35,16 @@ pub use output::{
 };
 pub use sarif::render_sarif;
 
+/// The version of the `pgsafe` crate (its `Cargo.toml` `version`).
+///
+/// Tools that embed pgsafe can surface this to report which linter version
+/// produced a given result.
+///
+/// ```
+/// assert!(!pgsafe::VERSION.is_empty());
+/// ```
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Severity level of a [`Finding`], ordered by increasing severity
 /// (`Warning` < `Error`).
 #[non_exhaustive]
