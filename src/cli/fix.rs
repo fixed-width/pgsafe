@@ -54,12 +54,15 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                 print!("{}", render_diff(name, sql, &applied.edits));
                 if gate(&report.findings, r.fail_on) {
                     gated = true;
-                    if unfixable > 0 {
-                        // Gating findings remain that no automatic fix touched — even
-                        // when the diff above is non-empty (a mixed fixable/unfixable
-                        // file). Report them rather than exiting nonzero in silence.
+                    // Residual gating findings the diff can't show: those with no
+                    // automatic fix, PLUS fixable ones whose edit `apply_all` skipped
+                    // for overlapping an accepted fix. Both are absent from the diff, so
+                    // report them rather than exiting nonzero in silence — even when the
+                    // diff above is non-empty (a mixed fixable/unfixable file).
+                    let residual = unfixable + applied.skipped_overlapping;
+                    if residual > 0 {
                         eprintln!(
-                            "{name}: {unfixable} finding(s) have no automatic fix; run `pgsafe {name}` to see them"
+                            "{name}: {residual} finding(s) have no automatic fix or were skipped (overlapping another fix); run `pgsafe {name}` to see them"
                         );
                     }
                 }
@@ -133,26 +136,42 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
     }
 }
 
-/// Write `contents` to `path` atomically: refuse a read-only target (preserving the
-/// "read-only file exits 2" behavior), then write a sibling temp and rename it over
-/// the target (atomic within the directory; replaces on Unix and Windows). A failure
-/// after the temp is created removes it, so no stray temp is left behind.
+/// Write `contents` to `path` atomically, as a faithful drop-in for an in-place
+/// write: resolve symlinks so the **real** file is rewritten (not replaced by a
+/// regular file), refuse a read-only target (preserving the "read-only file exits 2"
+/// behavior), write a sibling temp of the resolved target and rename it over that
+/// target (atomic within the directory; replaces on Unix and Windows), and preserve
+/// the target's permission bits on the replacement inode (rename otherwise resets
+/// them to the umask default). On error after the temp is created it attempts (does
+/// not guarantee) to remove the temp, so normally no stray temp is left behind.
 fn write_atomic(path: &str, contents: &str) -> std::io::Result<()> {
     use std::io::ErrorKind;
-    if let Ok(meta) = std::fs::metadata(path) {
-        if meta.permissions().readonly() {
+    // Resolve symlinks so we rewrite the REAL file (like the old in-place write)
+    // instead of replacing the symlink with a regular file. Falls back to `path`
+    // if it doesn't exist yet (canonicalize requires an existing path).
+    let target = std::fs::canonicalize(path).unwrap_or_else(|_| std::path::PathBuf::from(path));
+    let meta = std::fs::metadata(&target).ok();
+    if let Some(m) = &meta {
+        if m.permissions().readonly() {
             return Err(std::io::Error::new(
                 ErrorKind::PermissionDenied,
                 "destination is read-only",
             ));
         }
     }
-    let tmp = format!("{path}.pgsafe.{}.tmp", std::process::id());
+    // Sibling temp of the resolved target (same filesystem → atomic rename).
+    let mut tmp = target.clone().into_os_string();
+    tmp.push(format!(".pgsafe.{}.tmp", std::process::id()));
+    let tmp = std::path::PathBuf::from(tmp);
     if let Err(e) = std::fs::write(&tmp, contents) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
-    if let Err(e) = std::fs::rename(&tmp, path) {
+    // Preserve the target's permissions on the replacement inode (rename resets them).
+    if let Some(m) = &meta {
+        let _ = std::fs::set_permissions(&tmp, m.permissions());
+    }
+    if let Err(e) = std::fs::rename(&tmp, &target) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
