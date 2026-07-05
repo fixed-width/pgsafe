@@ -68,6 +68,12 @@ Run it in CI with the [GitHub Action](https://pgsafe.fixedwidth.tech/docs/ci/):
 Findings (including `-- pgsafe:ignore`-suppressed ones, marked dismissed) become SARIF
 results; a file that fails to parse becomes a tool-execution notification.
 
+A findings run (exit 1) and a parse error (exit 2) both still write valid SARIF, so
+`if: always()` uploads the results in the common cases. A configuration or I/O error
+(e.g. an unreadable path) exits 2 *without* writing SARIF — the resulting 0-byte file
+then (correctly) fails the upload. Pass repo-relative migration paths: absolute paths and
+stdin don't map back to files GitHub can annotate as code-scanning alerts.
+
 See [pgsafe.fixedwidth.tech/docs](https://pgsafe.fixedwidth.tech/docs/) for configuration,
 output formats, and the full [rules reference](https://pgsafe.fixedwidth.tech/rules/).
 

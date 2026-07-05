@@ -109,6 +109,12 @@ Findings (including `-- pgsafe:ignore`-suppressed ones, marked dismissed via SAR
 `suppressions`) become SARIF results; a file that fails to parse becomes a tool-execution
 notification instead of a result.
 
+A findings run (exit 1) and a parse error (exit 2) both still write valid SARIF, so
+`if: always()` uploads the results in the common cases. A configuration or I/O error
+(e.g. an unreadable path) exits 2 *without* writing SARIF — the resulting 0-byte file
+then (correctly) fails the upload. Pass repo-relative migration paths: absolute paths and
+stdin don't map back to files GitHub can annotate as code-scanning alerts.
+
 ## Severity & gating
 
 Each rule is `error` or `warning`:

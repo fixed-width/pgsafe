@@ -374,6 +374,12 @@ mod tests {
     }
 
     #[test]
+    fn parses_format_sarif() {
+        let cfg = from_toml_str("format = \"sarif\"\n", KNOWN).unwrap();
+        assert_eq!(cfg.format, Some(Format::Sarif));
+    }
+
+    #[test]
     fn parses_the_since_cutoff() {
         let cfg = from_toml_str("since = \"db/migrate/0042.sql\"\n", KNOWN).unwrap();
         assert_eq!(cfg.since.as_deref(), Some("db/migrate/0042.sql"));

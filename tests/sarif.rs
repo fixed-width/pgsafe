@@ -1,4 +1,7 @@
+use std::fs;
+
 use assert_cmd::Command;
+use tempfile::tempdir;
 
 fn pgsafe() -> Command {
     Command::cargo_bin("pgsafe").unwrap()
@@ -37,6 +40,38 @@ fn fix_conflicts_with_sarif_format() {
     pgsafe()
         .args(["--fix", "--format", "sarif"])
         .write_stdin("SELECT 1;")
+        .assert()
+        .failure()
+        .code(2);
+}
+
+#[test]
+fn sarif_parse_error_exits_2_with_notification() {
+    let assert = pgsafe()
+        .args(["--format", "sarif"])
+        .write_stdin("ALTER TABLE;")
+        .assert()
+        .failure()
+        .code(2);
+    let v: serde_json::Value = serde_json::from_slice(&assert.get_output().stdout).unwrap();
+    let inv = &v["runs"][0]["invocations"][0];
+    assert_eq!(inv["executionSuccessful"], false);
+    assert!(!inv["toolExecutionNotifications"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn fix_conflicts_with_config_format_sarif() {
+    // A config-file `format = "sarif"` must still block --fix (the guard checks the
+    // resolved format, not just the --format flag).
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join(".pgsafe.toml"), "format = \"sarif\"\n").unwrap();
+    pgsafe()
+        .current_dir(dir.path())
+        .args(["--fix", "-"])
+        .write_stdin("CREATE INDEX i ON t (x);")
         .assert()
         .failure()
         .code(2);

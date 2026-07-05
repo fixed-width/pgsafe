@@ -168,15 +168,6 @@ pub fn run(args: CommonArgs) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if args.fix || args.diff {
-        if matches!(
-            args.format,
-            Some(Format::Json | Format::Github | Format::Sarif)
-        ) {
-            eprintln!(
-                "error: --fix/--diff cannot be combined with --format json, --format github, or --format sarif"
-            );
-            return ExitCode::from(2);
-        }
         let r = match resolve(&args) {
             Ok(r) => r,
             Err(msg) => {
@@ -184,6 +175,14 @@ pub fn run(args: CommonArgs) -> ExitCode {
                 return ExitCode::from(2);
             }
         };
+        // Fix mode is human-output; reject a machine format whether it came from the
+        // --format flag or the config file (check the resolved format, not just the flag).
+        if matches!(r.format, Format::Json | Format::Github | Format::Sarif) {
+            eprintln!(
+                "error: --fix/--diff cannot be combined with --format json, github, or sarif"
+            );
+            return ExitCode::from(2);
+        }
         let mode = if args.fix {
             fix::Mode::Apply
         } else {

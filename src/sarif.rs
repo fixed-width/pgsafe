@@ -59,7 +59,7 @@ struct SarifResult {
     message: Message,
     locations: Vec<SarifLocation>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    suppressions: Vec<Suppression>,
+    suppressions: Vec<SarifSuppression>,
 }
 
 #[derive(serde::Serialize)]
@@ -94,7 +94,7 @@ struct Region {
 }
 
 #[derive(serde::Serialize)]
-struct Suppression {
+struct SarifSuppression {
     kind: &'static str,
 }
 
@@ -172,7 +172,7 @@ pub fn render_sarif(reports: &[FileReport]) -> Result<String, String> {
                 }
             };
             let suppressions = if f.is_suppressed() {
-                vec![Suppression { kind: "inSource" }]
+                vec![SarifSuppression { kind: "inSource" }]
             } else {
                 Vec::new()
             };
@@ -258,7 +258,8 @@ mod tests {
             .iter()
             .find(|r| r["ruleId"] == "add-index-non-concurrent")
             .unwrap();
-        assert!(r["level"] == "error" || r["level"] == "warning");
+        // add-index-non-concurrent is unconditionally Error.
+        assert_eq!(r["level"], "error");
         assert!(!r["message"]["text"].as_str().unwrap().is_empty());
         let loc = &r["locations"][0]["physicalLocation"];
         assert_eq!(loc["artifactLocation"]["uri"], "m.sql");
@@ -270,10 +271,7 @@ mod tests {
             rule["helpUri"],
             "https://pgsafe.fixedwidth.tech/rules/add-index-non-concurrent"
         );
-        assert!(
-            rule["defaultConfiguration"]["level"] == "error"
-                || rule["defaultConfiguration"]["level"] == "warning"
-        );
+        assert_eq!(rule["defaultConfiguration"]["level"], "error");
     }
 
     #[test]
@@ -368,5 +366,84 @@ mod tests {
         assert_eq!(v["version"], "2.1.0");
         assert_eq!(v["runs"][0]["results"].as_array().unwrap().len(), 0);
         assert_eq!(v["runs"][0]["invocations"][0]["executionSuccessful"], true);
+    }
+
+    #[test]
+    fn a_rule_firing_in_two_files_shares_one_rule_entry() {
+        let reports = vec![
+            lint_input("a.sql", "CREATE INDEX i ON a (x);", &LintOptions::default()),
+            lint_input("b.sql", "CREATE INDEX j ON b (y);", &LintOptions::default()),
+        ];
+        let v = value(&reports);
+        // Exactly one rules[] entry for the shared rule.
+        let rules = v["runs"][0]["tool"]["driver"]["rules"].as_array().unwrap();
+        assert_eq!(
+            rules
+                .iter()
+                .filter(|rd| rd["id"] == "add-index-non-concurrent")
+                .count(),
+            1
+        );
+        // Both results reference that same rule index and carry their own file's uri.
+        let results = v["runs"][0]["results"].as_array().unwrap();
+        let hits: Vec<&serde_json::Value> = results
+            .iter()
+            .filter(|r| r["ruleId"] == "add-index-non-concurrent")
+            .collect();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0]["ruleIndex"], hits[1]["ruleIndex"]);
+        let uri = |r: &serde_json::Value| {
+            r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"].clone()
+        };
+        assert_eq!(uri(hits[0]), "a.sql");
+        assert_eq!(uri(hits[1]), "b.sql");
+    }
+
+    #[test]
+    fn mixed_parse_error_and_findings_coexist() {
+        let reports = vec![
+            lint_input(
+                "ok.sql",
+                "CREATE INDEX i ON t (x);",
+                &LintOptions::default(),
+            ),
+            lint_input("bad.sql", "ALTER TABLE;", &LintOptions::default()),
+        ];
+        let v = value(&reports);
+        // ok.sql still produces results.
+        assert!(!v["runs"][0]["results"].as_array().unwrap().is_empty());
+        // bad.sql becomes a notification and flips the run to unsuccessful.
+        let inv = &v["runs"][0]["invocations"][0];
+        assert_eq!(inv["executionSuccessful"], false);
+        assert!(inv["toolExecutionNotifications"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(
+                |n| n["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "bad.sql"
+            ));
+    }
+
+    #[test]
+    fn severity_levels_are_concrete() {
+        // VACUUM FULL fires vacuum-full-cluster (error) + require-timeout (warning).
+        let reports = vec![lint_input(
+            "m.sql",
+            "VACUUM FULL t;",
+            &LintOptions::default(),
+        )];
+        let v = value(&reports);
+        let results = v["runs"][0]["results"].as_array().unwrap();
+        let rules = v["runs"][0]["tool"]["driver"]["rules"].as_array().unwrap();
+        // Both concrete levels appear, and each result's ruleIndex resolves to a rules[]
+        // entry whose defaultConfiguration.level matches that result's level.
+        for want in ["error", "warning"] {
+            let r = results
+                .iter()
+                .find(|r| r["level"] == want)
+                .unwrap_or_else(|| panic!("expected a result with level {want}"));
+            let idx = usize::try_from(r["ruleIndex"].as_u64().unwrap()).unwrap();
+            assert_eq!(rules[idx]["defaultConfiguration"]["level"], want);
+        }
     }
 }
