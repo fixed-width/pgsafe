@@ -3,6 +3,7 @@
 //! with `serde_json`, like the JSON envelope in `output.rs`.
 
 use crate::{FileReport, Severity};
+use std::collections::{BTreeMap, HashMap};
 
 const SCHEMA_URL: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 const INFORMATION_URI: &str = "https://pgsafe.fixedwidth.tech";
@@ -60,6 +61,8 @@ struct SarifResult {
     locations: Vec<SarifLocation>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     suppressions: Vec<SarifSuppression>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    partial_fingerprints: BTreeMap<String, String>,
 }
 
 #[derive(serde::Serialize)]
@@ -110,7 +113,6 @@ struct Invocation {
 struct Notification {
     level: &'static str,
     message: Message,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     locations: Vec<SarifLocation>,
 }
 
@@ -134,6 +136,19 @@ fn location(uri: &str, region: Option<Region>) -> SarifLocation {
     }
 }
 
+/// FNV-1a 64-bit hash of `input` as zero-padded 16-char lowercase hex. A fixed
+/// algorithm (offset basis / prime below), so its output is stable across Rust
+/// versions — required for a code-scanning fingerprint compared across uploads
+/// over time. (`std::hash::DefaultHasher` is explicitly not stable across versions.)
+fn fnv1a_hex(input: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in input.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{h:016x}")
+}
+
 /// Render `reports` as a SARIF 2.1.0 log. Findings (including suppressed ones)
 /// become `results`; a file that failed to parse becomes a tool-execution
 /// notification and flips `executionSuccessful` to false.
@@ -145,6 +160,7 @@ pub fn render_sarif(reports: &[FileReport]) -> Result<String, String> {
     let mut results: Vec<SarifResult> = Vec::new();
     let mut notifications: Vec<Notification> = Vec::new();
     let mut execution_successful = true;
+    let mut fp_ordinals: HashMap<(String, String, String), u32> = HashMap::new();
 
     for r in reports {
         if let Some(err) = &r.error {
@@ -176,6 +192,18 @@ pub fn render_sarif(reports: &[FileReport]) -> Result<String, String> {
             } else {
                 Vec::new()
             };
+            // Line-independent fingerprint; the per-(file, rule, snippet) ordinal keeps
+            // byte-identical statements distinct without depending on line numbers.
+            let ordinal = {
+                let key = (r.name.clone(), f.rule_id.clone(), f.snippet.clone());
+                let n = fp_ordinals.entry(key).or_insert(0);
+                let cur = *n;
+                *n += 1;
+                cur
+            };
+            let fingerprint = fnv1a_hex(&format!("{}\n{}\n{}", f.rule_id, f.snippet, ordinal));
+            let mut partial_fingerprints = BTreeMap::new();
+            partial_fingerprints.insert("pgsafe/v1".to_string(), fingerprint);
             results.push(SarifResult {
                 rule_id: f.rule_id.clone(),
                 rule_index,
@@ -191,6 +219,7 @@ pub fn render_sarif(reports: &[FileReport]) -> Result<String, String> {
                     }),
                 )],
                 suppressions,
+                partial_fingerprints,
             });
         }
     }
@@ -445,5 +474,91 @@ mod tests {
             let idx = usize::try_from(r["ruleIndex"].as_u64().unwrap()).unwrap();
             assert_eq!(rules[idx]["defaultConfiguration"]["level"], want);
         }
+    }
+
+    #[test]
+    fn fnv1a_hex_is_deterministic_golden() {
+        assert_eq!(super::fnv1a_hex("abc"), "e71fa2190541574b");
+    }
+
+    #[test]
+    fn results_carry_a_partial_fingerprint() {
+        let reports = vec![lint_input(
+            "m.sql",
+            "CREATE INDEX i ON t (x);",
+            &LintOptions::default(),
+        )];
+        let v = value(&reports);
+        let fp = v["runs"][0]["results"][0]["partialFingerprints"]["pgsafe/v1"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(fp.len(), 16);
+        assert!(fp.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn fingerprint_is_line_independent() {
+        // The same statement, once at line 1 and once pushed down by a leading comment,
+        // must produce the SAME fingerprint (only startLine differs).
+        let find = |sql: &str| -> String {
+            let reports = vec![lint_input("m.sql", sql, &LintOptions::default())];
+            value(&reports)["runs"][0]["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|r| r["ruleId"] == "add-index-non-concurrent")
+                .unwrap()["partialFingerprints"]["pgsafe/v1"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let at_top = find("CREATE INDEX i ON t (x);");
+        let shifted = find("-- a comment\n\nCREATE INDEX i ON t (x);");
+        assert_eq!(at_top, shifted);
+    }
+
+    #[test]
+    fn duplicate_statements_get_distinct_fingerprints() {
+        // Two byte-identical flagged statements in one file → ordinals 0 and 1 → different fps.
+        let reports = vec![lint_input(
+            "m.sql",
+            "CREATE INDEX i ON t (x);\nCREATE INDEX i ON t (x);",
+            &LintOptions::default(),
+        )];
+        let v = value(&reports);
+        let fps: Vec<String> = v["runs"][0]["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["ruleId"] == "add-index-non-concurrent")
+            .map(|r| {
+                r["partialFingerprints"]["pgsafe/v1"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect();
+        assert_eq!(fps.len(), 2);
+        assert_ne!(fps[0], fps[1]);
+    }
+
+    #[test]
+    fn different_rules_get_distinct_fingerprints() {
+        let reports = vec![lint_input(
+            "m.sql",
+            "CREATE INDEX i ON t (x);\nDROP TABLE old;",
+            &LintOptions::default(),
+        )];
+        let v = value(&reports);
+        let results = v["runs"][0]["results"].as_array().unwrap();
+        let fp = |rule: &str| -> String {
+            results.iter().find(|r| r["ruleId"] == rule).unwrap()["partialFingerprints"]
+                ["pgsafe/v1"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_ne!(fp("add-index-non-concurrent"), fp("drop-table"));
     }
 }
