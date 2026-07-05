@@ -24,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: fixed-width/pgsafe@v0.8.6
+      - uses: fixed-width/pgsafe@v0.9.0
         with:
           files: 'db/migrate/*.sql'   # default: *.sql (any depth)
 ```
@@ -60,6 +60,30 @@ Verification checks that the downloaded binary was built by this repository's re
 If your runner's token cannot read the action repository's public attestations, add
 `attestations: read` to the job's `permissions`.
 
+## Code scanning (SARIF)
+
+The GitHub Action above annotates the PR diff inline. To get **code-scanning alerts in the
+Security tab** instead — persistent, and dismissible in the GitHub UI — upload pgsafe's SARIF
+output:
+
+```yaml
+- run: pgsafe --format sarif db/migrate/*.sql > pgsafe.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  # pgsafe exits non-zero when findings gate, so upload the results regardless:
+  if: always()
+  with:
+    sarif_file: pgsafe.sarif
+```
+
+A findings run (exit 1) and a parse error (exit 2) both write valid SARIF, so `if: always()`
+uploads the results in the common cases. A configuration or I/O error (e.g. an unreadable path)
+exits 2 *without* writing SARIF — the resulting 0-byte file then (correctly) fails the upload.
+Pass repo-relative migration paths: absolute paths and stdin don't map back to files GitHub can
+annotate as code-scanning alerts.
+
+See [Output formats](/docs/output/) for what pgsafe's SARIF contains (suppressions and
+parse-error notifications).
+
 ## Any CI: gate on the exit code
 
 pgsafe's exit code makes it easy to gate in any pipeline:
@@ -74,6 +98,5 @@ pgsafe's exit code makes it easy to gate in any pipeline:
 pgsafe migrations/*.sql || exit 1
 ```
 
-See [Output formats](/docs/output/) for `--format json`/`github`/`sarif` (including the
-GitHub code-scanning upload snippet), and [Configuration](/docs/config/) for selecting only
-changed or new migrations.
+See [Output formats](/docs/output/) for `--format json`/`github`/`sarif`, and
+[Configuration](/docs/config/) for selecting only changed or new migrations.

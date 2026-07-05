@@ -72,54 +72,23 @@ cumulative length change.
 The in-browser playground surfaces a **Fix** button on any finding that includes a `fix` object;
 clicking it rewrites the editor content in place.
 
-## Applying fixes
-
-The CLI can apply a finding's fix directly, without going through JSON. Preview it as a
-unified diff:
-
-```sh
-pgsafe --diff db/migrate/003_add_index.sql
-```
-
-The output is a standard unified diff, so it pipes straight into `git apply`:
-
-```sh
-pgsafe --diff db/migrate/003_add_index.sql | git apply
-```
-
-Or apply it — in place for a file, to stdout when reading from stdin:
-
-```sh
-pgsafe --fix db/migrate/003_add_index.sql
-```
-
-`--fix` and `--diff` are human-output only: they're mutually exclusive, and neither combines
-with `--format json`, `--format github`, or `--format sarif`. A finding suppressed with
-`-- pgsafe:ignore` is never auto-fixed. After `--fix`, the exit code reflects re-linting the
-fixed file, per the [exit codes](/docs/ci/).
+To apply a fix from the command line, see [Usage](/docs/usage/).
 
 ## SARIF (GitHub code scanning)
 
 `--format sarif` emits SARIF 2.1.0, for upload to GitHub code scanning:
 
-```yaml
-- run: pgsafe --format sarif db/migrate/*.sql > pgsafe.sarif
-- uses: github/codeql-action/upload-sarif@v3
-  # pgsafe exits non-zero when findings gate, so upload the results regardless:
-  if: always()
-  with:
-    sarif_file: pgsafe.sarif
+```sh
+pgsafe --format sarif db/migrate/*.sql > pgsafe.sarif
 ```
 
 Findings (including `-- pgsafe:ignore`-suppressed ones, marked dismissed via SARIF
 `suppressions`) become SARIF results; a file that fails to parse becomes a tool-execution
-notification instead of a result.
+notification instead of a result. A findings run (exit 1) and a parse error (exit 2) both
+still write valid SARIF; a configuration or I/O error (exit 2) writes none.
 
-A findings run (exit 1) and a parse error (exit 2) both still write valid SARIF, so
-`if: always()` uploads the results in the common cases. A configuration or I/O error
-(e.g. an unreadable path) exits 2 *without* writing SARIF — the resulting 0-byte file
-then (correctly) fails the upload. Pass repo-relative migration paths: absolute paths and
-stdin don't map back to files GitHub can annotate as code-scanning alerts.
+To upload this into GitHub code scanning from a workflow, see
+[CI & GitHub Action](/docs/ci/).
 
 ## Severity & gating
 
