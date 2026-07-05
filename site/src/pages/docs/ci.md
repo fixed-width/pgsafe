@@ -74,5 +74,6 @@ pgsafe's exit code makes it easy to gate in any pipeline:
 pgsafe migrations/*.sql || exit 1
 ```
 
-See [Output formats](/docs/output/) for `--format json`/`github`, and
-[Configuration](/docs/config/) for selecting only changed or new migrations.
+See [Output formats](/docs/output/) for `--format json`/`github`/`sarif` (including the
+GitHub code-scanning upload snippet), and [Configuration](/docs/config/) for selecting only
+changed or new migrations.

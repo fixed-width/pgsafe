@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::{
-    gate, lint_input, render_errors, render_github, render_human, render_json, FailOn, FileReport,
-    Format, LintOptions,
+    gate, lint_input, render_errors, render_github, render_human, render_json, render_sarif,
+    FailOn, FileReport, Format, LintOptions,
 };
 
 mod config;
@@ -55,7 +55,7 @@ pub struct CommonArgs {
     #[arg(long)]
     pub list_rules: bool,
     /// Apply fixes in place (files) or to stdout (stdin). Human-output only;
-    /// cannot combine with --diff or --format json/github.
+    /// cannot combine with --diff or --format json/github/sarif.
     #[arg(long, conflicts_with = "diff")]
     pub fix: bool,
     /// Preview the fixes --fix would apply as a unified diff; writes nothing.
@@ -168,12 +168,6 @@ pub fn run(args: CommonArgs) -> ExitCode {
         return ExitCode::SUCCESS;
     }
     if args.fix || args.diff {
-        if matches!(args.format, Some(Format::Json | Format::Github)) {
-            eprintln!(
-                "error: --fix/--diff cannot be combined with --format json or --format github"
-            );
-            return ExitCode::from(2);
-        }
         let r = match resolve(&args) {
             Ok(r) => r,
             Err(msg) => {
@@ -181,6 +175,14 @@ pub fn run(args: CommonArgs) -> ExitCode {
                 return ExitCode::from(2);
             }
         };
+        // Fix mode is human-output; reject a machine format whether it came from the
+        // --format flag or the config file (check the resolved format, not just the flag).
+        if matches!(r.format, Format::Json | Format::Github | Format::Sarif) {
+            eprintln!(
+                "error: --fix/--diff cannot be combined with --format json, github, or sarif"
+            );
+            return ExitCode::from(2);
+        }
         let mode = if args.fix {
             fix::Mode::Apply
         } else {
@@ -218,6 +220,13 @@ pub fn run(args: CommonArgs) -> ExitCode {
             }
         },
         Format::Github => print!("{}", render_github(&reports)),
+        Format::Sarif => match render_sarif(&reports) {
+            Ok(s) => println!("{s}"),
+            Err(e) => {
+                eprintln!("error: {e}");
+                return ExitCode::from(2);
+            }
+        },
     }
 
     if had_error {

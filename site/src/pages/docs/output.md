@@ -1,17 +1,18 @@
 ---
 layout: ../../layouts/DocsLayout.astro
 title: Output formats — pgsafe
-description: pgsafe's human, JSON, and GitHub-annotation output, plus severity and gating.
+description: pgsafe's human, JSON, GitHub-annotation, and SARIF output, plus severity and gating.
 ---
 
 # Output formats
 
-`--format` selects how findings are printed: `human` (default), `json`, or `github`.
+`--format` selects how findings are printed: `human` (default), `json`, `github`, or `sarif`.
 
 ```sh
 pgsafe migration.sql                  # human-readable (default)
 pgsafe --format json migration.sql    # machine-readable
 pgsafe --format github migration.sql  # GitHub Actions annotations
+pgsafe --format sarif migration.sql   # SARIF 2.1.0, for GitHub code scanning
 ```
 
 ## JSON
@@ -87,9 +88,32 @@ pgsafe --fix db/migrate/003_add_index.sql
 ```
 
 `--fix` and `--diff` are human-output only: they're mutually exclusive, and neither combines
-with `--format json` or `--format github`. A finding suppressed with `-- pgsafe:ignore` is
-never auto-fixed. After `--fix`, the exit code reflects re-linting the fixed file, per the
-[exit codes](/docs/ci/).
+with `--format json`, `--format github`, or `--format sarif`. A finding suppressed with
+`-- pgsafe:ignore` is never auto-fixed. After `--fix`, the exit code reflects re-linting the
+fixed file, per the [exit codes](/docs/ci/).
+
+## SARIF (GitHub code scanning)
+
+`--format sarif` emits SARIF 2.1.0, for upload to GitHub code scanning:
+
+```yaml
+- run: pgsafe --format sarif db/migrate/*.sql > pgsafe.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  # pgsafe exits non-zero when findings gate, so upload the results regardless:
+  if: always()
+  with:
+    sarif_file: pgsafe.sarif
+```
+
+Findings (including `-- pgsafe:ignore`-suppressed ones, marked dismissed via SARIF
+`suppressions`) become SARIF results; a file that fails to parse becomes a tool-execution
+notification instead of a result.
+
+A findings run (exit 1) and a parse error (exit 2) both still write valid SARIF, so
+`if: always()` uploads the results in the common cases. A configuration or I/O error
+(e.g. an unreadable path) exits 2 *without* writing SARIF — the resulting 0-byte file
+then (correctly) fails the upload. Pass repo-relative migration paths: absolute paths and
+stdin don't map back to files GitHub can annotate as code-scanning alerts.
 
 ## Severity & gating
 

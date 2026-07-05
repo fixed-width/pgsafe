@@ -33,6 +33,8 @@ pub enum Format {
     Json,
     /// GitHub Actions workflow annotation commands (for the GitHub Action / CI).
     Github,
+    /// SARIF 2.1.0 (for GitHub code-scanning ingestion).
+    Sarif,
 }
 
 /// Lint results for a single named input.

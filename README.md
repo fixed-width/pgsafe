@@ -41,7 +41,7 @@ pgsafe --fix db/migrate/003_add_index.sql
 ```
 
 `--fix` and `--diff` are human-output only and cannot be combined with each other
-or with `--format json`/`--format github`. A `-- pgsafe:ignore` finding is never
+or with `--format json`/`--format github`/`--format sarif`. A `-- pgsafe:ignore` finding is never
 auto-fixed. After `--fix`, the exit code reflects re-linting the fixed file.
 
 Run it in CI with the [GitHub Action](https://pgsafe.fixedwidth.tech/docs/ci/):
@@ -51,6 +51,28 @@ Run it in CI with the [GitHub Action](https://pgsafe.fixedwidth.tech/docs/ci/):
   with:
     files: "db/migrate/*.sql"
 ```
+
+### SARIF output (GitHub code scanning)
+
+`--format sarif` emits SARIF 2.1.0, for upload to GitHub code scanning:
+
+```yaml
+- run: pgsafe --format sarif db/migrate/*.sql > pgsafe.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  # pgsafe exits non-zero when findings gate, so upload the results regardless:
+  if: always()
+  with:
+    sarif_file: pgsafe.sarif
+```
+
+Findings (including `-- pgsafe:ignore`-suppressed ones, marked dismissed) become SARIF
+results; a file that fails to parse becomes a tool-execution notification.
+
+A findings run (exit 1) and a parse error (exit 2) both still write valid SARIF, so
+`if: always()` uploads the results in the common cases. A configuration or I/O error
+(e.g. an unreadable path) exits 2 *without* writing SARIF — the resulting 0-byte file
+then (correctly) fails the upload. Pass repo-relative migration paths: absolute paths and
+stdin don't map back to files GitHub can annotate as code-scanning alerts.
 
 See [pgsafe.fixedwidth.tech/docs](https://pgsafe.fixedwidth.tech/docs/) for configuration,
 output formats, and the full [rules reference](https://pgsafe.fixedwidth.tech/rules/).

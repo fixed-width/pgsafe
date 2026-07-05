@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 mod fix;
 mod output;
 mod rules;
+mod sarif;
 mod suppression;
 mod synthesized;
 
@@ -32,6 +33,7 @@ pub use output::{
     gate, lint_input, render_errors, render_finding_body, render_finding_human, render_github,
     render_human, render_json, render_statement_header, FailOn, FileReport, Format, SCHEMA_VERSION,
 };
+pub use sarif::render_sarif;
 
 /// Severity level of a [`Finding`], ordered by increasing severity
 /// (`Warning` < `Error`).
