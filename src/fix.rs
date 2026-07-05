@@ -152,6 +152,57 @@ pub(crate) fn apply(sql: &str, fix: &Fix) -> String {
     out
 }
 
+/// Outcome of composing a set of fixes onto one input.
+#[allow(dead_code)] // wired to the CLI in Task 3
+pub(crate) struct Applied {
+    /// The rewritten SQL after all accepted fixes were spliced.
+    pub sql: String,
+    /// The accepted edits, ascending by `start`, non-overlapping.
+    pub edits: Vec<FixEdit>,
+    /// Number of fixes whose edits were applied.
+    pub applied: usize,
+    /// Number of resolvable fixes skipped because an edit overlapped an already-accepted span.
+    pub skipped_overlapping: usize,
+}
+
+/// Compose `fixes` (considered in slice order) onto `sql`. A fix is accepted only
+/// if none of its edits overlaps a span already claimed by an accepted fix — a fix
+/// is atomic (all of its edits apply, or the whole fix is skipped). The accepted
+/// edits are collected into one merged [`Fix`] and spliced by the single-fix
+/// [`apply`] primitive, which orders the splices high-to-low internally.
+#[allow(dead_code)] // wired to the CLI in Task 3
+pub(crate) fn apply_all(sql: &str, fixes: &[&Fix]) -> Applied {
+    let mut accepted: Vec<FixEdit> = Vec::new();
+    let mut applied = 0usize;
+    let mut skipped_overlapping = 0usize;
+    for fix in fixes {
+        // Half-open overlap: [a,b) and [c,d) overlap iff a < d && c < b.
+        let overlaps = fix
+            .edits
+            .iter()
+            .any(|e| accepted.iter().any(|a| e.start < a.end && a.start < e.end));
+        if overlaps {
+            skipped_overlapping += 1;
+            continue;
+        }
+        accepted.extend(fix.edits.iter().cloned());
+        applied += 1;
+    }
+    accepted.sort_by_key(|e| e.start);
+    let merged = Fix {
+        title: String::new(),
+        edits: accepted.clone(),
+    };
+    // Reuse the single-fix splice primitive (it sorts descending internally).
+    let sql = apply(sql, &merged);
+    Applied {
+        sql,
+        edits: accepted,
+        applied,
+        skipped_overlapping,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,5 +447,73 @@ mod tests {
             apply(sql, &fix),
             "ALTER TABLE renamed_table ADD COLUMN bar int4;"
         );
+    }
+
+    #[test]
+    fn apply_all_composes_two_nonoverlapping_fixes() {
+        // "ALTER TABLE t ADD COLUMN c json;" — two independent edits:
+        //   insert " IF NOT EXISTS" is not applicable here; use two real spans.
+        let sql = "ALTER TABLE t ADD COLUMN c json;";
+        let f1 = Fix {
+            title: "Use jsonb".into(),
+            edits: vec![FixEdit {
+                start: 27,
+                end: 31,
+                replacement: "jsonb".into(),
+            }],
+        };
+        // second fix: replace table name "t" [12,13) with "tbl"
+        let f2 = Fix {
+            title: "rename".into(),
+            edits: vec![FixEdit {
+                start: 12,
+                end: 13,
+                replacement: "tbl".into(),
+            }],
+        };
+        let out = apply_all(sql, &[&f1, &f2]);
+        assert_eq!(out.sql, "ALTER TABLE tbl ADD COLUMN c jsonb;");
+        assert_eq!(out.applied, 2);
+        assert_eq!(out.skipped_overlapping, 0);
+        // accepted edits are returned ascending by start.
+        assert_eq!(
+            out.edits.iter().map(|e| e.start).collect::<Vec<_>>(),
+            vec![12, 27]
+        );
+    }
+
+    #[test]
+    fn apply_all_skips_a_fix_overlapping_an_accepted_edit() {
+        let sql = "ALTER TABLE t ADD COLUMN c json;";
+        let first = Fix {
+            title: "Use jsonb".into(),
+            edits: vec![FixEdit {
+                start: 27,
+                end: 31,
+                replacement: "jsonb".into(),
+            }],
+        };
+        // overlaps [27,31): [29,31) — must be skipped, first wins.
+        let clash = Fix {
+            title: "clash".into(),
+            edits: vec![FixEdit {
+                start: 29,
+                end: 31,
+                replacement: "X".into(),
+            }],
+        };
+        let out = apply_all(sql, &[&first, &clash]);
+        assert_eq!(out.sql, "ALTER TABLE t ADD COLUMN c jsonb;");
+        assert_eq!(out.applied, 1);
+        assert_eq!(out.skipped_overlapping, 1);
+    }
+
+    #[test]
+    fn apply_all_empty_is_unchanged() {
+        let out = apply_all("SELECT 1;", &[]);
+        assert_eq!(out.sql, "SELECT 1;");
+        assert_eq!(out.applied, 0);
+        assert_eq!(out.skipped_overlapping, 0);
+        assert!(out.edits.is_empty());
     }
 }
