@@ -276,6 +276,14 @@ pub(super) fn render_diff(name: &str, original: &str, edits: &[FixEdit]) -> Stri
     for h in &hunks {
         let region_first = blocks[h[0]].first;
         let region_last = blocks[h[h.len() - 1]].last;
+        // Every touched line index must be a real original line: today's fixes never
+        // map an edit past the last line, but guard the `total - 1 - region_last`
+        // subtraction and the `orig_lines[..=region_last]` slices against a future
+        // edit that does (would otherwise underflow / index out of bounds).
+        debug_assert!(
+            region_last < total,
+            "region_last {region_last} out of bounds for {total} original lines"
+        );
         let ctx_before = region_first.min(CONTEXT);
         let ctx_after = (total - 1 - region_last).min(CONTEXT);
         let hunk_old_first = region_first - ctx_before;
@@ -336,6 +344,12 @@ pub(super) fn render_diff(name: &str, original: &str, edits: &[FixEdit]) -> Stri
 /// carries no trailing newline. `split_inclusive('\n')` yields a marker-worthy
 /// unterminated slice only for a file's/block's genuine last line, so this fires
 /// exactly where git would.
+///
+/// Caveat: this assumes a fix never deletes a *mid-file* newline (merging two
+/// lines). If one did, the block splice could leave a non-final line unterminated
+/// and this would emit a spurious marker. None of today's fixes do so (they insert
+/// or replace within a line — CONCURRENTLY, the timeout prologue, `json`→`jsonb`);
+/// revisit here if a newline-removing fix is ever added.
 fn push_diff_line(out: &mut String, prefix: char, content: &str) {
     out.push(prefix);
     out.push_str(content);

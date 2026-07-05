@@ -325,6 +325,78 @@ fn diff_output_applies_cleanly_with_git_apply() {
 }
 
 #[test]
+fn diff_cross_hunk_delta_applies_cleanly_with_git_apply() {
+    // Two fixable CREATE INDEX statements separated by MORE than 2*CONTEXT (=6)
+    // unchanged lines, so they do NOT coalesce -> two hunks. The first hunk also
+    // gains the require-timeout prologue (a line added at the top), making the
+    // running `new_delta` nonzero, which shifts the SECOND hunk's `new_start`. The
+    // git round-trip is what validates that offset arithmetic (git apply rejects
+    // wrong offsets); the two-hunk assertion stops the test silently degrading to
+    // one hunk.
+    if !git_available() {
+        eprintln!("skipping: git not available");
+        return;
+    }
+    let dir = tempdir().unwrap();
+    assert!(StdCommand::new("git")
+        .arg("init")
+        .current_dir(dir.path())
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let rel = "m.sql";
+    let original = "CREATE INDEX i ON a (x);\n\
+         SELECT 1;\nSELECT 2;\nSELECT 3;\nSELECT 4;\nSELECT 5;\nSELECT 6;\nSELECT 7;\n\
+         CREATE INDEX j ON b (y);\n";
+    fs::write(dir.path().join(rel), original).unwrap();
+
+    let diff = pgsafe()
+        .arg("--diff")
+        .arg(rel)
+        .current_dir(dir.path())
+        .assert();
+    let patch = String::from_utf8(diff.get_output().stdout.clone()).unwrap();
+    // Exactly two hunks (the 7-line gap exceeds 2*CONTEXT, so no coalescing).
+    assert_eq!(
+        patch.lines().filter(|l| l.starts_with("@@ ")).count(),
+        2,
+        "expected two non-coalesced hunks:\n{patch}"
+    );
+    fs::write(dir.path().join("fix.patch"), &patch).unwrap();
+
+    let check = StdCommand::new("git")
+        .args(["apply", "--check", "fix.patch"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "git apply --check failed:\n{}\n---patch---\n{patch}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(StdCommand::new("git")
+        .args(["apply", "fix.patch"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let applied_via_diff = fs::read_to_string(dir.path().join(rel)).unwrap();
+
+    let dir2 = tempdir().unwrap();
+    fs::write(dir2.path().join(rel), original).unwrap();
+    let _ = pgsafe()
+        .arg("--fix")
+        .arg(rel)
+        .current_dir(dir2.path())
+        .assert();
+    let applied_via_fix = fs::read_to_string(dir2.path().join(rel)).unwrap();
+
+    assert_eq!(applied_via_diff, applied_via_fix);
+}
+
+#[test]
 fn diff_reports_unfixable_in_mixed_case() {
     // A fixable finding (CREATE INDEX → CONCURRENTLY) plus an unfixable gating one
     // (DROP TABLE): the non-empty diff still surfaces the residual unfixable finding.
