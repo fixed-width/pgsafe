@@ -73,7 +73,7 @@ mod tests {
             .unwrap();
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Add CONCURRENTLY");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "CREATE INDEX CONCURRENTLY idx ON t (col);");
         // Applying it clears the finding.
         assert!(lint_sql(&fixed, &LintOptions::default())

@@ -317,7 +317,7 @@ mod tests {
         let f = fs.iter().find(|f| f.rule_id == ID).unwrap();
         let fix = f.fix.as_ref().expect("require-timeout fix present");
         assert_eq!(fix.title, "Set lock_timeout");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert!(fixed.starts_with("SET lock_timeout = '5s';\n"), "{fixed}");
         // One prologue clears require-timeout for every following statement.
         assert!(lint_sql(&fixed, &LintOptions::default())

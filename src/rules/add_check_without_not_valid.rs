@@ -76,7 +76,7 @@ mod tests {
             .expect("rule must fire");
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Add NOT VALID");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(
             fixed,
             "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0) NOT VALID;"

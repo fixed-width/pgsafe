@@ -272,7 +272,7 @@ mod tests {
             .expect("finding present");
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Add IF NOT EXISTS");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "CREATE TABLE IF NOT EXISTS t (id int)");
         assert!(lint_sql(&fixed, &enabled())
             .unwrap()
@@ -290,7 +290,7 @@ mod tests {
             .find(|f| f.rule_id == "require-if-exists")
             .expect("finding present");
         let fix = f.fix.as_ref().expect("fix present");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "CREATE INDEX CONCURRENTLY IF NOT EXISTS i ON t (x)");
         assert!(lint_sql(&fixed, &enabled())
             .unwrap()
@@ -309,7 +309,7 @@ mod tests {
             .expect("finding present");
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Add IF EXISTS");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "DROP TABLE IF EXISTS t");
         assert!(lint_sql(&fixed, &enabled())
             .unwrap()
@@ -327,7 +327,7 @@ mod tests {
             .find(|f| f.rule_id == "require-if-exists")
             .expect("finding present");
         let fix = f.fix.as_ref().expect("fix present");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(
             fixed,
             "CREATE MATERIALIZED VIEW IF NOT EXISTS m AS SELECT 1"
@@ -379,7 +379,7 @@ mod tests {
             .find(|f| f.rule_id == "require-if-exists")
             .expect("finding present");
         let fix = f.fix.as_ref().expect("fix present");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "DROP INDEX CONCURRENTLY IF EXISTS idx");
         assert!(lint_sql(&fixed, &enabled())
             .unwrap()

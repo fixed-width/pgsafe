@@ -89,7 +89,7 @@ mod tests {
         let f = fs.iter().find(|f| f.rule_id == "prefer-jsonb").unwrap();
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Use jsonb");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "ALTER TABLE t ADD COLUMN data jsonb;");
         assert!(
             lint_sql(&fixed, &LintOptions::default())
@@ -107,7 +107,7 @@ mod tests {
         let fs = lint_sql(sql, &LintOptions::default()).unwrap();
         let f = fs.iter().find(|f| f.rule_id == "prefer-jsonb").unwrap();
         let fix = f.fix.as_ref().expect("fix present");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "CREATE TABLE t (id int, data jsonb)");
         assert!(
             lint_sql(&fixed, &LintOptions::default())

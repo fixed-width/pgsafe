@@ -152,7 +152,7 @@ mod tests {
             .unwrap();
         let fix = f.fix.as_ref().expect("fix present");
         assert_eq!(fix.title, "Add CONCURRENTLY");
-        let fixed = apply(sql, fix);
+        let fixed = apply(sql, &fix.edits);
         assert_eq!(fixed, "ALTER TABLE p DETACH PARTITION p1 CONCURRENTLY;");
         // Applying it clears the finding.
         assert!(findings(&fixed)

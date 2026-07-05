@@ -139,11 +139,11 @@ fn token_len(s: &str) -> Option<usize> {
     (n > 0).then_some(n)
 }
 
-/// Apply a fix to `sql`, returning the rewritten string. Edits are applied high
+/// Apply `edits` to `sql`, returning the rewritten string. Edits are applied high
 /// offset to low so earlier splices don't shift later ones.
-pub(crate) fn apply(sql: &str, fix: &Fix) -> String {
+pub(crate) fn apply(sql: &str, edits: &[FixEdit]) -> String {
     let mut out = sql.to_string();
-    let mut edits = fix.edits.clone();
+    let mut edits = edits.to_vec();
     edits.sort_by_key(|e| std::cmp::Reverse(e.start));
     for e in edits {
         out.replace_range(e.start as usize..e.end as usize, &e.replacement);
@@ -166,8 +166,8 @@ pub(crate) struct Applied {
 /// Compose `fixes` (considered in slice order) onto `sql`. A fix is accepted only
 /// if none of its edits overlaps a span already claimed by an accepted fix — a fix
 /// is atomic (all of its edits apply, or the whole fix is skipped). The accepted
-/// edits are collected into one merged [`Fix`] and spliced by the single-fix
-/// [`apply`] primitive, which orders the splices high-to-low internally.
+/// edits are spliced by [`apply`] (which orders the splices high-to-low internally);
+/// an empty accepted set splices nothing.
 pub(crate) fn apply_all(sql: &str, fixes: &[&Fix]) -> Applied {
     let mut accepted: Vec<FixEdit> = Vec::new();
     let mut applied = 0usize;
@@ -190,25 +190,8 @@ pub(crate) fn apply_all(sql: &str, fixes: &[&Fix]) -> Applied {
         accepted.windows(2).all(|w| w[0].end <= w[1].start),
         "apply_all produced overlapping merged edits"
     );
-    // Uphold the Fix.edits invariant ("at least one edit"): never hand `apply` an
-    // empty-edits Fix. An empty accepted set means nothing to splice — the input is
-    // returned unchanged.
-    if accepted.is_empty() {
-        return Applied {
-            sql: sql.to_string(),
-            edits: accepted,
-            applied,
-            skipped_overlapping,
-        };
-    }
-    let merged = Fix {
-        title: String::new(),
-        edits: accepted.clone(),
-    };
-    // Reuse the single-fix splice primitive (it sorts descending internally).
-    let sql = apply(sql, &merged);
     Applied {
-        sql,
+        sql: apply(sql, &accepted),
         edits: accepted,
         applied,
         skipped_overlapping,
@@ -242,7 +225,10 @@ mod tests {
                 replacement: " CONCURRENTLY".into()
             }]
         );
-        assert_eq!(apply(SQL, &fix), "CREATE INDEX CONCURRENTLY i ON t (c);");
+        assert_eq!(
+            apply(SQL, &fix.edits),
+            "CREATE INDEX CONCURRENTLY i ON t (c);"
+        );
     }
 
     #[test]
@@ -258,7 +244,7 @@ mod tests {
         let fix = resolve(&d, sql, 0, sql.len() - 1).unwrap();
         // Matches the keyword at bytes [7,12), not the substring inside idx_index.
         assert_eq!(
-            apply(sql, &fix),
+            apply(sql, &fix.edits),
             "create index CONCURRENTLY idx_index ON t (c);"
         );
     }
@@ -294,7 +280,7 @@ mod tests {
                 replacement: " NOT VALID".into()
             }]
         );
-        assert_eq!(apply(SQL, &fix), "CREATE INDEX i ON t (c) NOT VALID;");
+        assert_eq!(apply(SQL, &fix.edits), "CREATE INDEX i ON t (c) NOT VALID;");
     }
 
     #[test]
@@ -308,7 +294,7 @@ mod tests {
         };
         let fix = resolve(&d, SQL, 0, 23).unwrap();
         assert_eq!(
-            apply(SQL, &fix),
+            apply(SQL, &fix.edits),
             "SET lock_timeout = '5s';\nCREATE INDEX i ON t (c);"
         );
     }
@@ -332,7 +318,7 @@ mod tests {
                 replacement: "jsonb".into()
             }]
         );
-        assert_eq!(apply(sql, &fix), "ALTER TABLE t ADD COLUMN c jsonb;");
+        assert_eq!(apply(sql, &fix.edits), "ALTER TABLE t ADD COLUMN c jsonb;");
     }
 
     #[test]
@@ -352,7 +338,7 @@ mod tests {
                 },
             ],
         };
-        assert_eq!(apply("xyz", &fix), "AxyzB");
+        assert_eq!(apply("xyz", &fix.edits), "AxyzB");
     }
 
     #[test]
@@ -369,7 +355,7 @@ mod tests {
         };
         let fix = resolve(&d, sql, stmt_start, sql.len() - 1).unwrap();
         assert_eq!(
-            apply(sql, &fix),
+            apply(sql, &fix.edits),
             "-- é\nCREATE INDEX CONCURRENTLY i ON t (c);"
         );
     }
@@ -456,7 +442,7 @@ mod tests {
             ],
         };
         assert_eq!(
-            apply(sql, &fix),
+            apply(sql, &fix.edits),
             "ALTER TABLE renamed_table ADD COLUMN bar int4;"
         );
     }
