@@ -54,16 +54,12 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                 print!("{}", render_diff(name, sql, &applied.edits));
                 if gate(&report.findings, r.fail_on) {
                     gated = true;
-                    if applied.edits.is_empty() {
-                        // Gating findings remain but none had an automatic fix: say so
-                        // rather than exiting nonzero with no explanation.
-                        let remaining = report
-                            .findings
-                            .iter()
-                            .filter(|f| !f.is_suppressed())
-                            .count();
+                    if unfixable > 0 {
+                        // Gating findings remain that no automatic fix touched — even
+                        // when the diff above is non-empty (a mixed fixable/unfixable
+                        // file). Report them rather than exiting nonzero in silence.
                         eprintln!(
-                            "{name}: {remaining} finding(s) have no automatic fix; run `pgsafe {name}` to see them"
+                            "{name}: {unfixable} finding(s) have no automatic fix; run `pgsafe {name}` to see them"
                         );
                     }
                 }
@@ -172,99 +168,180 @@ fn line_of(line_starts: &[usize], off: usize) -> usize {
     }
 }
 
-/// Render `edits` against `original` as a unified diff. Edits (ascending,
-/// non-overlapping) are grouped into hunks by the original lines they touch;
-/// each hunk shows the touched original lines (`-`) and the spliced result (`+`).
+/// Unchanged context lines shown around each changed region. Also the basis for
+/// hunk coalescing: two changed regions share one hunk when the unchanged gap
+/// between them is at most `2 * CONTEXT` lines (their context would otherwise
+/// meet or overlap), matching how `diff -u` merges nearby changes.
+const CONTEXT: usize = 3;
+
+/// Render `edits` against `original` as a `git apply`-able unified diff.
+///
+/// Edits (ascending, non-overlapping) are grouped into *blocks* by the original
+/// lines they touch; each block shows those original lines (`-`) and the spliced
+/// result (`+`). Blocks are surrounded by up to [`CONTEXT`] unchanged lines and
+/// coalesced into shared hunks when close together. Headers use the git `a/` /
+/// `b/` prefixes and a `\ No newline at end of file` marker is emitted whenever a
+/// file's final shown line lacks a trailing newline, so the output round-trips
+/// through `git apply`. Empty `edits` render nothing.
 pub(super) fn render_diff(name: &str, original: &str, edits: &[FixEdit]) -> String {
     if edits.is_empty() {
         return String::new();
     }
-    // Line start offsets (line 0 begins at byte 0).
+    // Byte offset where each original line begins (line 0 at byte 0).
     let mut line_starts = vec![0usize];
     for (i, b) in original.bytes().enumerate() {
         if b == b'\n' {
             line_starts.push(i + 1);
         }
     }
-    // Group edits whose touched original-line ranges overlap or are contiguous.
-    struct Group {
-        first_line: usize,
-        last_line: usize,
+    let orig_lines: Vec<&str> = original.split_inclusive('\n').collect();
+    let total = orig_lines.len();
+
+    // A maximal run of original lines touched by edits, plus the lines that
+    // replace them (that region's original text with its edits spliced in).
+    struct Block {
+        first: usize,
+        last: usize,
+        new_lines: Vec<String>,
+    }
+
+    // Group edits whose touched original-line ranges are contiguous.
+    struct Pending {
+        first: usize,
+        last: usize,
         edits: Vec<FixEdit>,
     }
-    let mut groups: Vec<Group> = Vec::new();
+    let mut pending: Vec<Pending> = Vec::new();
     for e in edits {
         let start_line = line_of(&line_starts, e.start as usize);
-        // end offset is exclusive; the last touched line is the one containing end-1
-        // (or the start line for a zero-width insertion).
+        // `end` is exclusive; the last touched line contains `end - 1` (or the
+        // start line for a zero-width insertion).
         let end_byte = (e.end as usize).max(e.start as usize + 1) - 1;
         let end_line = line_of(&line_starts, end_byte);
-        match groups.last_mut() {
-            Some(g) if start_line <= g.last_line + 1 => {
-                g.last_line = g.last_line.max(end_line);
-                g.edits.push(e.clone());
+        match pending.last_mut() {
+            Some(p) if start_line <= p.last + 1 => {
+                p.last = p.last.max(end_line);
+                p.edits.push(e.clone());
             }
-            _ => groups.push(Group {
-                first_line: start_line,
-                last_line: end_line,
+            _ => pending.push(Pending {
+                first: start_line,
+                last: end_line,
                 edits: vec![e.clone()],
             }),
         }
     }
 
-    let mut out = format!("--- {name}\n+++ {name} (fixed)\n");
-    let mut new_line_delta: isize = 0;
-    for g in &groups {
-        let block_start = line_starts[g.first_line];
-        let block_end = line_starts
-            .get(g.last_line + 1)
-            .copied()
-            .unwrap_or(original.len());
-        let old_block = &original[block_start..block_end];
+    // Splice each block's edits into its original text to get the replacement lines.
+    let blocks: Vec<Block> = pending
+        .into_iter()
+        .map(|p| {
+            let block_start = line_starts[p.first];
+            let block_end = line_starts
+                .get(p.last + 1)
+                .copied()
+                .unwrap_or(original.len());
+            let mut new_block = original[block_start..block_end].to_string();
+            let mut local: Vec<&FixEdit> = p.edits.iter().collect();
+            local.sort_by_key(|e| e.start);
+            for e in local.iter().rev() {
+                let s = e.start as usize - block_start;
+                let en = e.end as usize - block_start;
+                new_block.replace_range(s..en, &e.replacement);
+            }
+            Block {
+                first: p.first,
+                last: p.last,
+                new_lines: new_block
+                    .split_inclusive('\n')
+                    .map(str::to_string)
+                    .collect(),
+            }
+        })
+        .collect();
 
-        // Splice this group's edits into the block (offsets local to block_start).
-        let mut new_block = old_block.to_string();
-        let mut local: Vec<&FixEdit> = g.edits.iter().collect();
-        local.sort_by_key(|e| e.start);
-        for e in local.iter().rev() {
-            let s = e.start as usize - block_start;
-            let en = e.end as usize - block_start;
-            new_block.replace_range(s..en, &e.replacement);
+    // Coalesce blocks into hunks: a run of blocks each within `2 * CONTEXT`
+    // unchanged lines of the previous shares one hunk (the gap shown as context).
+    let mut hunks: Vec<Vec<usize>> = Vec::new();
+    for (i, b) in blocks.iter().enumerate() {
+        match hunks.last_mut() {
+            Some(h) if b.first - blocks[h[h.len() - 1]].last - 1 <= 2 * CONTEXT => h.push(i),
+            _ => hunks.push(vec![i]),
+        }
+    }
+
+    let mut out = format!("--- a/{name}\n+++ b/{name}\n");
+    // Running new-file line delta from all preceding hunks (context lines are
+    // common to both files, so only removed/added lines shift it).
+    let mut new_delta: isize = 0;
+    for h in &hunks {
+        let region_first = blocks[h[0]].first;
+        let region_last = blocks[h[h.len() - 1]].last;
+        let ctx_before = region_first.min(CONTEXT);
+        let ctx_after = (total - 1 - region_last).min(CONTEXT);
+        let hunk_old_first = region_first - ctx_before;
+
+        let mut body = String::new();
+        let mut old_count = 0usize; // context + removed
+        let mut new_count = 0usize; // context + added
+
+        // Leading context.
+        for &line in &orig_lines[hunk_old_first..region_first] {
+            push_diff_line(&mut body, ' ', line);
+            old_count += 1;
+            new_count += 1;
+        }
+        // Each block, with unchanged gaps between blocks shown as context.
+        for (j, &bi) in h.iter().enumerate() {
+            let b = &blocks[bi];
+            for &line in &orig_lines[b.first..=b.last] {
+                push_diff_line(&mut body, '-', line);
+                old_count += 1;
+            }
+            for nl in &b.new_lines {
+                push_diff_line(&mut body, '+', nl);
+                new_count += 1;
+            }
+            if let Some(&next_bi) = h.get(j + 1) {
+                for &line in &orig_lines[(b.last + 1)..blocks[next_bi].first] {
+                    push_diff_line(&mut body, ' ', line);
+                    old_count += 1;
+                    new_count += 1;
+                }
+            }
+        }
+        // Trailing context.
+        for &line in &orig_lines[(region_last + 1)..(region_last + 1 + ctx_after)] {
+            push_diff_line(&mut body, ' ', line);
+            old_count += 1;
+            new_count += 1;
         }
 
-        let old_lines: Vec<&str> = old_block.split_inclusive('\n').collect();
-        let new_lines: Vec<&str> = new_block.split_inclusive('\n').collect();
-        // `old_start` is 1-based. Clamp `new_start` to line 1: with today's insert/replace
-        // fixes `new_line_delta` can never drive it below 1, but clamp rather than panic if
-        // that ever changes.
-        let old_start = g.first_line + 1;
+        let old_start = hunk_old_first + 1; // 1-based
+                                            // Clamp to line 1: today's insert/replace fixes keep `new_delta >= 0`, but
+                                            // clamp rather than panic if a future fix removes more lines than precede it.
         let new_start =
-            usize::try_from(isize::try_from(old_start).unwrap() + new_line_delta).unwrap_or(1);
+            usize::try_from(isize::try_from(old_start).unwrap_or(1) + new_delta).unwrap_or(1);
         out.push_str(&format!(
-            "@@ -{},{} +{},{} @@\n",
-            old_start,
-            old_lines.len(),
-            new_start,
-            new_lines.len()
+            "@@ -{old_start},{old_count} +{new_start},{new_count} @@\n"
         ));
-        for l in &old_lines {
-            out.push_str(&format!("-{}", ensure_nl(l)));
-        }
-        for l in &new_lines {
-            out.push_str(&format!("+{}", ensure_nl(l)));
-        }
-        new_line_delta += new_lines.len() as isize - old_lines.len() as isize;
+        out.push_str(&body);
+        new_delta +=
+            isize::try_from(new_count).unwrap_or(0) - isize::try_from(old_count).unwrap_or(0);
     }
     out
 }
 
-/// Append a newline if the slice doesn't already end with one (last line of a
-/// file with no trailing newline), so each diff line is newline-terminated.
-fn ensure_nl(s: &str) -> String {
-    if s.ends_with('\n') {
-        s.to_string()
-    } else {
-        format!("{s}\n")
+/// Push one unified-diff body line — `prefix` then `content` — appending git's
+/// `\ No newline at end of file` marker when `content` (a file's final line)
+/// carries no trailing newline. `split_inclusive('\n')` yields a marker-worthy
+/// unterminated slice only for a file's/block's genuine last line, so this fires
+/// exactly where git would.
+fn push_diff_line(out: &mut String, prefix: char, content: &str) {
+    out.push(prefix);
+    out.push_str(content);
+    if !content.ends_with('\n') {
+        out.push('\n');
+        out.push_str("\\ No newline at end of file\n");
     }
 }
 
@@ -281,6 +358,8 @@ mod tests {
     #[test]
     fn single_line_replacement_diff() {
         // "CREATE INDEX i ON t (c);\n" — insert " CONCURRENTLY" after "CREATE INDEX" (byte 12).
+        // The full diff's byte-exactness is enforced by the `git apply` round-trip in
+        // tests/fix_cli.rs; here we lock the structure the git format demands.
         let sql = "CREATE INDEX i ON t (c);\n";
         let edits = vec![FixEdit {
             start: 12,
@@ -288,19 +367,26 @@ mod tests {
             replacement: " CONCURRENTLY".into(),
         }];
         let out = render_diff("f.sql", sql, &edits);
-        assert_eq!(
-            out,
-            "--- f.sql\n\
-             +++ f.sql (fixed)\n\
-             @@ -1,1 +1,1 @@\n\
-             -CREATE INDEX i ON t (c);\n\
-             +CREATE INDEX CONCURRENTLY i ON t (c);\n"
+        // git-parseable headers (a/ b/ prefixes, no " (fixed)" suffix).
+        assert!(
+            out.starts_with("--- a/f.sql\n+++ b/f.sql\n"),
+            "headers must use git a/ b/ prefixes: {out}"
+        );
+        assert!(out.contains("@@ "), "must have a hunk header: {out}");
+        assert!(
+            out.contains("-CREATE INDEX i ON t (c);\n"),
+            "must remove the original line: {out}"
+        );
+        assert!(
+            out.contains("+CREATE INDEX CONCURRENTLY i ON t (c);\n"),
+            "must add the fixed line: {out}"
         );
     }
 
     #[test]
     fn newline_adding_replacement_grows_line_count() {
-        // Prologue insertion at byte 0 adds a line before the statement.
+        // Prologue insertion at byte 0 adds a line before the statement, so the hunk
+        // emits two `+` lines against one `-` line.
         let sql = "CREATE INDEX i ON t (c);\n";
         let edits = vec![FixEdit {
             start: 0,
@@ -308,22 +394,30 @@ mod tests {
             replacement: "SET lock_timeout = '5s';\n".into(),
         }];
         let out = render_diff("f.sql", sql, &edits);
+        assert!(out.starts_with("--- a/f.sql\n+++ b/f.sql\n"), "{out}");
+        assert!(out.contains("@@ "), "{out}");
+        assert!(out.contains("-CREATE INDEX i ON t (c);\n"), "{out}");
+        assert!(out.contains("+SET lock_timeout = '5s';\n"), "{out}");
+        assert!(out.contains("+CREATE INDEX i ON t (c);\n"), "{out}");
+        // One line removed, two added.
         assert_eq!(
-            out,
-            "--- f.sql\n\
-             +++ f.sql (fixed)\n\
-             @@ -1,1 +1,2 @@\n\
-             -CREATE INDEX i ON t (c);\n\
-             +SET lock_timeout = '5s';\n\
-             +CREATE INDEX i ON t (c);\n"
+            out.lines()
+                .filter(|l| l.starts_with('-') && !l.starts_with("---"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            out.lines()
+                .filter(|l| l.starts_with('+') && !l.starts_with("+++"))
+                .count(),
+            2
         );
     }
 
     #[test]
-    fn two_hunks_running_delta_shifts_second_hunk_new_start() {
-        // Lines: 0 "CREATE INDEX i ON a (c);", 1 "SELECT 1;", 2 "SELECT 2;",
-        //        3 "CREATE INDEX j ON b (c);". "CREATE INDEX" on line 3 starts at byte 45,
-        //        so the insertion point after it is byte 57.
+    fn nearby_changes_coalesce_with_context() {
+        // Two changed lines (0 and 3) two unchanged lines apart coalesce into a single
+        // hunk, with the intervening lines shown as context. `+` lines carry both fixes.
         let sql = "CREATE INDEX i ON a (c);\nSELECT 1;\nSELECT 2;\nCREATE INDEX j ON b (c);\n";
         let edits = vec![
             FixEdit {
@@ -332,23 +426,50 @@ mod tests {
                 replacement: "SET lock_timeout = '5s';\n".into(),
             },
             FixEdit {
+                // "CREATE INDEX" on line 3 starts at byte 45; insertion point is byte 57.
                 start: 57,
                 end: 57,
                 replacement: " CONCURRENTLY".into(),
             },
         ];
         let out = render_diff("f.sql", sql, &edits);
+        assert!(out.starts_with("--- a/f.sql\n+++ b/f.sql\n"), "{out}");
+        // A single coalesced hunk (the 2-line gap is <= 2*CONTEXT).
         assert_eq!(
-            out,
-            "--- f.sql\n\
-             +++ f.sql (fixed)\n\
-             @@ -1,1 +1,2 @@\n\
-             -CREATE INDEX i ON a (c);\n\
-             +SET lock_timeout = '5s';\n\
-             +CREATE INDEX i ON a (c);\n\
-             @@ -4,1 +5,1 @@\n\
-             -CREATE INDEX j ON b (c);\n\
-             +CREATE INDEX CONCURRENTLY j ON b (c);\n"
+            out.matches("@@ ").count(),
+            1,
+            "expected one coalesced hunk: {out}"
+        );
+        // Intervening unchanged lines appear as context (space prefix).
+        assert!(out.contains(" SELECT 1;\n"), "context line missing: {out}");
+        assert!(out.contains(" SELECT 2;\n"), "context line missing: {out}");
+        assert!(out.contains("+SET lock_timeout = '5s';\n"), "{out}");
+        assert!(
+            out.contains("+CREATE INDEX CONCURRENTLY j ON b (c);\n"),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn no_trailing_newline_emits_marker() {
+        // Final line lacks a trailing newline: both the removed and the added final
+        // line must carry git's `\ No newline at end of file` marker.
+        let sql = "CREATE INDEX i ON t (c);";
+        let edits = vec![FixEdit {
+            start: 12,
+            end: 12,
+            replacement: " CONCURRENTLY".into(),
+        }];
+        let out = render_diff("f.sql", sql, &edits);
+        assert!(
+            out.contains("\\ No newline at end of file"),
+            "must mark the missing trailing newline: {out}"
+        );
+        // Marker appears for both the `-` and the `+` final line.
+        assert_eq!(
+            out.matches("\\ No newline at end of file").count(),
+            2,
+            "one marker per side: {out}"
         );
     }
 }

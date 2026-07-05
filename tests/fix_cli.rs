@@ -1,10 +1,19 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::process::Command as StdCommand;
 use tempfile::tempdir;
 
 fn pgsafe() -> Command {
     Command::cargo_bin("pgsafe").unwrap()
+}
+
+fn git_available() -> bool {
+    StdCommand::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 #[test]
@@ -253,6 +262,80 @@ fn fix_write_error_exits_2() {
         .failure()
         .code(2)
         .stderr(predicate::str::contains(f.to_str().unwrap()));
+}
+
+#[test]
+fn diff_output_applies_cleanly_with_git_apply() {
+    if !git_available() {
+        eprintln!("skipping: git not available");
+        return;
+    }
+    let dir = tempdir().unwrap();
+    assert!(StdCommand::new("git")
+        .arg("init")
+        .current_dir(dir.path())
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let rel = "m.sql";
+    let original = "CREATE INDEX i ON t (x);\nSELECT 1;\nDROP TABLE stale;\n";
+    fs::write(dir.path().join(rel), original).unwrap();
+
+    // Capture --diff output as a patch.
+    let diff = pgsafe()
+        .arg("--diff")
+        .arg(rel)
+        .current_dir(dir.path())
+        .assert();
+    let patch = String::from_utf8(diff.get_output().stdout.clone()).unwrap();
+    fs::write(dir.path().join("fix.patch"), &patch).unwrap();
+
+    // git apply --check must accept it, and applying it must equal what --fix writes.
+    let check = StdCommand::new("git")
+        .args(["apply", "--check", "fix.patch"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "git apply --check failed:\n{}\n---patch---\n{patch}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(StdCommand::new("git")
+        .args(["apply", "fix.patch"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap()
+        .status
+        .success());
+    let applied_via_diff = fs::read_to_string(dir.path().join(rel)).unwrap();
+
+    // Compare against --fix on a fresh copy.
+    let dir2 = tempdir().unwrap();
+    fs::write(dir2.path().join(rel), original).unwrap();
+    let _ = pgsafe()
+        .arg("--fix")
+        .arg(rel)
+        .current_dir(dir2.path())
+        .assert();
+    let applied_via_fix = fs::read_to_string(dir2.path().join(rel)).unwrap();
+
+    assert_eq!(applied_via_diff, applied_via_fix);
+}
+
+#[test]
+fn diff_reports_unfixable_in_mixed_case() {
+    // A fixable finding (CREATE INDEX → CONCURRENTLY) plus an unfixable gating one
+    // (DROP TABLE): the non-empty diff still surfaces the residual unfixable finding.
+    pgsafe()
+        .arg("--diff")
+        .write_stdin("CREATE INDEX i ON t (x);\nDROP TABLE stale;\n")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("+CREATE INDEX CONCURRENTLY"))
+        .stderr(predicate::str::contains("have no automatic fix"));
 }
 
 #[test]
