@@ -72,31 +72,7 @@ cumulative length change.
 The in-browser playground surfaces a **Fix** button on any finding that includes a `fix` object;
 clicking it rewrites the editor content in place.
 
-## Applying fixes
-
-The CLI can apply a finding's fix directly, without going through JSON. Preview it as a
-unified diff:
-
-```sh
-pgsafe --diff db/migrate/003_add_index.sql
-```
-
-The output is a standard unified diff, so it pipes straight into `git apply`:
-
-```sh
-pgsafe --diff db/migrate/003_add_index.sql | git apply
-```
-
-Or apply it — in place for a file, to stdout when reading from stdin:
-
-```sh
-pgsafe --fix db/migrate/003_add_index.sql
-```
-
-`--fix` and `--diff` are human-output only: they're mutually exclusive, and neither combines
-with `--format json`, `--format github`, or `--format sarif`. A finding suppressed with
-`-- pgsafe:ignore` is never auto-fixed. After `--fix`, the exit code reflects re-linting the
-fixed file, per the [exit codes](/docs/ci/).
+To apply a fix from the command line, see [Usage](/docs/usage/).
 
 ## SARIF (GitHub code scanning)
 

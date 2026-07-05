@@ -39,5 +39,6 @@ cat migration.sql | pgsafe -  # stdin
 A clean migration exits `0`; any finding at or above the gate (default: any finding)
 exits `1`; a parse or I/O error exits `2`.
 
-See the [rules reference](/rules/) for every hazard pgsafe checks, and
+Next, see [Usage](/docs/usage/) to work through a finding — previewing and applying its fix —
+then the [rules reference](/rules/) for every hazard pgsafe checks, and
 [CI & GitHub Action](/docs/ci/) to gate migrations on every pull request.
