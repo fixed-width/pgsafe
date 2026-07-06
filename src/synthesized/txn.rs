@@ -30,19 +30,18 @@ fn is_concurrently_index_op(node: &NodeEnum) -> bool {
     }
 }
 
-/// Statement indices that are a CONCURRENTLY index operation inside a transaction block.
-/// `assume_in_transaction` seeds the initial state (for tools that wrap each migration implicitly).
-pub(crate) fn concurrently_in_transaction_indices(
-    stmts: &[RawStmt],
-    assume_in_transaction: bool,
-) -> Vec<usize> {
+/// Per-statement flag: `out[i]` is true when statement `i` executes inside an open
+/// transaction block. `BEGIN`/`START TRANSACTION` opens the block; `COMMIT`/`ROLLBACK`
+/// closes it. `assume_in_transaction` seeds the initial state (migration tools that wrap
+/// each file in an implicit transaction). The flag recorded for a transaction-control
+/// statement is its pre-execution state; callers key on non-control statements, so that
+/// choice does not matter. The result is index-aligned with `stmts`.
+pub(crate) fn in_transaction_flags(stmts: &[RawStmt], assume_in_transaction: bool) -> Vec<bool> {
     let mut in_txn = assume_in_transaction;
-    let mut out = Vec::new();
-    for (i, raw) in stmts.iter().enumerate() {
-        let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
-            continue;
-        };
-        if let NodeEnum::TransactionStmt(t) = node {
+    let mut out = Vec::with_capacity(stmts.len());
+    for raw in stmts {
+        out.push(in_txn);
+        if let Some(NodeEnum::TransactionStmt(t)) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) {
             match TransactionStmtKind::try_from(t.kind) {
                 Ok(TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart) => {
                     in_txn = true;
@@ -54,13 +53,26 @@ pub(crate) fn concurrently_in_transaction_indices(
                 }
                 _ => {}
             }
-            continue;
-        }
-        if in_txn && is_concurrently_index_op(node) {
-            out.push(i);
         }
     }
     out
+}
+
+/// Statement indices that are a CONCURRENTLY index operation inside a transaction block.
+/// `assume_in_transaction` seeds the initial state (for tools that wrap each migration implicitly).
+pub(crate) fn concurrently_in_transaction_indices(
+    stmts: &[RawStmt],
+    assume_in_transaction: bool,
+) -> Vec<usize> {
+    let in_txn = in_transaction_flags(stmts, assume_in_transaction);
+    stmts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, raw)| {
+            let node = raw.stmt.as_ref().and_then(|b| b.node.as_ref())?;
+            (in_txn[i] && is_concurrently_index_op(node)).then_some(i)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -98,6 +110,27 @@ mod tests {
             indices("BEGIN; CREATE INDEX CONCURRENTLY i ON t (x); ROLLBACK;"),
             vec![1]
         );
+    }
+
+    #[test]
+    fn in_transaction_flags_track_block_boundaries() {
+        let flags = |sql: &str| {
+            super::in_transaction_flags(&crate::ast::parse(sql).unwrap().protobuf.stmts, false)
+        };
+        // BEGIN itself is recorded pre-open (false); the op after it is inside (true);
+        // COMMIT and everything after are outside again.
+        assert_eq!(
+            flags("BEGIN; CREATE INDEX i ON t (x); COMMIT; SELECT 1;"),
+            vec![false, true, true, false]
+        );
+        // No transaction control: every statement is top-level.
+        assert_eq!(flags("SELECT 1; SELECT 2;"), vec![false, false]);
+        // assume_in_transaction seeds the initial state.
+        let seeded = super::in_transaction_flags(
+            &crate::ast::parse("SELECT 1;").unwrap().protobuf.stmts,
+            true,
+        );
+        assert_eq!(seeded, vec![true]);
     }
 
     #[test]
