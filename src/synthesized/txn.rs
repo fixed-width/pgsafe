@@ -5,6 +5,7 @@
 
 use crate::ast::protobuf::{AlterTableType, ObjectType, RawStmt, TransactionStmtKind};
 use crate::ast::NodeEnum;
+use crate::Finding;
 
 pub(crate) const ID: &str = "concurrently-in-transaction";
 pub(crate) const MESSAGE: &str =
@@ -82,6 +83,38 @@ pub(crate) fn concurrently_in_transaction_indices(
             (in_txn[i] && is_concurrently_index_op(node)).then_some(i)
         })
         .collect()
+}
+
+/// Rules whose autofix inserts CONCURRENTLY, which PostgreSQL rejects inside a
+/// transaction block. `REFRESH MATERIALIZED VIEW CONCURRENTLY` is txn-legal and
+/// carries no autofix, so it is deliberately excluded.
+const CONCURRENTLY_FIX_RULES: &[&str] = &[
+    "add-index-non-concurrent",
+    "drop-index-non-concurrent",
+    "reindex-non-concurrent",
+    "detach-partition-non-concurrent",
+];
+
+/// Withdraw the CONCURRENTLY autofix from any finding whose statement executes inside a
+/// transaction block: `CREATE`/`DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, and
+/// `DETACH PARTITION … CONCURRENTLY` all fail at runtime inside a txn, so applying the fix
+/// would swap a lint Error for a latent runtime failure. The finding is left intact (its
+/// guidance already tells the user to move the statement to its own migration); only `fix`
+/// is cleared.
+pub(crate) fn suppress_concurrently_fix_in_transaction(
+    stmts: &[RawStmt],
+    findings: &mut [Finding],
+    assume_in_transaction: bool,
+) {
+    let in_txn = in_transaction_flags(stmts, assume_in_transaction);
+    for f in findings.iter_mut() {
+        if f.fix.is_some()
+            && CONCURRENTLY_FIX_RULES.contains(&f.rule_id.as_str())
+            && in_txn.get(f.statement_index).copied().unwrap_or(false)
+        {
+            f.fix = None;
+        }
+    }
 }
 
 #[cfg(test)]
