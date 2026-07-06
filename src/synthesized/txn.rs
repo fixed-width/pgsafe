@@ -9,8 +9,9 @@ use crate::Finding;
 
 pub(crate) const ID: &str = "concurrently-in-transaction";
 pub(crate) const MESSAGE: &str =
-    "CREATE/DROP INDEX CONCURRENTLY and REINDEX CONCURRENTLY cannot run \
-    inside a transaction block; this statement runs inside a transaction and will fail at runtime.";
+    "CREATE/DROP INDEX CONCURRENTLY, REINDEX CONCURRENTLY, and DETACH PARTITION CONCURRENTLY \
+    cannot run inside a transaction block; this statement runs inside a transaction and will \
+    fail at runtime.";
 pub(crate) const GUIDANCE: &str = "Run the CONCURRENTLY statement outside the transaction — put it in \
     its own migration, or move it before BEGIN / after COMMIT. (Note: many migration tools also wrap \
     each migration in an implicit transaction; disable that for this migration.)";

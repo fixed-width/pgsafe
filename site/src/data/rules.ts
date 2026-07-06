@@ -519,16 +519,20 @@ export const RULES: Record<string, RuleDoc> = {
     severity: "error",
     category: "Locking & rewrites",
     summary:
-      "A `CONCURRENTLY` index operation inside a transaction fails at runtime — Postgres rejects it.",
+      "A `CONCURRENTLY` operation inside a transaction fails at runtime — Postgres rejects it.",
     whyUnsafe:
-      "`CREATE/DROP INDEX CONCURRENTLY` and `REINDEX CONCURRENTLY` cannot run inside a transaction block; this statement runs inside a transaction and will fail at runtime.",
+      "`CREATE/DROP INDEX CONCURRENTLY`, `REINDEX CONCURRENTLY`, and `ALTER TABLE … DETACH PARTITION … CONCURRENTLY` cannot run inside a transaction block; this statement runs inside a transaction and will fail at runtime. Because of this, `--fix`/`--diff` will not add `CONCURRENTLY` to a statement inside a transaction — the finding is reported without an automatic fix.",
     safeRewrite:
       "Run the `CONCURRENTLY` statement outside the transaction — put it in its own migration, or move it before `BEGIN` / after `COMMIT`. (Note: many migration tools also wrap each migration in an implicit transaction; disable that for this migration.)",
     example: {
       unsafe: "BEGIN;\nCREATE INDEX CONCURRENTLY idx_users_email ON users (email);\nCOMMIT;",
       safe: "CREATE INDEX CONCURRENTLY idx_users_email ON users (email);",
     },
-    related: ["add-index-non-concurrent", "enum-value-used-in-transaction"],
+    related: [
+      "add-index-non-concurrent",
+      "detach-partition-non-concurrent",
+      "enum-value-used-in-transaction",
+    ],
   },
   "require-timeout": {
     id: "require-timeout",
