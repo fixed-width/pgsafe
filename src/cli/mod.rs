@@ -3,25 +3,14 @@
 //! front-end — config discovery, `--config`/`--git-diff`/`--since` input selection, and
 //! per-file options — then run its own lint/render loop over the returned [`ResolvedRun`].
 
-use std::io::{IsTerminal, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::{
     gate, lint_input, render_errors, render_github, render_human_styled, render_json, render_sarif,
-    render_summary, FailOn, FileReport, Format, LintOptions, Styling,
+    render_summary, ColorWhen, FailOn, FileReport, Format, LintOptions, Styling,
 };
-
-/// When to colorize human output.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum ColorWhen {
-    /// Colorize when stdout is a terminal, honoring `NO_COLOR` / `CLICOLOR_FORCE`. Default.
-    Auto,
-    /// Always colorize.
-    Always,
-    /// Never colorize.
-    Never,
-}
 
 mod config;
 mod fix;
@@ -162,39 +151,6 @@ pub fn example_config() -> &'static str {
     config::EXAMPLE_CONFIG
 }
 
-/// A conventional color env var counts as "set" when present and neither empty
-/// nor `"0"` (so `NO_COLOR=` and `CLICOLOR_FORCE=0` do not trigger).
-fn env_set(name: &str) -> bool {
-    std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0")
-}
-
-/// Resolve the [`Styling`] for this run. Color applies only to human output;
-/// `Auto` consults `CLICOLOR_FORCE`, then `NO_COLOR`, then whether stdout is a TTY.
-/// `Always` overrides `NO_COLOR`; `Never` is always plain.
-fn styling_for(color: ColorWhen, format: &Format) -> Styling {
-    if !matches!(format, Format::Human) {
-        return Styling::plain();
-    }
-    let on = match color {
-        ColorWhen::Never => false,
-        ColorWhen::Always => true,
-        ColorWhen::Auto => {
-            if env_set("CLICOLOR_FORCE") {
-                true
-            } else if env_set("NO_COLOR") {
-                false
-            } else {
-                std::io::stdout().is_terminal()
-            }
-        }
-    };
-    if on {
-        Styling::ansi()
-    } else {
-        Styling::plain()
-    }
-}
-
 /// Read, lint, render, and gate the inputs in `args`, returning the process
 /// exit code (`0` clean, `1` gated findings, `2` parse/IO error).
 #[must_use]
@@ -257,7 +213,7 @@ pub fn run(args: CommonArgs) -> ExitCode {
 
     match r.format {
         Format::Human => {
-            let st = styling_for(args.color, &r.format);
+            let st = Styling::resolve(args.color);
             eprint!("{}", render_errors(&reports));
             print!("{}", render_human_styled(&reports, &st));
             if let Some(summary) = render_summary(&reports, &st) {

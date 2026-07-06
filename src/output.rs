@@ -4,6 +4,7 @@
 
 use crate::{Finding, Location, Severity};
 use anstyle::{AnsiColor, Style};
+use std::io::IsTerminal;
 
 /// How the human renderers wrap each span of output. `plain()` emits neither
 /// ANSI escapes nor glyphs (byte-identical to unstyled output); `ansi()` colors
@@ -48,6 +49,26 @@ impl Styling {
             muted: Style::new().dimmed(),
             strong: Style::new().bold(),
             glyphs: true,
+        }
+    }
+
+    /// Resolve to [`Styling::ansi`] or [`Styling::plain`] for `color` and the
+    /// current environment: `CLICOLOR_FORCE` (set, non-empty, ≠"0") forces color,
+    /// else `NO_COLOR` (same test) forces plain, else color iff stdout is a
+    /// terminal. `Always` overrides `NO_COLOR`; `Never` is always plain. This is
+    /// format-agnostic — call it only for human output; keep machine formats plain.
+    #[must_use]
+    pub fn resolve(color: ColorWhen) -> Styling {
+        let on = color_on(
+            color,
+            env_set("CLICOLOR_FORCE"),
+            env_set("NO_COLOR"),
+            std::io::stdout().is_terminal(),
+        );
+        if on {
+            Styling::ansi()
+        } else {
+            Styling::plain()
         }
     }
 
@@ -113,8 +134,45 @@ fn paint(style: Style, text: &str) -> String {
     format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
+/// A conventional color env var counts as "set" when present and neither empty
+/// nor `"0"` (so `NO_COLOR=` and `CLICOLOR_FORCE=0` do not trigger).
+fn env_set(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// The pure color decision, factored out of [`Styling::resolve`] so it can be
+/// unit-tested without touching process-global env/TTY state.
+fn color_on(color: ColorWhen, clicolor_force: bool, no_color: bool, is_tty: bool) -> bool {
+    match color {
+        ColorWhen::Never => false,
+        ColorWhen::Always => true,
+        ColorWhen::Auto => {
+            if clicolor_force {
+                true
+            } else if no_color {
+                false
+            } else {
+                is_tty
+            }
+        }
+    }
+}
+
 /// The version of the JSON output envelope (`schema_version`).
 pub const SCHEMA_VERSION: u32 = 2;
+
+/// When to colorize human output (the CLI `--color` flag).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum ColorWhen {
+    /// Colorize when stdout is a terminal, honoring `NO_COLOR` / `CLICOLOR_FORCE`. Default.
+    Auto,
+    /// Always colorize.
+    Always,
+    /// Never colorize.
+    Never,
+}
 
 /// Minimum finding severity that fails the run (maps to exit code 1).
 #[non_exhaustive]
@@ -763,5 +821,29 @@ mod tests {
             render_summary(&reports, &Styling::plain()).unwrap(),
             "Summary: 2 suppressed in 1 file"
         );
+    }
+
+    #[test]
+    fn color_on_follows_precedence() {
+        use ColorWhen::*;
+        // Never / Always ignore env + tty entirely.
+        assert!(!color_on(Never, true, false, true));
+        assert!(color_on(Always, false, true, false));
+        // Auto: CLICOLOR_FORCE wins over NO_COLOR and a non-tty.
+        assert!(color_on(Auto, true, true, false));
+        // Auto: NO_COLOR (without force) is off even on a tty.
+        assert!(!color_on(Auto, false, true, true));
+        // Auto: neither set → follow the tty.
+        assert!(color_on(Auto, false, false, true));
+        assert!(!color_on(Auto, false, false, false));
+    }
+
+    #[test]
+    fn resolve_always_colors_never_plain_regardless_of_env() {
+        // Always/Never bypass env, so these are deterministic under any test env.
+        assert!(Styling::resolve(ColorWhen::Always)
+            .danger("x")
+            .contains('\u{1b}'));
+        assert_eq!(Styling::resolve(ColorWhen::Never).danger("x"), "x");
     }
 }
