@@ -4,6 +4,7 @@
 
 use crate::{Finding, Location, Severity};
 use anstyle::{AnsiColor, Style};
+use std::io::IsTerminal;
 
 /// How the human renderers wrap each span of output. `plain()` emits neither
 /// ANSI escapes nor glyphs (byte-identical to unstyled output); `ansi()` colors
@@ -11,15 +12,12 @@ use anstyle::{AnsiColor, Style};
 /// caller's job — the library only consumes a ready-made `Styling`.
 #[derive(Debug, Clone)]
 pub struct Styling {
-    error: Style,
+    danger: Style,
     warning: Style,
-    rule_id: Style,
-    fix: Style,
-    location: Style,
-    suppressed: Style,
-    summary_error: Style,
-    summary_warning: Style,
-    summary_suppressed: Style,
+    success: Style,
+    accent: Style,
+    muted: Style,
+    strong: Style,
     glyphs: bool,
 }
 
@@ -29,15 +27,12 @@ impl Styling {
     pub fn plain() -> Self {
         let n = Style::new();
         Self {
-            error: n,
+            danger: n,
             warning: n,
-            rule_id: n,
-            fix: n,
-            location: n,
-            suppressed: n,
-            summary_error: n,
-            summary_warning: n,
-            summary_suppressed: n,
+            success: n,
+            accent: n,
+            muted: n,
+            strong: n,
             glyphs: false,
         }
     }
@@ -45,27 +40,83 @@ impl Styling {
     /// Colors + per-finding glyphs, for a terminal that supports ANSI.
     #[must_use]
     pub fn ansi() -> Self {
-        let red = Style::new().fg_color(Some(AnsiColor::Red.into()));
-        let yellow = Style::new().fg_color(Some(AnsiColor::Yellow.into()));
-        let dim = Style::new().dimmed();
+        let fg = |c| Style::new().fg_color(Some(c));
         Self {
-            error: red.bold(),
-            warning: yellow.bold(),
-            rule_id: Style::new().bold(),
-            fix: dim,
-            location: dim,
-            suppressed: dim,
-            summary_error: red,
-            summary_warning: yellow,
-            summary_suppressed: dim,
+            danger: fg(AnsiColor::Red.into()).bold(),
+            warning: fg(AnsiColor::Yellow.into()).bold(),
+            success: fg(AnsiColor::Green.into()).bold(),
+            accent: fg(AnsiColor::Cyan.into()),
+            muted: Style::new().dimmed(),
+            strong: Style::new().bold(),
             glyphs: true,
         }
     }
 
-    fn severity(&self, s: Severity) -> Style {
+    /// Resolve to [`Styling::ansi`] or [`Styling::plain`] for `color` and the
+    /// current environment: `CLICOLOR_FORCE` (set, non-empty, ≠"0") forces color,
+    /// else `NO_COLOR` (same test) forces plain, else color iff stdout is a
+    /// terminal. `Always` overrides `NO_COLOR`; `Never` is always plain. This is
+    /// format-agnostic — call it only for human output; keep machine formats plain.
+    ///
+    /// The terminal probe always targets **stdout**. If you render human output to
+    /// a different stream (stderr, a file, a pane), detect that stream's TTY status
+    /// yourself and construct [`Styling::ansi`] / [`Styling::plain`] directly.
+    #[must_use]
+    pub fn resolve(color: ColorWhen) -> Styling {
+        let on = color_on(
+            color,
+            env_set("CLICOLOR_FORCE"),
+            env_set("NO_COLOR"),
+            std::io::stdout().is_terminal(),
+        );
+        if on {
+            Styling::ansi()
+        } else {
+            Styling::plain()
+        }
+    }
+
+    /// Paint `s` in the "danger" role (errors, rejects): red + bold.
+    #[must_use]
+    pub fn danger(&self, s: &str) -> String {
+        paint(self.danger, s)
+    }
+
+    /// Paint `s` in the "warning" role: yellow + bold.
+    #[must_use]
+    pub fn warning(&self, s: &str) -> String {
+        paint(self.warning, s)
+    }
+
+    /// Paint `s` in the "success" role (ready/ok verdicts): green + bold.
+    #[must_use]
+    pub fn success(&self, s: &str) -> String {
+        paint(self.success, s)
+    }
+
+    /// Paint `s` in the "accent" role (secondary emphasis, e.g. rewrites): cyan.
+    #[must_use]
+    pub fn accent(&self, s: &str) -> String {
+        paint(self.accent, s)
+    }
+
+    /// Paint `s` in the "muted" role (notes, secondary detail): dimmed.
+    #[must_use]
+    pub fn muted(&self, s: &str) -> String {
+        paint(self.muted, s)
+    }
+
+    /// Paint `s` in the "strong" role (emphasis without color): bold.
+    #[must_use]
+    pub fn strong(&self, s: &str) -> String {
+        paint(self.strong, s)
+    }
+
+    /// Paint `text` in the role for `s`'s severity (error → danger, warning → warning).
+    fn severity(&self, s: Severity, text: &str) -> String {
         match s {
-            Severity::Error => self.error,
-            Severity::Warning => self.warning,
+            Severity::Error => self.danger(text),
+            Severity::Warning => self.warning(text),
         }
     }
 
@@ -87,8 +138,45 @@ fn paint(style: Style, text: &str) -> String {
     format!("{}{}{}", style.render(), text, style.render_reset())
 }
 
+/// A conventional color env var counts as "set" when present and neither empty
+/// nor `"0"` (so `NO_COLOR=` and `CLICOLOR_FORCE=0` do not trigger).
+fn env_set(name: &str) -> bool {
+    std::env::var_os(name).is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// The pure color decision, factored out of [`Styling::resolve`] so it can be
+/// unit-tested without touching process-global env/TTY state.
+fn color_on(color: ColorWhen, clicolor_force: bool, no_color: bool, is_tty: bool) -> bool {
+    match color {
+        ColorWhen::Never => false,
+        ColorWhen::Always => true,
+        ColorWhen::Auto => {
+            if clicolor_force {
+                true
+            } else if no_color {
+                false
+            } else {
+                is_tty
+            }
+        }
+    }
+}
+
 /// The version of the JSON output envelope (`schema_version`).
 pub const SCHEMA_VERSION: u32 = 2;
+
+/// When to colorize human output (the CLI `--color` flag).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "cli", derive(clap::ValueEnum))]
+pub enum ColorWhen {
+    /// Colorize when stdout is a terminal, honoring `NO_COLOR` / `CLICOLOR_FORCE`. Default.
+    Auto,
+    /// Always colorize.
+    Always,
+    /// Never colorize.
+    Never,
+}
 
 /// Minimum finding severity that fails the run (maps to exit code 1).
 #[non_exhaustive]
@@ -201,10 +289,7 @@ pub fn render_finding_human(file: &str, f: &Finding) -> String {
 /// spaces and the snippet when present. See [`render_statement_header`] for the
 /// stable plain form.
 fn statement_header(file: &str, location: Location, snippet: &str, st: &Styling) -> String {
-    let loc = paint(
-        st.location,
-        &format!("{file}:{}:{}", location.line, location.column),
-    );
+    let loc = st.muted(&format!("{file}:{}:{}", location.line, location.column));
     if snippet.is_empty() {
         format!("{loc}\n")
     } else {
@@ -229,22 +314,22 @@ fn finding_body(f: &Finding, st: &Styling) -> String {
             "  {} [{}]  — suppressed: {}\n    {}\n",
             f.severity, f.rule_id, s.reason, f.message
         );
-        return paint(st.suppressed, &block);
+        return st.muted(&block);
     }
     let glyph = st.glyph(f.severity);
     let prefix = if glyph.is_empty() {
         String::new()
     } else {
-        format!("{} ", paint(st.severity(f.severity), glyph))
+        format!("{} ", st.severity(f.severity, glyph))
     };
     let mut out = format!(
         "  {}{} [{}]\n",
         prefix,
-        paint(st.severity(f.severity), &f.severity.to_string()),
-        paint(st.rule_id, &f.rule_id),
+        st.severity(f.severity, &f.severity.to_string()),
+        st.strong(&f.rule_id),
     );
     out.push_str(&format!("    {}\n", f.message));
-    out.push_str(&paint(st.fix, &format!("    fix: {}\n", f.guidance)));
+    out.push_str(&st.muted(&format!("    fix: {}\n", f.guidance)));
     out
 }
 
@@ -327,12 +412,12 @@ pub fn render_summary(reports: &[FileReport], st: &Styling) -> Option<String> {
     }
     let mut clauses = Vec::new();
     if errors > 0 {
-        clauses.push(paint(st.summary_error, &count(errors, "error")));
+        clauses.push(st.danger(&count(errors, "error")));
     }
     if warnings > 0 {
-        clauses.push(paint(st.summary_warning, &count(warnings, "warning")));
+        clauses.push(st.warning(&count(warnings, "warning")));
     }
-    let supp = paint(st.summary_suppressed, &format!("{suppressed} suppressed"));
+    let supp = st.muted(&format!("{suppressed} suppressed"));
     let files = count(reports.len(), "file");
     let body = if clauses.is_empty() {
         // A run whose only findings are suppressed.
@@ -589,13 +674,50 @@ mod tests {
     fn ansi_paints_escapes_plain_does_not() {
         let ansi = Styling::ansi();
         let plain = Styling::plain();
-        // ansi wraps in SGR escapes; plain leaves the text untouched.
-        assert!(paint(ansi.severity(Severity::Error), "error").contains('\u{1b}'));
-        assert_eq!(paint(plain.severity(Severity::Error), "error"), "error");
-        // glyphs only exist in the ansi styling.
+        assert!(ansi.danger("error").contains('\u{1b}'));
+        assert_eq!(plain.danger("error"), "error");
         assert_eq!(ansi.glyph(Severity::Error), "✗");
         assert_eq!(ansi.glyph(Severity::Warning), "⚠");
         assert_eq!(plain.glyph(Severity::Error), "");
+    }
+
+    #[test]
+    fn role_painters_use_expected_sgr() {
+        let a = Styling::ansi();
+        // anstyle renders each attribute as its own escape: bold `\x1b[1m`, dim
+        // `\x1b[2m`, fg red `\x1b[31m`, yellow `\x1b[33m`, green `\x1b[32m`, cyan `\x1b[36m`.
+        assert!(a.danger("x").contains("\u{1b}[1m") && a.danger("x").contains("\u{1b}[31m"));
+        assert!(a.warning("x").contains("\u{1b}[33m"));
+        assert!(a.success("x").contains("\u{1b}[32m"));
+        assert!(a.accent("x").contains("\u{1b}[36m"));
+        assert!(a.muted("x").contains("\u{1b}[2m"));
+        assert!(a.strong("x").contains("\u{1b}[1m"));
+        let p = Styling::plain();
+        for painted in [
+            p.danger("x"),
+            p.warning("x"),
+            p.success("x"),
+            p.accent("x"),
+            p.muted("x"),
+            p.strong("x"),
+        ] {
+            assert_eq!(painted, "x");
+        }
+    }
+
+    #[test]
+    fn summary_counts_are_bold_in_ansi() {
+        let reports = vec![lint_input(
+            "m.sql",
+            "VACUUM FULL t;",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_summary(&reports, &Styling::ansi()).unwrap();
+        // Counts now share the danger/warning roles, so they are bold.
+        assert!(
+            s.contains("\u{1b}[1m"),
+            "summary counts should be bold: {s}"
+        );
     }
 
     #[test]
@@ -703,5 +825,29 @@ mod tests {
             render_summary(&reports, &Styling::plain()).unwrap(),
             "Summary: 2 suppressed in 1 file"
         );
+    }
+
+    #[test]
+    fn color_on_follows_precedence() {
+        use ColorWhen::*;
+        // Never / Always ignore env + tty entirely.
+        assert!(!color_on(Never, true, false, true));
+        assert!(color_on(Always, false, true, false));
+        // Auto: CLICOLOR_FORCE wins over NO_COLOR and a non-tty.
+        assert!(color_on(Auto, true, true, false));
+        // Auto: NO_COLOR (without force) is off even on a tty.
+        assert!(!color_on(Auto, false, true, true));
+        // Auto: neither set → follow the tty.
+        assert!(color_on(Auto, false, false, true));
+        assert!(!color_on(Auto, false, false, false));
+    }
+
+    #[test]
+    fn resolve_always_colors_never_plain_regardless_of_env() {
+        // Always/Never bypass env, so these are deterministic under any test env.
+        assert!(Styling::resolve(ColorWhen::Always)
+            .danger("x")
+            .contains('\u{1b}'));
+        assert_eq!(Styling::resolve(ColorWhen::Never).danger("x"), "x");
     }
 }
