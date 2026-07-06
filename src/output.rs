@@ -3,6 +3,92 @@
 //! surface a thin binary (or another tool) builds on.
 
 use crate::{Finding, Location, Severity};
+use anstyle::{AnsiColor, Style};
+
+/// How the human renderers wrap each span of output. `plain()` emits neither
+/// ANSI escapes nor glyphs (byte-identical to unstyled output); `ansi()` colors
+/// spans and prefixes a per-finding severity glyph. TTY/env detection is the
+/// caller's job — the library only consumes a ready-made `Styling`.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct Styling {
+    error: Style,
+    warning: Style,
+    rule_id: Style,
+    fix: Style,
+    location: Style,
+    suppressed: Style,
+    summary_error: Style,
+    summary_warning: Style,
+    summary_suppressed: Style,
+    glyphs: bool,
+}
+
+#[allow(dead_code)]
+impl Styling {
+    /// No color, no glyphs. Output is byte-identical to the historical plain report.
+    #[must_use]
+    pub fn plain() -> Self {
+        let n = Style::new();
+        Self {
+            error: n,
+            warning: n,
+            rule_id: n,
+            fix: n,
+            location: n,
+            suppressed: n,
+            summary_error: n,
+            summary_warning: n,
+            summary_suppressed: n,
+            glyphs: false,
+        }
+    }
+
+    /// Colors + per-finding glyphs, for a terminal that supports ANSI.
+    #[must_use]
+    pub fn ansi() -> Self {
+        let red = Style::new().fg_color(Some(AnsiColor::Red.into()));
+        let yellow = Style::new().fg_color(Some(AnsiColor::Yellow.into()));
+        let dim = Style::new().dimmed();
+        Self {
+            error: red.bold(),
+            warning: yellow.bold(),
+            rule_id: Style::new().bold(),
+            fix: dim,
+            location: dim,
+            suppressed: dim,
+            summary_error: red,
+            summary_warning: yellow,
+            summary_suppressed: dim,
+            glyphs: true,
+        }
+    }
+
+    fn severity(&self, s: Severity) -> Style {
+        match s {
+            Severity::Error => self.error,
+            Severity::Warning => self.warning,
+        }
+    }
+
+    /// The glyph for a severity (`✗`/`⚠`), or `""` when glyphs are disabled.
+    fn glyph(&self, s: Severity) -> &'static str {
+        if !self.glyphs {
+            return "";
+        }
+        match s {
+            Severity::Error => "✗",
+            Severity::Warning => "⚠",
+        }
+    }
+}
+
+/// Wrap `text` in `style`'s ANSI escapes. An empty `Style` renders no escapes,
+/// so the plain path flows through this unchanged.
+#[allow(dead_code)]
+fn paint(style: Style, text: &str) -> String {
+    format!("{}{}{}", style.render(), text, style.render_reset())
+}
 
 /// The version of the JSON output envelope (`schema_version`).
 pub const SCHEMA_VERSION: u32 = 2;
@@ -409,5 +495,18 @@ mod tests {
         let s = render_github(&reports);
         assert!(s.starts_with("::error file=bad.sql::"), "got: {s}");
         assert!(s.contains("parse error"));
+    }
+
+    #[test]
+    fn ansi_paints_escapes_plain_does_not() {
+        let ansi = Styling::ansi();
+        let plain = Styling::plain();
+        // ansi wraps in SGR escapes; plain leaves the text untouched.
+        assert!(paint(ansi.severity(Severity::Error), "error").contains('\u{1b}'));
+        assert_eq!(paint(plain.severity(Severity::Error), "error"), "error");
+        // glyphs only exist in the ansi styling.
+        assert_eq!(ansi.glyph(Severity::Error), "✗");
+        assert_eq!(ansi.glyph(Severity::Warning), "⚠");
+        assert_eq!(plain.glyph(Severity::Error), "");
     }
 }

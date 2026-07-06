@@ -920,6 +920,7 @@ dependencies = [
 name = "pgsafe"
 version = "0.9.1"
 dependencies = [
+ "anstyle",
  "assert_cmd",
  "clap",
  "criterion",
