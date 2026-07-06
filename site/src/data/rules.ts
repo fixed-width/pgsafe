@@ -186,7 +186,7 @@ export const RULES: Record<string, RuleDoc> = {
     whyUnsafe:
       "`VACUUM FULL` and `CLUSTER` rewrite the entire table under an `ACCESS EXCLUSIVE` lock — minutes to hours of blocked reads and writes, plus 2x disk.",
     safeRewrite:
-      "Use pg_repack for online table/space maintenance; plain `VACUUM` (no `FULL`) takes only `SHARE UPDATE EXCLUSIVE` and allows concurrent reads and writes.",
+      "On PostgreSQL 19+, rebuild online with `REPACK (CONCURRENTLY)`: it takes `ACCESS EXCLUSIVE` only briefly to swap files while allowing concurrent reads and writes (requires a primary key; not for partitioned or unlogged tables, and must run outside a transaction block). On earlier versions use the pg_repack extension. To only reclaim bloat, plain `VACUUM` (no `FULL`) takes just `SHARE UPDATE EXCLUSIVE` and allows concurrent reads and writes.",
     example: { unsafe: "VACUUM FULL users;" },
     related: ["reindex-non-concurrent"],
   },
