@@ -10,7 +10,6 @@ use anstyle::{AnsiColor, Style};
 /// spans and prefixes a per-finding severity glyph. TTY/env detection is the
 /// caller's job — the library only consumes a ready-made `Styling`.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct Styling {
     error: Style,
     warning: Style,
@@ -286,6 +285,66 @@ pub fn render_human_styled(reports: &[FileReport], st: &Styling) -> String {
 #[must_use]
 pub fn render_human(reports: &[FileReport]) -> String {
     render_human_styled(reports, &Styling::plain())
+}
+
+/// Count `(errors, warnings, suppressed)` across every report's findings.
+/// Suppressed findings are counted only in the third slot (they never gate).
+fn tally(reports: &[FileReport]) -> (usize, usize, usize) {
+    let (mut errors, mut warnings, mut suppressed) = (0, 0, 0);
+    for r in reports {
+        for f in &r.findings {
+            if f.is_suppressed() {
+                suppressed += 1;
+            } else if f.severity == Severity::Error {
+                errors += 1;
+            } else {
+                warnings += 1;
+            }
+        }
+    }
+    (errors, warnings, suppressed)
+}
+
+/// `"{n} {word}"`, appending `s` to pluralize unless `n == 1`.
+fn count(n: usize, word: &str) -> String {
+    if n == 1 {
+        format!("{n} {word}")
+    } else {
+        format!("{n} {word}s")
+    }
+}
+
+/// One-line run summary, or `None` when there are no findings at all (a clean run
+/// stays silent). Printed in both plain and color modes; `st` only colors the
+/// counts. Clauses with a zero count are omitted; suppressed findings appear in a
+/// trailing `(N suppressed)` parenthetical (or stand alone when they are the only
+/// findings).
+#[must_use]
+pub fn render_summary(reports: &[FileReport], st: &Styling) -> Option<String> {
+    let (errors, warnings, suppressed) = tally(reports);
+    if errors == 0 && warnings == 0 && suppressed == 0 {
+        return None;
+    }
+    let mut clauses = Vec::new();
+    if errors > 0 {
+        clauses.push(paint(st.summary_error, &count(errors, "error")));
+    }
+    if warnings > 0 {
+        clauses.push(paint(st.summary_warning, &count(warnings, "warning")));
+    }
+    let supp = paint(st.summary_suppressed, &format!("{suppressed} suppressed"));
+    let files = count(reports.len(), "file");
+    let body = if clauses.is_empty() {
+        // A run whose only findings are suppressed.
+        format!("{supp} in {files}")
+    } else {
+        let mut b = clauses.join(", ");
+        if suppressed > 0 {
+            b.push_str(&format!(" ({supp})"));
+        }
+        format!("{b} in {files}")
+    };
+    Some(format!("Summary: {body}"))
 }
 
 /// Render the stderr block: one `"{name}: {error}"` line for each report that
@@ -573,5 +632,42 @@ mod tests {
         assert!(s.contains('\u{1b}'), "ansi output must contain escapes");
         assert!(s.contains('✗'), "vacuum-full-cluster is an error → ✗");
         assert!(s.contains('⚠'), "require-timeout is a warning → ⚠");
+    }
+
+    #[test]
+    fn summary_is_none_on_a_clean_run() {
+        let reports = vec![lint_input(
+            "ok.sql",
+            "CREATE INDEX CONCURRENTLY i ON t (x);",
+            &crate::LintOptions::default(),
+        )];
+        assert!(render_summary(&reports, &Styling::plain()).is_none());
+    }
+
+    #[test]
+    fn summary_counts_and_pluralizes() {
+        // VACUUM FULL → 1 error (vacuum-full-cluster) + 1 warning (require-timeout).
+        let reports = vec![lint_input(
+            "m.sql",
+            "VACUUM FULL t;",
+            &crate::LintOptions::default(),
+        )];
+        assert_eq!(
+            render_summary(&reports, &Styling::plain()).unwrap(),
+            "Summary: 1 error, 1 warning in 1 file"
+        );
+    }
+
+    #[test]
+    fn summary_parenthesizes_suppressed_and_colors_in_ansi() {
+        let sql = "-- pgsafe:ignore drop-table cleanup\nDROP TABLE x;\nVACUUM FULL t;";
+        let reports = vec![lint_input("m.sql", sql, &crate::LintOptions::default())];
+        let plain = render_summary(&reports, &Styling::plain()).unwrap();
+        assert!(plain.starts_with("Summary: 1 error, "), "{plain}");
+        assert!(plain.contains("(1 suppressed)"), "{plain}");
+        assert!(plain.ends_with(" in 1 file"), "{plain}");
+        assert!(render_summary(&reports, &Styling::ansi())
+            .unwrap()
+            .contains('\u{1b}'));
     }
 }
