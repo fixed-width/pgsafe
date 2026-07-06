@@ -3,7 +3,7 @@
 //! in a transaction, so it fails at runtime. This is an engine-synthesized
 //! finding, not a registered `Rule`.
 
-use crate::ast::protobuf::{ObjectType, RawStmt, TransactionStmtKind};
+use crate::ast::protobuf::{AlterTableType, ObjectType, RawStmt, TransactionStmtKind};
 use crate::ast::NodeEnum;
 
 pub(crate) const ID: &str = "concurrently-in-transaction";
@@ -26,6 +26,15 @@ fn is_concurrently_index_op(node: &NodeEnum) -> bool {
                 )
         }
         NodeEnum::ReindexStmt(r) => crate::rules::reindex_is_concurrent(r),
+        // ALTER TABLE ... DETACH PARTITION ... CONCURRENTLY is also rejected inside a
+        // transaction block (the CONCURRENTLY flag lives on the PartitionCmd).
+        NodeEnum::AlterTableStmt(_) => crate::rules::alter_table_cmds(node).iter().any(|cmd| {
+            AlterTableType::try_from(cmd.subtype) == Ok(AlterTableType::AtDetachPartition)
+                && matches!(
+                    cmd.def.as_ref().and_then(|n| n.node.as_ref()),
+                    Some(NodeEnum::PartitionCmd(pc)) if pc.concurrent
+                )
+        }),
         _ => false,
     }
 }
@@ -110,6 +119,18 @@ mod tests {
             indices("BEGIN; CREATE INDEX CONCURRENTLY i ON t (x); ROLLBACK;"),
             vec![1]
         );
+    }
+
+    #[test]
+    fn detects_detach_partition_concurrently_in_transaction() {
+        assert_eq!(
+            indices("BEGIN; ALTER TABLE p DETACH PARTITION p1 CONCURRENTLY; COMMIT;"),
+            vec![1]
+        );
+        // A concurrent DETACH outside a txn is not flagged by this detector.
+        assert!(indices("ALTER TABLE p DETACH PARTITION p1 CONCURRENTLY;").is_empty());
+        // A non-concurrent DETACH is not this detector's concern (the rule handles it).
+        assert!(indices("BEGIN; ALTER TABLE p DETACH PARTITION p1; COMMIT;").is_empty());
     }
 
     #[test]
