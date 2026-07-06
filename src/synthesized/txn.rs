@@ -3,8 +3,8 @@
 //! in a transaction, so it fails at runtime. This is an engine-synthesized
 //! finding, not a registered `Rule`.
 
-use pg_query::protobuf::{ObjectType, RawStmt, TransactionStmtKind};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{ObjectType, RawStmt, TransactionStmtKind};
+use crate::ast::NodeEnum;
 
 pub(crate) const ID: &str = "concurrently-in-transaction";
 pub(crate) const MESSAGE: &str =
@@ -68,10 +68,10 @@ mod tests {
     use super::*;
 
     fn indices(sql: &str) -> Vec<usize> {
-        concurrently_in_transaction_indices(&pg_query::parse(sql).unwrap().protobuf.stmts, false)
+        concurrently_in_transaction_indices(&crate::ast::parse(sql).unwrap().protobuf.stmts, false)
     }
     fn indices_assumed(sql: &str) -> Vec<usize> {
-        concurrently_in_transaction_indices(&pg_query::parse(sql).unwrap().protobuf.stmts, true)
+        concurrently_in_transaction_indices(&crate::ast::parse(sql).unwrap().protobuf.stmts, true)
     }
 
     #[test]

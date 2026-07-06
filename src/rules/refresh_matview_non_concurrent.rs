@@ -1,4 +1,4 @@
-use pg_query::NodeEnum;
+use crate::ast::NodeEnum;
 
 use super::Rule;
 use crate::{RuleHit, Severity};

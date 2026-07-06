@@ -5,8 +5,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use pg_query::protobuf::{RawStmt, Token, TransactionStmtKind};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{RawStmt, Token, TransactionStmtKind};
+use crate::ast::NodeEnum;
 
 pub(crate) const ID: &str = "enum-value-used-in-transaction";
 pub(crate) const MESSAGE: &str =
@@ -55,7 +55,7 @@ fn statement_spans(sql: &str, stmts: &[RawStmt]) -> Vec<(usize, usize)> {
 /// (`Token::Sconst`) so only real string constants match.
 fn literals_by_statement(sql: &str, stmts: &[RawStmt]) -> Vec<Vec<String>> {
     let mut out = vec![Vec::new(); stmts.len()];
-    let Ok(scan) = pg_query::scan(sql) else {
+    let Ok(scan) = crate::ast::scan(sql) else {
         return out;
     };
     let spans = statement_spans(sql, stmts);
@@ -132,10 +132,10 @@ mod tests {
     use super::unsafe_enum_value_indices;
 
     fn indices(sql: &str) -> Vec<usize> {
-        unsafe_enum_value_indices(sql, &pg_query::parse(sql).unwrap().protobuf.stmts, false)
+        unsafe_enum_value_indices(sql, &crate::ast::parse(sql).unwrap().protobuf.stmts, false)
     }
     fn indices_assumed(sql: &str) -> Vec<usize> {
-        unsafe_enum_value_indices(sql, &pg_query::parse(sql).unwrap().protobuf.stmts, true)
+        unsafe_enum_value_indices(sql, &crate::ast::parse(sql).unwrap().protobuf.stmts, true)
     }
 
     #[test]

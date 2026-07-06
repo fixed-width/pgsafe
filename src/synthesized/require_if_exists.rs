@@ -3,8 +3,8 @@
 //! without IF EXISTS. Idempotent, re-runnable migrations guard their DDL this way. Engine-synthesized;
 //! not a registered `Rule`.
 
-use pg_query::protobuf::{ObjectType, RawStmt};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{ObjectType, RawStmt};
+use crate::ast::NodeEnum;
 
 use crate::fix::{FixAnchor, FixDraft, FixDraftEdit};
 
@@ -137,11 +137,11 @@ mod tests {
     }
 
     fn flagged(sql: &str) -> usize {
-        missing_if_exists(&pg_query::parse(sql).unwrap().protobuf.stmts).len()
+        missing_if_exists(&crate::ast::parse(sql).unwrap().protobuf.stmts).len()
     }
 
     fn message(sql: &str) -> String {
-        missing_if_exists(&pg_query::parse(sql).unwrap().protobuf.stmts)
+        missing_if_exists(&crate::ast::parse(sql).unwrap().protobuf.stmts)
             .into_iter()
             .next()
             .map(|(_, m, _)| m)

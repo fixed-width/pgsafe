@@ -5,11 +5,11 @@
 //! instant. A bounded `lock_timeout` makes it fail fast instead. This is an
 //! engine-synthesized finding, not a registered `Rule`.
 
-use pg_query::protobuf::{
+use crate::ast::protobuf::{
     a_const, Node, ObjectType, RawStmt, TransactionStmtKind, VacuumStmt, VariableSetKind,
     VariableSetStmt,
 };
-use pg_query::NodeEnum;
+use crate::ast::NodeEnum;
 
 pub(crate) const ID: &str = "require-timeout";
 pub(crate) const MESSAGE: &str =
@@ -163,10 +163,10 @@ mod tests {
     use super::*;
 
     fn indices(sql: &str) -> Vec<usize> {
-        require_timeout_indices(&pg_query::parse(sql).unwrap().protobuf.stmts, false)
+        require_timeout_indices(&crate::ast::parse(sql).unwrap().protobuf.stmts, false)
     }
     fn indices_assumed(sql: &str) -> Vec<usize> {
-        require_timeout_indices(&pg_query::parse(sql).unwrap().protobuf.stmts, true)
+        require_timeout_indices(&crate::ast::parse(sql).unwrap().protobuf.stmts, true)
     }
 
     #[test]

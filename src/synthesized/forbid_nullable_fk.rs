@@ -5,8 +5,8 @@
 
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::{ConstrType, RawStmt};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{ConstrType, RawStmt};
+use crate::ast::NodeEnum;
 
 use super::newtable::{lintable_create_relation, rangevar_key};
 use super::require_not_null::{column_satisfied, columns_set_not_null, pk_column_names};
@@ -86,7 +86,7 @@ mod tests {
     }
 
     fn flagged(sql: &str) -> Vec<String> {
-        nullable_fk_columns(&pg_query::parse(sql).unwrap().protobuf.stmts)
+        nullable_fk_columns(&crate::ast::parse(sql).unwrap().protobuf.stmts)
             .into_iter()
             .map(|(_, m)| m)
             .collect()

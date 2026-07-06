@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::{ColumnDef, ConstrType};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{ColumnDef, ConstrType};
+use crate::ast::NodeEnum;
 
 use super::Rule;
 use crate::fix::{FixAnchor, FixDraft, FixDraftEdit};

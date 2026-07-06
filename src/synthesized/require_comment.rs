@@ -4,8 +4,8 @@
 
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::{ObjectType, RawStmt};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{ObjectType, RawStmt};
+use crate::ast::NodeEnum;
 
 use super::newtable::{lintable_create_relation, qualified_key, rangevar_key};
 use crate::rules::defined_columns;
@@ -120,7 +120,7 @@ mod tests {
     }
 
     fn messages(sql: &str) -> Vec<String> {
-        missing_comments(&pg_query::parse(sql).unwrap().protobuf.stmts)
+        missing_comments(&crate::ast::parse(sql).unwrap().protobuf.stmts)
             .into_iter()
             .map(|(_, m)| m)
             .collect()

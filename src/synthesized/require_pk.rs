@@ -4,8 +4,8 @@
 
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::{ConstrType, RawStmt};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{ConstrType, RawStmt};
+use crate::ast::NodeEnum;
 
 use super::newtable::{lintable_create_relation, rangevar_key};
 use crate::rules::{column_has_constraint, defined_columns, defined_table_constraints};
@@ -83,7 +83,7 @@ mod tests {
     }
 
     fn flagged(sql: &str) -> Vec<usize> {
-        tables_without_primary_key(&pg_query::parse(sql).unwrap().protobuf.stmts)
+        tables_without_primary_key(&crate::ast::parse(sql).unwrap().protobuf.stmts)
     }
 
     #[test]

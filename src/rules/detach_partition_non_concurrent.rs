@@ -1,5 +1,5 @@
-use pg_query::protobuf::AlterTableType;
-use pg_query::NodeEnum;
+use crate::ast::protobuf::AlterTableType;
+use crate::ast::NodeEnum;
 
 use super::Rule;
 use crate::{RuleHit, Severity};
@@ -92,10 +92,10 @@ mod tests {
         // other ALTER TABLE sub-commands in the same statement, so we synthesise a
         // two-command AlterTableStmt directly to exercise the single-command gate.
         use super::super::Rule as _;
-        use pg_query::protobuf::{
+        use crate::ast::protobuf::{
             AlterTableCmd, AlterTableStmt, AlterTableType, Node, PartitionCmd, RangeVar,
         };
-        use pg_query::NodeEnum;
+        use crate::ast::NodeEnum;
 
         let detach_cmd = AlterTableCmd {
             subtype: AlterTableType::AtDetachPartition as i32,

@@ -5,8 +5,8 @@
 
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::{AlterTableType, ConstrType, ObjectType, RangeVar, RawStmt};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{AlterTableType, ConstrType, ObjectType, RangeVar, RawStmt};
+use crate::ast::NodeEnum;
 
 use crate::{Finding, Severity};
 
@@ -308,7 +308,7 @@ mod tests {
     }
 
     fn first_node(sql: &str) -> NodeEnum {
-        pg_query::parse(sql).unwrap().protobuf.stmts[0]
+        crate::ast::parse(sql).unwrap().protobuf.stmts[0]
             .stmt
             .as_ref()
             .unwrap()
@@ -319,7 +319,7 @@ mod tests {
     }
 
     fn stmts_of(sql: &str) -> Vec<RawStmt> {
-        pg_query::parse(sql).unwrap().protobuf.stmts
+        crate::ast::parse(sql).unwrap().protobuf.stmts
     }
 
     #[test]

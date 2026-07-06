@@ -1,5 +1,5 @@
-use pg_query::protobuf::{ConstrType, Node};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{ConstrType, Node};
+use crate::ast::NodeEnum;
 
 use super::Rule;
 use crate::{RuleHit, Severity};

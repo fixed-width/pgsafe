@@ -1,5 +1,5 @@
-use pg_query::protobuf::ColumnDef;
-use pg_query::NodeEnum;
+use crate::ast::protobuf::ColumnDef;
+use crate::ast::NodeEnum;
 
 use super::Rule;
 use crate::fix::{FixAnchor, FixDraft, FixDraftEdit};

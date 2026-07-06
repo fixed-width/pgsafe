@@ -4,8 +4,8 @@
 
 use std::collections::BTreeMap;
 
-use pg_query::protobuf::{ObjectType, RawStmt};
-use pg_query::NodeEnum;
+use crate::ast::protobuf::{ObjectType, RawStmt};
+use crate::ast::NodeEnum;
 
 use crate::NameKind;
 
@@ -128,7 +128,7 @@ mod tests {
             .iter()
             .map(|(k, v)| (*k, (*v).to_string()))
             .collect();
-        naming_violations(&pg_query::parse(sql).unwrap().protobuf.stmts, &p)
+        naming_violations(&crate::ast::parse(sql).unwrap().protobuf.stmts, &p)
             .into_iter()
             .map(|(_, m)| m)
             .collect()

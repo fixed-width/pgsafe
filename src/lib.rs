@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+mod ast;
 mod fix;
 mod output;
 mod rules;
@@ -327,7 +328,7 @@ pub fn list_rule_ids() -> Vec<&'static str> {
 /// assert!(!findings.is_empty());
 /// ```
 pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintError> {
-    let parsed = pg_query::parse(sql).map_err(|e| LintError::Parse(e.to_string()))?;
+    let parsed = crate::ast::parse(sql).map_err(|e| LintError::Parse(e.to_string()))?;
     let stmts = &parsed.protobuf.stmts;
     let comments = suppression::scan_comments(sql)?;
     let geoms = suppression::geometry(sql, stmts, &comments);
