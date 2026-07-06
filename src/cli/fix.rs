@@ -33,6 +33,12 @@ fn error_counts(findings: &[Finding]) -> HashMap<&str, usize> {
 /// Whether the composed result `after` carries an Error the original `before` did not —
 /// i.e. some fix introduced a new hazard (e.g. a runtime-invalid CONCURRENTLY that slipped
 /// past draft-time withdrawal). Uses an Error floor so it holds independent of `--fail-on`.
+///
+/// This is a defense-in-depth backstop: draft-time withdrawal already removes the only known
+/// regression (CONCURRENTLY-in-transaction), so today no real fix set reaches this check. The
+/// invariant every fix must uphold: applying it never introduces a new Error the input lacked.
+/// It intentionally does not police new *Warnings* or a same-rule Error swap (net Error count
+/// per rule id unchanged) — keep that in mind when adding a fix whose output could differ.
 fn introduces_new_error(before: &[Finding], after: &[Finding]) -> bool {
     let baseline = error_counts(before);
     error_counts(after)
@@ -75,11 +81,18 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
 
         match mode {
             Mode::Diff => {
-                // Re-lint the composed result; if a fix would introduce a new Error, show no
-                // diff for this file (the original findings still gate).
+                // Re-lint the composed result. If applying the fixes would break parsing or
+                // introduce a new Error, show no diff for this file — matching what `--fix`
+                // refuses to write, so a `--diff` preview never differs from what `--fix` does.
                 let after = lint_input(name.clone(), &applied.sql, &r.options_for(name));
-                if after.error.is_none() && introduces_new_error(&report.findings, &after.findings)
-                {
+                if let Some(err) = &after.error {
+                    eprintln!(
+                        "error: {name}: applying fixes produced SQL that no longer parses ({err}); no diff shown"
+                    );
+                    had_error = true;
+                    continue;
+                }
+                if introduces_new_error(&report.findings, &after.findings) {
                     eprintln!(
                         "{name}: fixes withheld — applying them would introduce a new issue; lint `{name}` to see the findings"
                     );
