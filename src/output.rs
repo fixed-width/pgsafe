@@ -670,4 +670,38 @@ mod tests {
             .unwrap()
             .contains('\u{1b}'));
     }
+
+    #[test]
+    fn summary_counts_pluralize_at_two() {
+        // Two files, each VACUUM FULL → 1 error (vacuum-full-cluster) + 1 warning
+        // (require-timeout), so totals cross the singular/plural boundary.
+        let reports = vec![
+            lint_input("a.sql", "VACUUM FULL t;", &crate::LintOptions::default()),
+            lint_input("b.sql", "VACUUM FULL t;", &crate::LintOptions::default()),
+        ];
+        assert_eq!(
+            render_summary(&reports, &Styling::plain()).unwrap(),
+            "Summary: 2 errors, 2 warnings in 2 files"
+        );
+    }
+
+    #[test]
+    fn summary_stands_alone_when_only_suppressed_findings_exist() {
+        // DROP TABLE emits two findings (drop-table + require-timeout); stack an
+        // ignore directive for each so nothing unsuppressed remains, exercising the
+        // `clauses.is_empty()` branch: no comma, no parenthesis, just "N suppressed".
+        let sql = "-- pgsafe:ignore drop-table cleanup\n\
+                   -- pgsafe:ignore require-timeout reviewed\n\
+                   DROP TABLE x;";
+        let reports = vec![lint_input("m.sql", sql, &crate::LintOptions::default())];
+        assert!(
+            reports[0].findings.iter().all(Finding::is_suppressed),
+            "fixture must have zero unsuppressed findings: {:?}",
+            reports[0].findings
+        );
+        assert_eq!(
+            render_summary(&reports, &Styling::plain()).unwrap(),
+            "Summary: 2 suppressed in 1 file"
+        );
+    }
 }
