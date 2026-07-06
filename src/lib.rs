@@ -758,6 +758,23 @@ mod tests {
     }
 
     #[test]
+    fn concurrently_fix_withdrawn_only_for_the_in_transaction_statement() {
+        // One CREATE INDEX outside a txn (keeps its fix) and one inside (withdrawn), in a
+        // single input — pins the finding statement_index ↔ in-transaction alignment.
+        let sql = "CREATE INDEX a ON t (c); BEGIN; CREATE INDEX b ON t (c); COMMIT;";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let hits: Vec<_> = fs
+            .iter()
+            .filter(|f| f.rule_id == "add-index-non-concurrent")
+            .collect();
+        assert_eq!(hits.len(), 2, "both CREATE INDEX statements are flagged");
+        let outside = hits.iter().find(|f| f.statement_index == 0).unwrap();
+        let inside = hits.iter().find(|f| f.statement_index == 2).unwrap();
+        assert!(outside.fix.is_some(), "outside-txn fix must be kept");
+        assert!(inside.fix.is_none(), "in-txn fix must be withdrawn");
+    }
+
+    #[test]
     fn concurrently_fix_kept_outside_transaction() {
         // Regression guard: outside a txn the fix is still offered.
         let fs = lint_sql("CREATE INDEX i ON t (c);", &LintOptions::default()).unwrap();
