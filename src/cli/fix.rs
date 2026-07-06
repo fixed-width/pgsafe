@@ -82,7 +82,7 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                     && introduces_new_error(&report.findings, &after.findings)
                 {
                     eprintln!(
-                        "{name}: fixes withheld — applying them would introduce a new issue; run `pgsafe {name}` to see the findings"
+                        "{name}: fixes withheld — applying them would introduce a new issue; lint `{name}` to see the findings"
                     );
                     if gate(&report.findings, r.fail_on) {
                         gated = true;
@@ -100,7 +100,7 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                     let residual = unfixable + applied.skipped_overlapping;
                     if residual > 0 {
                         eprintln!(
-                            "{name}: {residual} finding(s) have no automatic fix or were skipped (overlapping another fix); run `pgsafe {name}` to see them"
+                            "{name}: {residual} finding(s) have no automatic fix or were skipped (overlapping another fix); lint `{name}` to see them"
                         );
                     }
                 }
@@ -124,7 +124,7 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                         print!("{sql}");
                     }
                     eprintln!(
-                        "{name}: fixes withheld — applying them would introduce a new issue; run `pgsafe {name}` to see the findings"
+                        "{name}: fixes withheld — applying them would introduce a new issue; lint `{name}` to see the findings"
                     );
                     if gate(&report.findings, r.fail_on) {
                         gated = true;
@@ -172,7 +172,7 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                         let remaining =
                             after.findings.iter().filter(|f| !f.is_suppressed()).count();
                         eprintln!(
-                            "{name}: {remaining} finding(s) remain that --fix cannot resolve; run `pgsafe {name}` to see them"
+                            "{name}: {remaining} finding(s) remain that --fix cannot resolve; lint `{name}` to see them"
                         );
                     }
                 }
