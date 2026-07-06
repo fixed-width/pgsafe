@@ -1,9 +1,10 @@
 //! Fix-mode CLI: apply fixes (`--fix`) or preview them as a unified diff (`--diff`).
 
+use std::collections::HashMap;
 use std::process::ExitCode;
 
 use super::ResolvedRun;
-use crate::{gate, lint_input, Fix, FixEdit};
+use crate::{gate, lint_input, Finding, Fix, FixEdit, Severity};
 
 /// Stdin inputs carry this display-name (see `cli::mod::read_inputs`).
 const STDIN_NAME: &str = "<stdin>";
@@ -14,6 +15,29 @@ pub(super) enum Mode {
     Apply,
     /// Preview fixes as a unified diff; write nothing.
     Diff,
+}
+
+/// Count non-suppressed Error-severity findings by rule id. Keyed by rule id — not
+/// statement index — so the lock_timeout prologue fix (which inserts a statement and
+/// shifts every later index) never reads as a change.
+fn error_counts(findings: &[Finding]) -> HashMap<&str, usize> {
+    let mut counts = HashMap::new();
+    for f in findings {
+        if !f.is_suppressed() && f.severity >= Severity::Error {
+            *counts.entry(f.rule_id.as_str()).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+/// Whether the composed result `after` carries an Error the original `before` did not —
+/// i.e. some fix introduced a new hazard (e.g. a runtime-invalid CONCURRENTLY that slipped
+/// past draft-time withdrawal). Uses an Error floor so it holds independent of `--fail-on`.
+fn introduces_new_error(before: &[Finding], after: &[Finding]) -> bool {
+    let baseline = error_counts(before);
+    error_counts(after)
+        .into_iter()
+        .any(|(rule, n)| n > baseline.get(rule).copied().unwrap_or(0))
 }
 
 /// Run fix mode over the resolved inputs. Summaries go to stderr; `--fix` on
@@ -51,6 +75,20 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
 
         match mode {
             Mode::Diff => {
+                // Re-lint the composed result; if a fix would introduce a new Error, show no
+                // diff for this file (the original findings still gate).
+                let after = lint_input(name.clone(), &applied.sql, &r.options_for(name));
+                if after.error.is_none()
+                    && introduces_new_error(&report.findings, &after.findings)
+                {
+                    eprintln!(
+                        "{name}: fixes withheld — applying them would introduce a new issue; run `pgsafe {name}` to see the findings"
+                    );
+                    if gate(&report.findings, r.fail_on) {
+                        gated = true;
+                    }
+                    continue;
+                }
                 print!("{}", render_diff(name, sql, &applied.edits));
                 if gate(&report.findings, r.fail_on) {
                     gated = true;
@@ -76,6 +114,21 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                         "error: {name}: applying fixes produced SQL that no longer parses ({err}); file left unchanged"
                     );
                     had_error = true;
+                    continue;
+                }
+                // No-regression backstop: never write a result whose fixes introduced a new
+                // Error the original lacked. Leave the file unchanged; the original findings
+                // still drive the gate. (stdin still emits its unchanged input.)
+                if introduces_new_error(&report.findings, &after.findings) {
+                    if name == STDIN_NAME {
+                        print!("{sql}");
+                    }
+                    eprintln!(
+                        "{name}: fixes withheld — applying them would introduce a new issue; run `pgsafe {name}` to see the findings"
+                    );
+                    if gate(&report.findings, r.fail_on) {
+                        gated = true;
+                    }
                     continue;
                 }
                 let changed = applied.sql != *sql;
@@ -382,6 +435,38 @@ fn push_diff_line(out: &mut String, prefix: char, content: &str) {
 mod tests {
     use super::render_diff;
     use crate::FixEdit;
+
+    #[test]
+    fn introduces_new_error_detects_a_new_error_rule() {
+        use crate::{Location, Severity};
+        let mk = |rule: &str, sev| crate::Finding {
+            rule_id: rule.into(),
+            severity: sev,
+            message: String::new(),
+            guidance: String::new(),
+            statement_index: 0,
+            location: Location {
+                byte: 0,
+                line: 1,
+                column: 1,
+            },
+            snippet: String::new(),
+            suppression: None,
+            fix: None,
+        };
+        let before = vec![mk("add-index-non-concurrent", Severity::Error)];
+        // A fix cleared add-index but introduced a new runtime-failure Error.
+        let after = vec![mk("concurrently-in-transaction", Severity::Error)];
+        assert!(super::introduces_new_error(&before, &after));
+        // No new error: fewer/equal Errors is not a regression.
+        assert!(!super::introduces_new_error(&before, &[]));
+        assert!(!super::introduces_new_error(&before, &before));
+        // A new Warning is not a regression (Error floor).
+        assert!(!super::introduces_new_error(
+            &before,
+            &[mk("x", Severity::Warning)]
+        ));
+    }
 
     #[test]
     fn empty_edits_render_nothing() {
