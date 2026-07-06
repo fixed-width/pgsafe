@@ -61,7 +61,9 @@ pub(crate) fn in_transaction_flags(stmts: &[RawStmt], assume_in_transaction: boo
                 Ok(
                     TransactionStmtKind::TransStmtCommit | TransactionStmtKind::TransStmtRollback,
                 ) => {
-                    in_txn = false;
+                    // `COMMIT AND CHAIN` / `ROLLBACK AND CHAIN` immediately open a new
+                    // transaction, so the block stays open; plain / `AND NO CHAIN` close it.
+                    in_txn = t.chain;
                 }
                 _ => {}
             }
@@ -87,22 +89,28 @@ pub(crate) fn concurrently_in_transaction_indices(
         .collect()
 }
 
-/// Rules whose autofix inserts CONCURRENTLY, which PostgreSQL rejects inside a
-/// transaction block. `REFRESH MATERIALIZED VIEW CONCURRENTLY` is txn-legal and
-/// carries no autofix, so it is deliberately excluded.
-const CONCURRENTLY_FIX_RULES: &[&str] = &[
-    "add-index-non-concurrent",
-    "drop-index-non-concurrent",
-    "reindex-non-concurrent",
-    "detach-partition-non-concurrent",
-];
+/// Whether a fix inserts the `CONCURRENTLY` keyword. Detected from the fix's own edit
+/// text — a whole-word, case-insensitive match — rather than a hand-maintained rule-id
+/// list, so any CONCURRENTLY-inserting fix (present or future) is covered automatically.
+fn fix_adds_concurrently(fix: &crate::Fix) -> bool {
+    fix.edits.iter().any(|e| {
+        e.replacement
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|word| word.eq_ignore_ascii_case("CONCURRENTLY"))
+    })
+}
 
-/// Withdraw the CONCURRENTLY autofix from any finding whose statement executes inside a
-/// transaction block: `CREATE`/`DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, and
-/// `DETACH PARTITION … CONCURRENTLY` all fail at runtime inside a txn, so applying the fix
-/// would swap a lint Error for a latent runtime failure. The finding is left intact (its
-/// guidance already tells the user to move the statement to its own migration); only `fix`
-/// is cleared.
+/// Withdraw a CONCURRENTLY-inserting autofix from any finding whose statement executes
+/// inside a transaction block: `CREATE`/`DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`,
+/// and `DETACH PARTITION … CONCURRENTLY` all fail at runtime inside a txn, so applying such a
+/// fix would swap a lint Error for a latent runtime failure. The finding is left intact (its
+/// guidance already tells the user to move the statement to its own migration); only `fix` is
+/// cleared.
+///
+/// The one CONCURRENTLY form that is txn-*legal* — `REFRESH MATERIALIZED VIEW CONCURRENTLY` —
+/// carries no autofix today, so nothing legitimate is withdrawn. If such a fix is ever added,
+/// this withdraws it inside a txn: a harmless loss of a suggestion (fails safe), never the
+/// reverse (emitting runtime-invalid SQL).
 pub(crate) fn suppress_concurrently_fix_in_transaction(
     stmts: &[RawStmt],
     findings: &mut [Finding],
@@ -110,10 +118,18 @@ pub(crate) fn suppress_concurrently_fix_in_transaction(
 ) {
     let in_txn = in_transaction_flags(stmts, assume_in_transaction);
     for f in findings.iter_mut() {
-        if f.fix.is_some()
-            && CONCURRENTLY_FIX_RULES.contains(&f.rule_id.as_str())
-            && in_txn.get(f.statement_index).copied().unwrap_or(false)
-        {
+        if !f.fix.as_ref().is_some_and(fix_adds_concurrently) {
+            continue;
+        }
+        debug_assert!(
+            f.statement_index < in_txn.len(),
+            "finding statement_index {} out of range for {} statements",
+            f.statement_index,
+            in_txn.len()
+        );
+        // Fail safe: withdraw when the statement position is unknown — a CONCURRENTLY fix at
+        // an unknown position must not be offered.
+        if in_txn.get(f.statement_index).copied().unwrap_or(true) {
             f.fix = None;
         }
     }
@@ -166,6 +182,22 @@ mod tests {
         assert!(indices("ALTER TABLE p DETACH PARTITION p1 CONCURRENTLY;").is_empty());
         // A non-concurrent DETACH is not this detector's concern (the rule handles it).
         assert!(indices("BEGIN; ALTER TABLE p DETACH PARTITION p1; COMMIT;").is_empty());
+    }
+
+    #[test]
+    fn commit_and_chain_keeps_the_transaction_open() {
+        // COMMIT AND CHAIN / ROLLBACK AND CHAIN commit (or roll back) and immediately open a
+        // new transaction, so a CONCURRENTLY op after them is still inside a block.
+        assert_eq!(
+            indices("BEGIN; COMMIT AND CHAIN; CREATE INDEX CONCURRENTLY i ON t (x); COMMIT;"),
+            vec![2]
+        );
+        assert_eq!(
+            indices("BEGIN; ROLLBACK AND CHAIN; CREATE INDEX CONCURRENTLY i ON t (x); COMMIT;"),
+            vec![2]
+        );
+        // A plain COMMIT (no CHAIN) still closes the block.
+        assert!(indices("BEGIN; COMMIT; CREATE INDEX CONCURRENTLY i ON t (x);").is_empty());
     }
 
     #[test]
