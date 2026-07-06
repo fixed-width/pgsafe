@@ -24,7 +24,6 @@ pub struct Styling {
     glyphs: bool,
 }
 
-#[allow(dead_code)]
 impl Styling {
     /// No color, no glyphs. Output is byte-identical to the historical plain report.
     #[must_use]
@@ -85,7 +84,6 @@ impl Styling {
 
 /// Wrap `text` in `style`'s ANSI escapes. An empty `Style` renders no escapes,
 /// so the plain path flows through this unchanged.
-#[allow(dead_code)]
 fn paint(style: Style, text: &str) -> String {
     format!("{}{}{}", style.render(), text, style.render_reset())
 }
@@ -200,40 +198,69 @@ pub fn render_finding_human(file: &str, f: &Finding) -> String {
     out
 }
 
-/// Render the grouped-output header for a statement: `{file}:{line}:{col}  {snippet}`
-/// (the snippet is omitted when empty). One header precedes all the findings on that statement.
-#[must_use]
-pub fn render_statement_header(file: &str, location: Location, snippet: &str) -> String {
+/// Styled statement header: `{file}:{line}:{col}` (dimmed under `ansi`) then two
+/// spaces and the snippet when present. See [`render_statement_header`] for the
+/// stable plain form.
+fn statement_header(file: &str, location: Location, snippet: &str, st: &Styling) -> String {
+    let loc = paint(
+        st.location,
+        &format!("{file}:{}:{}", location.line, location.column),
+    );
     if snippet.is_empty() {
-        format!("{file}:{}:{}\n", location.line, location.column)
+        format!("{loc}\n")
     } else {
-        format!("{file}:{}:{}  {snippet}\n", location.line, location.column)
+        format!("{loc}  {snippet}\n")
     }
 }
 
-/// Render one finding's nested body for the grouped output: a `  {severity} [{rule}]` line
-/// (with a suppression note when suppressed), the indented message, and a `fix:` line unless
-/// suppressed. The owning statement's location and snippet come from [`render_statement_header`].
+/// Render the grouped-output header for a statement (plain styling).
 #[must_use]
-pub fn render_finding_body(f: &Finding) -> String {
-    let suffix = match &f.suppression {
-        Some(s) => format!("  — suppressed: {}", s.reason),
-        None => String::new(),
-    };
-    let mut out = format!("  {} [{}]{}\n", f.severity, f.rule_id, suffix);
-    out.push_str(&format!("    {}\n", f.message));
-    if f.suppression.is_none() {
-        out.push_str(&format!("    fix: {}\n", f.guidance));
+pub fn render_statement_header(file: &str, location: Location, snippet: &str) -> String {
+    statement_header(file, location, snippet, &Styling::plain())
+}
+
+/// Styled finding body. A suppressed finding renders as a single dimmed block
+/// (header line with the suppression note + message, no fix line); dimming the
+/// whole block rather than per-span keeps nested resets from cancelling the dim.
+/// An unsuppressed finding gets a per-severity glyph, colored severity word,
+/// bold rule id, and a dimmed `fix:` line.
+fn finding_body(f: &Finding, st: &Styling) -> String {
+    if let Some(s) = &f.suppression {
+        let block = format!(
+            "  {} [{}]  — suppressed: {}\n    {}\n",
+            f.severity, f.rule_id, s.reason, f.message
+        );
+        return paint(st.suppressed, &block);
     }
+    let glyph = st.glyph(f.severity);
+    let prefix = if glyph.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", paint(st.severity(f.severity), glyph))
+    };
+    let mut out = format!(
+        "  {}{} [{}]\n",
+        prefix,
+        paint(st.severity(f.severity), &f.severity.to_string()),
+        paint(st.rule_id, &f.rule_id),
+    );
+    out.push_str(&format!("    {}\n", f.message));
+    out.push_str(&paint(st.fix, &format!("    fix: {}\n", f.guidance)));
     out
 }
 
-/// Render every finding across `reports` to the human stdout block, grouped by statement: each
-/// statement's location and snippet appear once as a header, its findings nested beneath, with a
-/// blank line between statements. Findings arrive sorted by statement index, so a group is the run
-/// of consecutive findings sharing one index. Parse errors are not included — see [`render_errors`].
+/// Render one finding's nested body for the grouped output (plain styling).
 #[must_use]
-pub fn render_human(reports: &[FileReport]) -> String {
+pub fn render_finding_body(f: &Finding) -> String {
+    finding_body(f, &Styling::plain())
+}
+
+/// Render every finding across `reports` to the human block, grouped by statement,
+/// wrapping each span according to `st`. Findings arrive sorted by statement index,
+/// so a group is the run of consecutive findings sharing one index. Parse errors
+/// are not included — see [`render_errors`].
+#[must_use]
+pub fn render_human_styled(reports: &[FileReport], st: &Styling) -> String {
     let mut out = String::new();
     let mut first = true;
     for r in reports {
@@ -244,19 +271,21 @@ pub fn render_human(reports: &[FileReport]) -> String {
             }
             first = false;
             let head = &r.findings[i];
-            out.push_str(&render_statement_header(
-                &r.name,
-                head.location,
-                &head.snippet,
-            ));
+            out.push_str(&statement_header(&r.name, head.location, &head.snippet, st));
             let stmt = head.statement_index;
             while i < r.findings.len() && r.findings[i].statement_index == stmt {
-                out.push_str(&render_finding_body(&r.findings[i]));
+                out.push_str(&finding_body(&r.findings[i], st));
                 i += 1;
             }
         }
     }
     out
+}
+
+/// Render every finding across `reports` to the plain human block, grouped by statement.
+#[must_use]
+pub fn render_human(reports: &[FileReport]) -> String {
+    render_human_styled(reports, &Styling::plain())
 }
 
 /// Render the stderr block: one `"{name}: {error}"` line for each report that
@@ -508,5 +537,41 @@ mod tests {
         assert_eq!(ansi.glyph(Severity::Error), "✗");
         assert_eq!(ansi.glyph(Severity::Warning), "⚠");
         assert_eq!(plain.glyph(Severity::Error), "");
+    }
+
+    #[test]
+    fn plain_render_is_byte_identical_and_escape_free() {
+        let reports = vec![lint_input(
+            "m.sql",
+            "DROP TABLE users;\nVACUUM FULL t;",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_human(&reports);
+        assert!(
+            !s.contains('\u{1b}'),
+            "plain output must have no escapes:\n{s}"
+        );
+        assert!(
+            !s.contains('✗') && !s.contains('⚠'),
+            "plain output must have no glyphs"
+        );
+        // The plain wrapper and an explicit plain styling agree.
+        assert_eq!(s, render_human_styled(&reports, &Styling::plain()));
+        // Layout unchanged: header + nested finding lines still present.
+        assert!(s.contains("m.sql:1:1  DROP TABLE users\n"));
+        assert!(s.contains("\n  warning [drop-table]\n    "));
+    }
+
+    #[test]
+    fn ansi_render_adds_escapes_and_severity_glyphs() {
+        let reports = vec![lint_input(
+            "m.sql",
+            "VACUUM FULL t;",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_human_styled(&reports, &Styling::ansi());
+        assert!(s.contains('\u{1b}'), "ansi output must contain escapes");
+        assert!(s.contains('✗'), "vacuum-full-cluster is an error → ✗");
+        assert!(s.contains('⚠'), "require-timeout is a warning → ⚠");
     }
 }
