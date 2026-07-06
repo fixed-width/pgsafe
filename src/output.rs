@@ -57,6 +57,10 @@ impl Styling {
     /// else `NO_COLOR` (same test) forces plain, else color iff stdout is a
     /// terminal. `Always` overrides `NO_COLOR`; `Never` is always plain. This is
     /// format-agnostic — call it only for human output; keep machine formats plain.
+    ///
+    /// The terminal probe always targets **stdout**. If you render human output to
+    /// a different stream (stderr, a file, a pane), detect that stream's TTY status
+    /// yourself and construct [`Styling::ansi`] / [`Styling::plain`] directly.
     #[must_use]
     pub fn resolve(color: ColorWhen) -> Styling {
         let on = color_on(
