@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::Token;
+use crate::ast::protobuf::Token;
 
 use crate::{line_col, Finding, LintError, Location, Severity, Suppression};
 
@@ -59,7 +59,7 @@ pub(crate) struct Comment {
 
 /// Extract every SQL/C comment token from `sql`, with byte offset and line.
 pub(crate) fn scan_comments(sql: &str) -> Result<Vec<Comment>, LintError> {
-    let scan = pg_query::scan(sql).map_err(|e| LintError::Parse(e.to_string()))?;
+    let scan = crate::ast::scan(sql).map_err(|e| LintError::Parse(e.to_string()))?;
     let mut out = Vec::new();
     for tok in &scan.tokens {
         if matches!(
@@ -143,7 +143,7 @@ pub(crate) struct StatementGeom {
 /// token of the statement.
 pub(crate) fn geometry(
     sql: &str,
-    stmts: &[pg_query::protobuf::RawStmt],
+    stmts: &[crate::ast::protobuf::RawStmt],
     comments: &[Comment],
 ) -> Vec<StatementGeom> {
     // Pre-collect comment spans so we can skip them below.
@@ -496,7 +496,7 @@ mod tests {
     }
 
     fn attach_map(sql: &str) -> Vec<Option<usize>> {
-        let parsed = pg_query::parse(sql).unwrap();
+        let parsed = crate::ast::parse(sql).unwrap();
         let comments = scan_comments(sql).unwrap();
         let comment_lines: BTreeSet<u32> = comments.iter().map(|c| c.line).collect();
         let dirs = directives_from(&comments, sql);

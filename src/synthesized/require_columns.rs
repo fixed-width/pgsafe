@@ -4,8 +4,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use pg_query::protobuf::RawStmt;
-use pg_query::NodeEnum;
+use crate::ast::protobuf::RawStmt;
+use crate::ast::NodeEnum;
 
 use super::newtable::{lintable_create_relation, rangevar_key};
 use crate::rules::defined_columns;
@@ -84,7 +84,7 @@ mod tests {
     }
 
     fn flagged(sql: &str, names: &[&str]) -> Vec<String> {
-        missing_required_columns(&pg_query::parse(sql).unwrap().protobuf.stmts, &req(names))
+        missing_required_columns(&crate::ast::parse(sql).unwrap().protobuf.stmts, &req(names))
             .into_iter()
             .map(|(_, m)| m)
             .collect()

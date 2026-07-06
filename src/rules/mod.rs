@@ -2,10 +2,10 @@
 
 use std::sync::LazyLock;
 
-use pg_query::protobuf::{
+use crate::ast::protobuf::{
     AlterTableCmd, AlterTableType, ColumnDef, ConstrType, Constraint, DefElem, ReindexStmt,
 };
-use pg_query::NodeEnum;
+use crate::ast::NodeEnum;
 
 use crate::{RuleHit, Severity};
 

@@ -1,5 +1,5 @@
 //! Recovery of statically-analyzable SQL from a `DO` block's PL/pgSQL body, via the experimental
-//! `pg_query::parse_plpgsql`. Pure: produces the embedded SQL statement texts plus a flag for
+//! `crate::ast::parse_plpgsql`. Pure: produces the embedded SQL statement texts plus a flag for
 //! un-analyzable residue (a dynamic `EXECUTE`, or a body that would not parse). Not a rule — the
 //! engine (`lint_sql`) replays the statements through the per-statement rules; the residue flag is
 //! consumed by the `unchecked-do-block` rule (Task 3).
@@ -21,7 +21,7 @@ pub(crate) struct DoBodyAnalysis {
 /// parse (e.g. a non-PL/pgSQL `DO … LANGUAGE`, or a malformed body) yields no statements and
 /// `has_residue = true`.
 pub(crate) fn analyze_do_block(do_sql: &str) -> DoBodyAnalysis {
-    let Ok(json) = pg_query::parse_plpgsql(do_sql) else {
+    let Ok(json) = crate::ast::parse_plpgsql(do_sql) else {
         return DoBodyAnalysis {
             statements: Vec::new(),
             has_residue: true,

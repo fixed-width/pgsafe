@@ -1,4 +1,4 @@
-use pg_query::NodeEnum;
+use crate::ast::NodeEnum;
 
 use super::Rule;
 use crate::{RuleHit, Severity};
@@ -21,13 +21,17 @@ impl Rule for ReindexNonConcurrent {
             if !concurrent {
                 // Map the reindex target type to the keyword CONCURRENTLY must follow.
                 // REINDEX SYSTEM and Undefined do not support CONCURRENTLY.
-                let kw = match pg_query::protobuf::ReindexObjectType::try_from(r.kind) {
-                    Ok(pg_query::protobuf::ReindexObjectType::ReindexObjectIndex) => Some("INDEX"),
-                    Ok(pg_query::protobuf::ReindexObjectType::ReindexObjectTable) => Some("TABLE"),
-                    Ok(pg_query::protobuf::ReindexObjectType::ReindexObjectSchema) => {
+                let kw = match crate::ast::protobuf::ReindexObjectType::try_from(r.kind) {
+                    Ok(crate::ast::protobuf::ReindexObjectType::ReindexObjectIndex) => {
+                        Some("INDEX")
+                    }
+                    Ok(crate::ast::protobuf::ReindexObjectType::ReindexObjectTable) => {
+                        Some("TABLE")
+                    }
+                    Ok(crate::ast::protobuf::ReindexObjectType::ReindexObjectSchema) => {
                         Some("SCHEMA")
                     }
-                    Ok(pg_query::protobuf::ReindexObjectType::ReindexObjectDatabase) => {
+                    Ok(crate::ast::protobuf::ReindexObjectType::ReindexObjectDatabase) => {
                         Some("DATABASE")
                     }
                     _ => None, // System / Undefined: no legal CONCURRENTLY form

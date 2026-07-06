@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use pg_query::protobuf::{ColumnDef, RawStmt};
+use crate::ast::protobuf::{ColumnDef, RawStmt};
 
 use crate::fix::{FixAnchor, FixDraft, FixDraftEdit};
 use crate::rules::{column_base_type, defined_columns};
@@ -22,7 +22,7 @@ pub(crate) const GUIDANCE: &str =
 /// type (`citext`). Such a type is simply inert when matched against columns.
 pub(crate) fn canonical_type(spelling: &str) -> Option<String> {
     let sql = format!("CREATE TABLE _pgsafe_typecheck (c {spelling})");
-    let parsed = pg_query::parse(&sql).ok()?;
+    let parsed = crate::ast::parse(&sql).ok()?;
     let node = parsed
         .protobuf
         .stmts
@@ -183,7 +183,7 @@ mod tests {
 
     fn flagged(sql: &str, pairs: &[(&str, &str)]) -> Vec<String> {
         forbidden_violations(
-            &pg_query::parse(sql).unwrap().protobuf.stmts,
+            &crate::ast::parse(sql).unwrap().protobuf.stmts,
             &forbid(pairs),
             sql,
         )

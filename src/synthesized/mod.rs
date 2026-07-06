@@ -19,8 +19,8 @@
 
 use std::collections::BTreeSet;
 
-use pg_query::protobuf::RawStmt;
-use pg_query::NodeEnum;
+use crate::ast::protobuf::RawStmt;
+use crate::ast::NodeEnum;
 
 use crate::line_col;
 use crate::suppression::StatementGeom;
@@ -136,7 +136,7 @@ pub(crate) fn run_all(
         let analysis = plpgsql::analyze_do_block(do_sql);
         let mut block_residue = analysis.has_residue;
         for embedded in &analysis.statements {
-            let Ok(embedded_parsed) = pg_query::parse(embedded) else {
+            let Ok(embedded_parsed) = crate::ast::parse(embedded) else {
                 block_residue = true; // recovered text we cannot re-parse — never silently drop a hazard
                 continue;
             };

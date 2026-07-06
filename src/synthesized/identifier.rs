@@ -1,13 +1,13 @@
 //! Identifier-length check: flag any identifier written longer than PostgreSQL's
 //! 63-byte limit (`NAMEDATALEN - 1`). PostgreSQL silently truncates over-long
 //! identifiers, so two names sharing a 63-byte prefix collide. This MUST use
-//! `pg_query::scan()` rather than the parsed AST: libpg_query runs PostgreSQL's real
+//! `crate::ast::scan()` rather than the parsed AST: libpg_query runs PostgreSQL's real
 //! scanner, which truncates identifiers to 63 bytes at parse time, so an over-long
 //! name is already shortened in the AST and an AST length check can never fire. The
 //! scanner's token spans point into the raw source, preserving the true length. This
 //! is an engine-synthesized finding, not a registered `Rule`.
 
-use pg_query::protobuf::Token;
+use crate::ast::protobuf::Token;
 
 pub(crate) const ID: &str = "identifier-too-long";
 
@@ -17,11 +17,11 @@ const MAX_IDENTIFIER_BYTES: usize = 63;
 
 /// Every identifier token in `sql` whose true byte length exceeds 63, as
 /// `(byte_offset, written_form, byte_len)`. Measured from the raw source via
-/// `pg_query::scan()`, so the length is the pre-truncation one. Returns an empty
+/// `crate::ast::scan()`, so the length is the pre-truncation one. Returns an empty
 /// vec if the input cannot be scanned (it has already parsed successfully by the
 /// time this runs, so that is not expected).
 pub(crate) fn long_identifiers(sql: &str) -> Vec<(usize, String, usize)> {
-    let Ok(scan) = pg_query::scan(sql) else {
+    let Ok(scan) = crate::ast::scan(sql) else {
         return Vec::new();
     };
     let mut out = Vec::new();
