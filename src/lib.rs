@@ -32,7 +32,8 @@ pub mod cli;
 
 pub use output::{
     gate, lint_input, render_errors, render_finding_body, render_finding_human, render_github,
-    render_human, render_json, render_statement_header, FailOn, FileReport, Format, SCHEMA_VERSION,
+    render_human, render_human_styled, render_json, render_statement_header, render_summary,
+    FailOn, FileReport, Format, Styling, SCHEMA_VERSION,
 };
 pub use sarif::render_sarif;
 

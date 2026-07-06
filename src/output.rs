@@ -3,6 +3,89 @@
 //! surface a thin binary (or another tool) builds on.
 
 use crate::{Finding, Location, Severity};
+use anstyle::{AnsiColor, Style};
+
+/// How the human renderers wrap each span of output. `plain()` emits neither
+/// ANSI escapes nor glyphs (byte-identical to unstyled output); `ansi()` colors
+/// spans and prefixes a per-finding severity glyph. TTY/env detection is the
+/// caller's job — the library only consumes a ready-made `Styling`.
+#[derive(Debug, Clone)]
+pub struct Styling {
+    error: Style,
+    warning: Style,
+    rule_id: Style,
+    fix: Style,
+    location: Style,
+    suppressed: Style,
+    summary_error: Style,
+    summary_warning: Style,
+    summary_suppressed: Style,
+    glyphs: bool,
+}
+
+impl Styling {
+    /// No color, no glyphs. Output is byte-identical to the historical plain report.
+    #[must_use]
+    pub fn plain() -> Self {
+        let n = Style::new();
+        Self {
+            error: n,
+            warning: n,
+            rule_id: n,
+            fix: n,
+            location: n,
+            suppressed: n,
+            summary_error: n,
+            summary_warning: n,
+            summary_suppressed: n,
+            glyphs: false,
+        }
+    }
+
+    /// Colors + per-finding glyphs, for a terminal that supports ANSI.
+    #[must_use]
+    pub fn ansi() -> Self {
+        let red = Style::new().fg_color(Some(AnsiColor::Red.into()));
+        let yellow = Style::new().fg_color(Some(AnsiColor::Yellow.into()));
+        let dim = Style::new().dimmed();
+        Self {
+            error: red.bold(),
+            warning: yellow.bold(),
+            rule_id: Style::new().bold(),
+            fix: dim,
+            location: dim,
+            suppressed: dim,
+            summary_error: red,
+            summary_warning: yellow,
+            summary_suppressed: dim,
+            glyphs: true,
+        }
+    }
+
+    fn severity(&self, s: Severity) -> Style {
+        match s {
+            Severity::Error => self.error,
+            Severity::Warning => self.warning,
+        }
+    }
+
+    /// The glyph for a severity (`✗`/`⚠`), or `""` when glyphs are disabled.
+    fn glyph(&self, s: Severity) -> &'static str {
+        if !self.glyphs {
+            return "";
+        }
+        match s {
+            Severity::Error => "✗",
+            Severity::Warning => "⚠",
+        }
+    }
+}
+
+/// Wrap `text` in `style`'s ANSI escapes. An empty `Style` renders no escapes,
+/// so the plain path flows through this unchanged.
+fn paint(style: Style, text: &str) -> String {
+    format!("{}{}{}", style.render(), text, style.render_reset())
+}
 
 /// The version of the JSON output envelope (`schema_version`).
 pub const SCHEMA_VERSION: u32 = 2;
@@ -114,40 +197,69 @@ pub fn render_finding_human(file: &str, f: &Finding) -> String {
     out
 }
 
-/// Render the grouped-output header for a statement: `{file}:{line}:{col}  {snippet}`
-/// (the snippet is omitted when empty). One header precedes all the findings on that statement.
-#[must_use]
-pub fn render_statement_header(file: &str, location: Location, snippet: &str) -> String {
+/// Styled statement header: `{file}:{line}:{col}` (dimmed under `ansi`) then two
+/// spaces and the snippet when present. See [`render_statement_header`] for the
+/// stable plain form.
+fn statement_header(file: &str, location: Location, snippet: &str, st: &Styling) -> String {
+    let loc = paint(
+        st.location,
+        &format!("{file}:{}:{}", location.line, location.column),
+    );
     if snippet.is_empty() {
-        format!("{file}:{}:{}\n", location.line, location.column)
+        format!("{loc}\n")
     } else {
-        format!("{file}:{}:{}  {snippet}\n", location.line, location.column)
+        format!("{loc}  {snippet}\n")
     }
 }
 
-/// Render one finding's nested body for the grouped output: a `  {severity} [{rule}]` line
-/// (with a suppression note when suppressed), the indented message, and a `fix:` line unless
-/// suppressed. The owning statement's location and snippet come from [`render_statement_header`].
+/// Render the grouped-output header for a statement (plain styling).
 #[must_use]
-pub fn render_finding_body(f: &Finding) -> String {
-    let suffix = match &f.suppression {
-        Some(s) => format!("  — suppressed: {}", s.reason),
-        None => String::new(),
-    };
-    let mut out = format!("  {} [{}]{}\n", f.severity, f.rule_id, suffix);
-    out.push_str(&format!("    {}\n", f.message));
-    if f.suppression.is_none() {
-        out.push_str(&format!("    fix: {}\n", f.guidance));
+pub fn render_statement_header(file: &str, location: Location, snippet: &str) -> String {
+    statement_header(file, location, snippet, &Styling::plain())
+}
+
+/// Styled finding body. A suppressed finding renders as a single dimmed block
+/// (header line with the suppression note + message, no fix line); dimming the
+/// whole block rather than per-span keeps nested resets from cancelling the dim.
+/// An unsuppressed finding gets a per-severity glyph, colored severity word,
+/// bold rule id, and a dimmed `fix:` line.
+fn finding_body(f: &Finding, st: &Styling) -> String {
+    if let Some(s) = &f.suppression {
+        let block = format!(
+            "  {} [{}]  — suppressed: {}\n    {}\n",
+            f.severity, f.rule_id, s.reason, f.message
+        );
+        return paint(st.suppressed, &block);
     }
+    let glyph = st.glyph(f.severity);
+    let prefix = if glyph.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", paint(st.severity(f.severity), glyph))
+    };
+    let mut out = format!(
+        "  {}{} [{}]\n",
+        prefix,
+        paint(st.severity(f.severity), &f.severity.to_string()),
+        paint(st.rule_id, &f.rule_id),
+    );
+    out.push_str(&format!("    {}\n", f.message));
+    out.push_str(&paint(st.fix, &format!("    fix: {}\n", f.guidance)));
     out
 }
 
-/// Render every finding across `reports` to the human stdout block, grouped by statement: each
-/// statement's location and snippet appear once as a header, its findings nested beneath, with a
-/// blank line between statements. Findings arrive sorted by statement index, so a group is the run
-/// of consecutive findings sharing one index. Parse errors are not included — see [`render_errors`].
+/// Render one finding's nested body for the grouped output (plain styling).
 #[must_use]
-pub fn render_human(reports: &[FileReport]) -> String {
+pub fn render_finding_body(f: &Finding) -> String {
+    finding_body(f, &Styling::plain())
+}
+
+/// Render every finding across `reports` to the human block, grouped by statement,
+/// wrapping each span according to `st`. Findings arrive sorted by statement index,
+/// so a group is the run of consecutive findings sharing one index. Parse errors
+/// are not included — see [`render_errors`].
+#[must_use]
+pub fn render_human_styled(reports: &[FileReport], st: &Styling) -> String {
     let mut out = String::new();
     let mut first = true;
     for r in reports {
@@ -158,19 +270,81 @@ pub fn render_human(reports: &[FileReport]) -> String {
             }
             first = false;
             let head = &r.findings[i];
-            out.push_str(&render_statement_header(
-                &r.name,
-                head.location,
-                &head.snippet,
-            ));
+            out.push_str(&statement_header(&r.name, head.location, &head.snippet, st));
             let stmt = head.statement_index;
             while i < r.findings.len() && r.findings[i].statement_index == stmt {
-                out.push_str(&render_finding_body(&r.findings[i]));
+                out.push_str(&finding_body(&r.findings[i], st));
                 i += 1;
             }
         }
     }
     out
+}
+
+/// Render every finding across `reports` to the plain human block, grouped by statement.
+#[must_use]
+pub fn render_human(reports: &[FileReport]) -> String {
+    render_human_styled(reports, &Styling::plain())
+}
+
+/// Count `(errors, warnings, suppressed)` across every report's findings.
+/// Suppressed findings are counted only in the third slot (they never gate).
+fn tally(reports: &[FileReport]) -> (usize, usize, usize) {
+    let (mut errors, mut warnings, mut suppressed) = (0, 0, 0);
+    for r in reports {
+        for f in &r.findings {
+            if f.is_suppressed() {
+                suppressed += 1;
+            } else if f.severity == Severity::Error {
+                errors += 1;
+            } else {
+                warnings += 1;
+            }
+        }
+    }
+    (errors, warnings, suppressed)
+}
+
+/// `"{n} {word}"`, appending `s` to pluralize unless `n == 1`.
+fn count(n: usize, word: &str) -> String {
+    if n == 1 {
+        format!("{n} {word}")
+    } else {
+        format!("{n} {word}s")
+    }
+}
+
+/// One-line run summary, or `None` when there are no findings at all (a clean run
+/// stays silent). Printed in both plain and color modes; `st` only colors the
+/// counts. Clauses with a zero count are omitted; suppressed findings appear in a
+/// trailing `(N suppressed)` parenthetical (or stand alone when they are the only
+/// findings).
+#[must_use]
+pub fn render_summary(reports: &[FileReport], st: &Styling) -> Option<String> {
+    let (errors, warnings, suppressed) = tally(reports);
+    if errors == 0 && warnings == 0 && suppressed == 0 {
+        return None;
+    }
+    let mut clauses = Vec::new();
+    if errors > 0 {
+        clauses.push(paint(st.summary_error, &count(errors, "error")));
+    }
+    if warnings > 0 {
+        clauses.push(paint(st.summary_warning, &count(warnings, "warning")));
+    }
+    let supp = paint(st.summary_suppressed, &format!("{suppressed} suppressed"));
+    let files = count(reports.len(), "file");
+    let body = if clauses.is_empty() {
+        // A run whose only findings are suppressed.
+        format!("{supp} in {files}")
+    } else {
+        let mut b = clauses.join(", ");
+        if suppressed > 0 {
+            b.push_str(&format!(" ({supp})"));
+        }
+        format!("{b} in {files}")
+    };
+    Some(format!("Summary: {body}"))
 }
 
 /// Render the stderr block: one `"{name}: {error}"` line for each report that
@@ -409,5 +583,125 @@ mod tests {
         let s = render_github(&reports);
         assert!(s.starts_with("::error file=bad.sql::"), "got: {s}");
         assert!(s.contains("parse error"));
+    }
+
+    #[test]
+    fn ansi_paints_escapes_plain_does_not() {
+        let ansi = Styling::ansi();
+        let plain = Styling::plain();
+        // ansi wraps in SGR escapes; plain leaves the text untouched.
+        assert!(paint(ansi.severity(Severity::Error), "error").contains('\u{1b}'));
+        assert_eq!(paint(plain.severity(Severity::Error), "error"), "error");
+        // glyphs only exist in the ansi styling.
+        assert_eq!(ansi.glyph(Severity::Error), "✗");
+        assert_eq!(ansi.glyph(Severity::Warning), "⚠");
+        assert_eq!(plain.glyph(Severity::Error), "");
+    }
+
+    #[test]
+    fn plain_render_is_byte_identical_and_escape_free() {
+        let reports = vec![lint_input(
+            "m.sql",
+            "DROP TABLE users;\nVACUUM FULL t;",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_human(&reports);
+        assert!(
+            !s.contains('\u{1b}'),
+            "plain output must have no escapes:\n{s}"
+        );
+        assert!(
+            !s.contains('✗') && !s.contains('⚠'),
+            "plain output must have no glyphs"
+        );
+        // The plain wrapper and an explicit plain styling agree.
+        assert_eq!(s, render_human_styled(&reports, &Styling::plain()));
+        // Layout unchanged: header + nested finding lines still present.
+        assert!(s.contains("m.sql:1:1  DROP TABLE users\n"));
+        assert!(s.contains("\n  warning [drop-table]\n    "));
+    }
+
+    #[test]
+    fn ansi_render_adds_escapes_and_severity_glyphs() {
+        let reports = vec![lint_input(
+            "m.sql",
+            "VACUUM FULL t;",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_human_styled(&reports, &Styling::ansi());
+        assert!(s.contains('\u{1b}'), "ansi output must contain escapes");
+        assert!(s.contains('✗'), "vacuum-full-cluster is an error → ✗");
+        assert!(s.contains('⚠'), "require-timeout is a warning → ⚠");
+    }
+
+    #[test]
+    fn summary_is_none_on_a_clean_run() {
+        let reports = vec![lint_input(
+            "ok.sql",
+            "CREATE INDEX CONCURRENTLY i ON t (x);",
+            &crate::LintOptions::default(),
+        )];
+        assert!(render_summary(&reports, &Styling::plain()).is_none());
+    }
+
+    #[test]
+    fn summary_counts_and_pluralizes() {
+        // VACUUM FULL → 1 error (vacuum-full-cluster) + 1 warning (require-timeout).
+        let reports = vec![lint_input(
+            "m.sql",
+            "VACUUM FULL t;",
+            &crate::LintOptions::default(),
+        )];
+        assert_eq!(
+            render_summary(&reports, &Styling::plain()).unwrap(),
+            "Summary: 1 error, 1 warning in 1 file"
+        );
+    }
+
+    #[test]
+    fn summary_parenthesizes_suppressed_and_colors_in_ansi() {
+        let sql = "-- pgsafe:ignore drop-table cleanup\nDROP TABLE x;\nVACUUM FULL t;";
+        let reports = vec![lint_input("m.sql", sql, &crate::LintOptions::default())];
+        let plain = render_summary(&reports, &Styling::plain()).unwrap();
+        assert!(plain.starts_with("Summary: 1 error, "), "{plain}");
+        assert!(plain.contains("(1 suppressed)"), "{plain}");
+        assert!(plain.ends_with(" in 1 file"), "{plain}");
+        assert!(render_summary(&reports, &Styling::ansi())
+            .unwrap()
+            .contains('\u{1b}'));
+    }
+
+    #[test]
+    fn summary_counts_pluralize_at_two() {
+        // Two files, each VACUUM FULL → 1 error (vacuum-full-cluster) + 1 warning
+        // (require-timeout), so totals cross the singular/plural boundary.
+        let reports = vec![
+            lint_input("a.sql", "VACUUM FULL t;", &crate::LintOptions::default()),
+            lint_input("b.sql", "VACUUM FULL t;", &crate::LintOptions::default()),
+        ];
+        assert_eq!(
+            render_summary(&reports, &Styling::plain()).unwrap(),
+            "Summary: 2 errors, 2 warnings in 2 files"
+        );
+    }
+
+    #[test]
+    fn summary_stands_alone_when_only_suppressed_findings_exist() {
+        // DROP TABLE emits two findings (drop-table + require-timeout); stack an
+        // ignore directive for each so nothing unsuppressed remains, exercising the
+        // `clauses.is_empty()` branch: no comma, no parenthesis, just "N suppressed".
+        let sql = "-- pgsafe:ignore drop-table cleanup\n\
+                   -- pgsafe:ignore require-timeout reviewed\n\
+                   DROP TABLE x;";
+        let reports = vec![lint_input("m.sql", sql, &crate::LintOptions::default())];
+        assert!(
+            reports[0].findings.iter().all(Finding::is_suppressed),
+            "fixture must have zero unsuppressed findings: {:?}",
+            reports[0].findings
+        );
+        assert_eq!(
+            render_summary(&reports, &Styling::plain()).unwrap(),
+            "Summary: 2 suppressed in 1 file"
+        );
     }
 }

@@ -486,3 +486,115 @@ fn naming_convention_via_config_fires() {
         .code(1)
         .stdout(predicate::str::contains("naming-convention"));
 }
+
+// ── color / summary ──────────────────────────────────────────────────────────
+
+#[test]
+fn human_default_piped_is_plain_but_has_summary() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("NO_COLOR")
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains(
+            "Summary: 1 error, 1 warning in 1 file",
+        ))
+        .stdout(predicate::str::contains('\u{1b}').not())
+        .stdout(predicate::str::contains('✗').not());
+}
+
+#[test]
+fn color_always_adds_escapes_and_glyph() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("NO_COLOR")
+        .args(["--color", "always"])
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains('\u{1b}'))
+        .stdout(predicate::str::contains('✗'));
+}
+
+#[test]
+fn color_never_stays_plain() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("NO_COLOR")
+        .args(["--color", "never"])
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains('\u{1b}').not());
+}
+
+#[test]
+fn no_color_env_disables_auto_but_always_overrides() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .stdout(predicate::str::contains('\u{1b}').not());
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .args(["--color", "always"])
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .stdout(predicate::str::contains('\u{1b}'));
+}
+
+#[test]
+fn clicolor_force_colors_piped_output() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .env_remove("NO_COLOR")
+        .env("CLICOLOR_FORCE", "1")
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .stdout(predicate::str::contains('\u{1b}'));
+}
+
+#[test]
+fn clicolor_force_beats_no_color_under_auto() {
+    // Both set, default --color auto: CLICOLOR_FORCE is checked first, so color wins.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .env("CLICOLOR_FORCE", "1")
+        .env("NO_COLOR", "1")
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .stdout(predicate::str::contains('\u{1b}'));
+}
+
+#[test]
+fn clean_run_prints_nothing_to_stdout() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("NO_COLOR")
+        .write_stdin("CREATE INDEX CONCURRENTLY i ON t (x);")
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn color_flag_does_not_affect_json() {
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .env_remove("CLICOLOR_FORCE")
+        .env_remove("NO_COLOR")
+        .args(["--color", "always", "--format", "json"])
+        .write_stdin("VACUUM FULL t;")
+        .assert()
+        .stdout(predicate::str::contains('\u{1b}').not());
+}
