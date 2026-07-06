@@ -383,6 +383,13 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
     }
     let (mut findings, new_table_dropped) =
         synthesized::run_all(sql, stmts, &geoms, options, findings);
+    // A CONCURRENTLY autofix would fail at runtime inside a transaction block; withdraw it
+    // there (unconditionally — disabling the txn warning must not re-enable an unsafe fix).
+    synthesized::txn::suppress_concurrently_fix_in_transaction(
+        stmts,
+        &mut findings,
+        options.assume_in_transaction,
+    );
     if !options.severity_overrides.is_empty() {
         for f in &mut findings {
             if let Some(&sev) = options.severity_overrides.get(&f.rule_id) {
@@ -720,6 +727,75 @@ mod tests {
         // A rule that emits no fix still produces a finding with fix == None.
         let fs = lint_sql("DROP TABLE t;", &LintOptions::default()).unwrap();
         let f = fs.iter().find(|f| f.rule_id == "drop-table").unwrap();
+        assert!(f.fix.is_none());
+    }
+
+    #[test]
+    fn concurrently_fix_withdrawn_inside_transaction() {
+        // Every CONCURRENTLY-adding rule loses its fix inside a txn, but the finding stays.
+        for (sql, rule) in [
+            (
+                "BEGIN; CREATE INDEX i ON t (c); COMMIT;",
+                "add-index-non-concurrent",
+            ),
+            ("BEGIN; DROP INDEX i; COMMIT;", "drop-index-non-concurrent"),
+            ("BEGIN; REINDEX INDEX i; COMMIT;", "reindex-non-concurrent"),
+            (
+                "BEGIN; ALTER TABLE p DETACH PARTITION p1; COMMIT;",
+                "detach-partition-non-concurrent",
+            ),
+        ] {
+            let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+            let f = fs
+                .iter()
+                .find(|f| f.rule_id == rule)
+                .expect("finding present");
+            assert!(
+                f.fix.is_none(),
+                "fix must be withdrawn in a txn for {rule}: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn concurrently_fix_withdrawn_only_for_the_in_transaction_statement() {
+        // One CREATE INDEX outside a txn (keeps its fix) and one inside (withdrawn), in a
+        // single input — pins the finding statement_index ↔ in-transaction alignment.
+        let sql = "CREATE INDEX a ON t (c); BEGIN; CREATE INDEX b ON t (c); COMMIT;";
+        let fs = lint_sql(sql, &LintOptions::default()).unwrap();
+        let hits: Vec<_> = fs
+            .iter()
+            .filter(|f| f.rule_id == "add-index-non-concurrent")
+            .collect();
+        assert_eq!(hits.len(), 2, "both CREATE INDEX statements are flagged");
+        let outside = hits.iter().find(|f| f.statement_index == 0).unwrap();
+        let inside = hits.iter().find(|f| f.statement_index == 2).unwrap();
+        assert!(outside.fix.is_some(), "outside-txn fix must be kept");
+        assert!(inside.fix.is_none(), "in-txn fix must be withdrawn");
+    }
+
+    #[test]
+    fn concurrently_fix_kept_outside_transaction() {
+        // Regression guard: outside a txn the fix is still offered.
+        let fs = lint_sql("CREATE INDEX i ON t (c);", &LintOptions::default()).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-index-non-concurrent")
+            .unwrap();
+        assert!(f.fix.is_some());
+    }
+
+    #[test]
+    fn assume_in_transaction_withdraws_top_level_concurrently_fix() {
+        let opts = LintOptions {
+            assume_in_transaction: true,
+            ..LintOptions::default()
+        };
+        let fs = lint_sql("CREATE INDEX i ON t (c);", &opts).unwrap();
+        let f = fs
+            .iter()
+            .find(|f| f.rule_id == "add-index-non-concurrent")
+            .unwrap();
         assert!(f.fix.is_none());
     }
 }

@@ -585,3 +585,55 @@ fn fix_write_is_atomic_no_temp_left_behind() {
         .collect();
     assert!(siblings.is_empty(), "temp file left behind: {siblings:?}");
 }
+
+#[test]
+fn fix_does_not_add_concurrently_inside_a_transaction() {
+    // CONCURRENTLY is illegal inside BEGIN...COMMIT, so --fix must not add it. The
+    // add-index-non-concurrent Error stays (exit 1); the lock_timeout prologue may
+    // still apply, but CONCURRENTLY must not appear.
+    let dir = tempdir().unwrap();
+    let f = dir.path().join("m.sql");
+    fs::write(&f, "BEGIN;\nCREATE INDEX i ON t (c);\nCOMMIT;\n").unwrap();
+    pgsafe().arg("--fix").arg(&f).assert().failure().code(1);
+    let after = fs::read_to_string(&f).unwrap();
+    assert!(
+        !after.contains("CONCURRENTLY"),
+        "--fix must not add CONCURRENTLY in a txn: {after}"
+    );
+}
+
+#[test]
+fn diff_does_not_add_concurrently_inside_a_transaction() {
+    let dir = tempdir().unwrap();
+    let f = dir.path().join("m.sql");
+    fs::write(&f, "BEGIN;\nCREATE INDEX i ON t (c);\nCOMMIT;\n").unwrap();
+    pgsafe()
+        .arg("--diff")
+        .arg(&f)
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("CONCURRENTLY").not());
+}
+
+#[test]
+fn fix_does_not_add_concurrently_under_assume_in_transaction() {
+    // Migration tools that wrap each file in an implicit transaction pass --in-transaction;
+    // a top-level (no explicit BEGIN) CREATE INDEX must then NOT get CONCURRENTLY, since it
+    // would fail at runtime inside the wrapping transaction.
+    let dir = tempdir().unwrap();
+    let f = dir.path().join("m.sql");
+    fs::write(&f, "CREATE INDEX i ON t (c);\n").unwrap();
+    pgsafe()
+        .arg("--fix")
+        .arg("--in-transaction")
+        .arg(&f)
+        .assert()
+        .failure()
+        .code(1);
+    let after = fs::read_to_string(&f).unwrap();
+    assert!(
+        !after.contains("CONCURRENTLY"),
+        "--fix --in-transaction must not add CONCURRENTLY: {after}"
+    );
+}

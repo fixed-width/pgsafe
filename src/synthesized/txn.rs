@@ -3,13 +3,15 @@
 //! in a transaction, so it fails at runtime. This is an engine-synthesized
 //! finding, not a registered `Rule`.
 
-use crate::ast::protobuf::{ObjectType, RawStmt, TransactionStmtKind};
+use crate::ast::protobuf::{AlterTableType, ObjectType, RawStmt, TransactionStmtKind};
 use crate::ast::NodeEnum;
+use crate::Finding;
 
 pub(crate) const ID: &str = "concurrently-in-transaction";
 pub(crate) const MESSAGE: &str =
-    "CREATE/DROP INDEX CONCURRENTLY and REINDEX CONCURRENTLY cannot run \
-    inside a transaction block; this statement runs inside a transaction and will fail at runtime.";
+    "CREATE/DROP INDEX CONCURRENTLY, REINDEX CONCURRENTLY, and DETACH PARTITION CONCURRENTLY \
+    cannot run inside a transaction block; this statement runs inside a transaction and will \
+    fail at runtime.";
 pub(crate) const GUIDANCE: &str = "Run the CONCURRENTLY statement outside the transaction — put it in \
     its own migration, or move it before BEGIN / after COMMIT. (Note: many migration tools also wrap \
     each migration in an implicit transaction; disable that for this migration.)";
@@ -26,8 +28,48 @@ fn is_concurrently_index_op(node: &NodeEnum) -> bool {
                 )
         }
         NodeEnum::ReindexStmt(r) => crate::rules::reindex_is_concurrent(r),
+        // ALTER TABLE ... DETACH PARTITION ... CONCURRENTLY is also rejected inside a
+        // transaction block (the CONCURRENTLY flag lives on the PartitionCmd).
+        NodeEnum::AlterTableStmt(_) => crate::rules::alter_table_cmds(node).iter().any(|cmd| {
+            AlterTableType::try_from(cmd.subtype) == Ok(AlterTableType::AtDetachPartition)
+                && matches!(
+                    cmd.def.as_ref().and_then(|n| n.node.as_ref()),
+                    Some(NodeEnum::PartitionCmd(pc)) if pc.concurrent
+                )
+        }),
         _ => false,
     }
+}
+
+/// Per-statement flag: `out[i]` is true when statement `i` executes inside an open
+/// transaction block. `BEGIN`/`START TRANSACTION` opens the block; `COMMIT`/`ROLLBACK`
+/// closes it. `assume_in_transaction` seeds the initial state (migration tools that wrap
+/// each file in an implicit transaction). The flag recorded for a transaction-control
+/// statement is its pre-execution state; callers key on non-control statements, so that
+/// choice does not matter. The result is index-aligned with `stmts`.
+pub(crate) fn in_transaction_flags(stmts: &[RawStmt], assume_in_transaction: bool) -> Vec<bool> {
+    let mut in_txn = assume_in_transaction;
+    let mut out = Vec::with_capacity(stmts.len());
+    for raw in stmts {
+        out.push(in_txn);
+        if let Some(NodeEnum::TransactionStmt(t)) = raw.stmt.as_ref().and_then(|b| b.node.as_ref())
+        {
+            match TransactionStmtKind::try_from(t.kind) {
+                Ok(TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart) => {
+                    in_txn = true;
+                }
+                Ok(
+                    TransactionStmtKind::TransStmtCommit | TransactionStmtKind::TransStmtRollback,
+                ) => {
+                    // `COMMIT AND CHAIN` / `ROLLBACK AND CHAIN` immediately open a new
+                    // transaction, so the block stays open; plain / `AND NO CHAIN` close it.
+                    in_txn = t.chain;
+                }
+                _ => {}
+            }
+        }
+    }
+    out
 }
 
 /// Statement indices that are a CONCURRENTLY index operation inside a transaction block.
@@ -36,31 +78,61 @@ pub(crate) fn concurrently_in_transaction_indices(
     stmts: &[RawStmt],
     assume_in_transaction: bool,
 ) -> Vec<usize> {
-    let mut in_txn = assume_in_transaction;
-    let mut out = Vec::new();
-    for (i, raw) in stmts.iter().enumerate() {
-        let Some(node) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) else {
-            continue;
-        };
-        if let NodeEnum::TransactionStmt(t) = node {
-            match TransactionStmtKind::try_from(t.kind) {
-                Ok(TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart) => {
-                    in_txn = true;
-                }
-                Ok(
-                    TransactionStmtKind::TransStmtCommit | TransactionStmtKind::TransStmtRollback,
-                ) => {
-                    in_txn = false;
-                }
-                _ => {}
-            }
+    let in_txn = in_transaction_flags(stmts, assume_in_transaction);
+    stmts
+        .iter()
+        .enumerate()
+        .filter_map(|(i, raw)| {
+            let node = raw.stmt.as_ref().and_then(|b| b.node.as_ref())?;
+            (in_txn[i] && is_concurrently_index_op(node)).then_some(i)
+        })
+        .collect()
+}
+
+/// Whether a fix inserts the `CONCURRENTLY` keyword. Detected from the fix's own edit
+/// text — a whole-word, case-insensitive match — rather than a hand-maintained rule-id
+/// list, so any CONCURRENTLY-inserting fix (present or future) is covered automatically.
+fn fix_adds_concurrently(fix: &crate::Fix) -> bool {
+    fix.edits.iter().any(|e| {
+        e.replacement
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|word| word.eq_ignore_ascii_case("CONCURRENTLY"))
+    })
+}
+
+/// Withdraw a CONCURRENTLY-inserting autofix from any finding whose statement executes
+/// inside a transaction block: `CREATE`/`DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`,
+/// and `DETACH PARTITION … CONCURRENTLY` all fail at runtime inside a txn, so applying such a
+/// fix would swap a lint Error for a latent runtime failure. The finding is left intact (its
+/// guidance already tells the user to move the statement to its own migration); only `fix` is
+/// cleared.
+///
+/// The one CONCURRENTLY form that is txn-*legal* — `REFRESH MATERIALIZED VIEW CONCURRENTLY` —
+/// carries no autofix today, so nothing legitimate is withdrawn. If such a fix is ever added,
+/// this withdraws it inside a txn: a harmless loss of a suggestion (fails safe), never the
+/// reverse (emitting runtime-invalid SQL).
+pub(crate) fn suppress_concurrently_fix_in_transaction(
+    stmts: &[RawStmt],
+    findings: &mut [Finding],
+    assume_in_transaction: bool,
+) {
+    let in_txn = in_transaction_flags(stmts, assume_in_transaction);
+    for f in findings.iter_mut() {
+        if !f.fix.as_ref().is_some_and(fix_adds_concurrently) {
             continue;
         }
-        if in_txn && is_concurrently_index_op(node) {
-            out.push(i);
+        debug_assert!(
+            f.statement_index < in_txn.len(),
+            "finding statement_index {} out of range for {} statements",
+            f.statement_index,
+            in_txn.len()
+        );
+        // Fail safe: withdraw when the statement position is unknown — a CONCURRENTLY fix at
+        // an unknown position must not be offered.
+        if in_txn.get(f.statement_index).copied().unwrap_or(true) {
+            f.fix = None;
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -98,6 +170,55 @@ mod tests {
             indices("BEGIN; CREATE INDEX CONCURRENTLY i ON t (x); ROLLBACK;"),
             vec![1]
         );
+    }
+
+    #[test]
+    fn detects_detach_partition_concurrently_in_transaction() {
+        assert_eq!(
+            indices("BEGIN; ALTER TABLE p DETACH PARTITION p1 CONCURRENTLY; COMMIT;"),
+            vec![1]
+        );
+        // A concurrent DETACH outside a txn is not flagged by this detector.
+        assert!(indices("ALTER TABLE p DETACH PARTITION p1 CONCURRENTLY;").is_empty());
+        // A non-concurrent DETACH is not this detector's concern (the rule handles it).
+        assert!(indices("BEGIN; ALTER TABLE p DETACH PARTITION p1; COMMIT;").is_empty());
+    }
+
+    #[test]
+    fn commit_and_chain_keeps_the_transaction_open() {
+        // COMMIT AND CHAIN / ROLLBACK AND CHAIN commit (or roll back) and immediately open a
+        // new transaction, so a CONCURRENTLY op after them is still inside a block.
+        assert_eq!(
+            indices("BEGIN; COMMIT AND CHAIN; CREATE INDEX CONCURRENTLY i ON t (x); COMMIT;"),
+            vec![2]
+        );
+        assert_eq!(
+            indices("BEGIN; ROLLBACK AND CHAIN; CREATE INDEX CONCURRENTLY i ON t (x); COMMIT;"),
+            vec![2]
+        );
+        // A plain COMMIT (no CHAIN) still closes the block.
+        assert!(indices("BEGIN; COMMIT; CREATE INDEX CONCURRENTLY i ON t (x);").is_empty());
+    }
+
+    #[test]
+    fn in_transaction_flags_track_block_boundaries() {
+        let flags = |sql: &str| {
+            super::in_transaction_flags(&crate::ast::parse(sql).unwrap().protobuf.stmts, false)
+        };
+        // BEGIN itself is recorded pre-open (false); the op after it is inside (true);
+        // COMMIT and everything after are outside again.
+        assert_eq!(
+            flags("BEGIN; CREATE INDEX i ON t (x); COMMIT; SELECT 1;"),
+            vec![false, true, true, false]
+        );
+        // No transaction control: every statement is top-level.
+        assert_eq!(flags("SELECT 1; SELECT 2;"), vec![false, false]);
+        // assume_in_transaction seeds the initial state.
+        let seeded = super::in_transaction_flags(
+            &crate::ast::parse("SELECT 1;").unwrap().protobuf.stmts,
+            true,
+        );
+        assert_eq!(seeded, vec![true]);
     }
 
     #[test]
