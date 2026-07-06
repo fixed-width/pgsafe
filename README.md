@@ -83,6 +83,10 @@ stdin don't map back to files GitHub can annotate as code-scanning alerts.
 See [pgsafe.fixedwidth.tech/docs](https://pgsafe.fixedwidth.tech/docs/) for configuration,
 output formats, and the full [rules reference](https://pgsafe.fixedwidth.tech/rules/).
 
+## Changelog
+
+Notable changes for each release are in [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

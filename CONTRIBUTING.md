@@ -14,6 +14,15 @@ The library core builds without `clap` (the CLI lives behind the default `cli` f
 cargo build --no-default-features   # compiles the embeddable core, no binary
 ```
 
+## Changelog
+
+[`CHANGELOG.md`](CHANGELOG.md) follows [Keep a Changelog](https://keepachangelog.com/).
+When a change is user-facing (a rule, CLI flag, output format, config option, or the
+Action), add a bullet under `## [Unreleased]` in the appropriate group (Added / Changed /
+Fixed / …) and reference the PR. On release, the `[Unreleased]` items roll into a new
+version heading dated that day. Purely internal refactors and test-only changes don't need
+an entry.
+
 ## Source layout
 
 The linter has two families of checks plus the engine that drives them:
