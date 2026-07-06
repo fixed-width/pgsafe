@@ -78,8 +78,7 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                 // Re-lint the composed result; if a fix would introduce a new Error, show no
                 // diff for this file (the original findings still gate).
                 let after = lint_input(name.clone(), &applied.sql, &r.options_for(name));
-                if after.error.is_none()
-                    && introduces_new_error(&report.findings, &after.findings)
+                if after.error.is_none() && introduces_new_error(&report.findings, &after.findings)
                 {
                     eprintln!(
                         "{name}: fixes withheld — applying them would introduce a new issue; lint `{name}` to see the findings"

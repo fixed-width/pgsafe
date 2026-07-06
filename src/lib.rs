@@ -739,10 +739,7 @@ mod tests {
                 "add-index-non-concurrent",
             ),
             ("BEGIN; DROP INDEX i; COMMIT;", "drop-index-non-concurrent"),
-            (
-                "BEGIN; REINDEX INDEX i; COMMIT;",
-                "reindex-non-concurrent",
-            ),
+            ("BEGIN; REINDEX INDEX i; COMMIT;", "reindex-non-concurrent"),
             (
                 "BEGIN; ALTER TABLE p DETACH PARTITION p1; COMMIT;",
                 "detach-partition-non-concurrent",

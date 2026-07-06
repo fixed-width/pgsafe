@@ -52,7 +52,8 @@ pub(crate) fn in_transaction_flags(stmts: &[RawStmt], assume_in_transaction: boo
     let mut out = Vec::with_capacity(stmts.len());
     for raw in stmts {
         out.push(in_txn);
-        if let Some(NodeEnum::TransactionStmt(t)) = raw.stmt.as_ref().and_then(|b| b.node.as_ref()) {
+        if let Some(NodeEnum::TransactionStmt(t)) = raw.stmt.as_ref().and_then(|b| b.node.as_ref())
+        {
             match TransactionStmtKind::try_from(t.kind) {
                 Ok(TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart) => {
                     in_txn = true;
