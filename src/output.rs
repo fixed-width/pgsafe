@@ -280,18 +280,32 @@ pub fn render_finding_human(file: &str, f: &Finding) -> String {
         out.push_str(&format!("  fix: {}\n", f.guidance));
     }
     if !f.snippet.is_empty() {
-        out.push_str(&format!("  | {}\n", f.snippet));
+        // Gutter every physical line of the snippet so a multi-line statement's continuation lines
+        // stay aligned under the `| ` gutter instead of falling to column 0. A single-line snippet
+        // yields exactly one gutter line (byte-identical to the historical form).
+        for line in f.snippet.split('\n') {
+            out.push_str(&format!("  | {line}\n"));
+        }
     }
     out
 }
 
-/// Styled statement header: `{file}:{line}:{col}` (dimmed under `ansi`) then two
-/// spaces and the snippet when present. See [`render_statement_header`] for the
-/// stable plain form.
+/// Styled statement header: `{file}:{line}:{col}` (dimmed under `ansi`). A single-line snippet
+/// stays inline after two spaces (`{loc}  {snippet}`); a multi-line snippet drops to a `| `-gutter
+/// block under the location so its continuation lines stay aligned instead of falling to column 0
+/// (left of the finding body). See [`render_statement_header`] for the stable plain form.
 fn statement_header(file: &str, location: Location, snippet: &str, st: &Styling) -> String {
     let loc = st.muted(&format!("{file}:{}:{}", location.line, location.column));
     if snippet.is_empty() {
         format!("{loc}\n")
+    } else if snippet.contains('\n') {
+        // The location stands alone, then each physical line of the statement is quoted in a
+        // dimmed `| ` gutter, preserving the statement's own indentation.
+        let mut out = format!("{loc}\n");
+        for line in snippet.split('\n') {
+            out.push_str(&format!("{} {line}\n", st.muted("  |")));
+        }
+        out
     } else {
         format!("{loc}  {snippet}\n")
     }
@@ -571,6 +585,35 @@ mod tests {
     }
 
     #[test]
+    fn render_finding_human_gutters_each_line_of_a_multiline_snippet() {
+        // A multi-line snippet must gutter every physical line, not just the first — otherwise the
+        // continuation lines fall to column 0, left of the `| ` gutter.
+        let f = &lint_input(
+            "m.sql",
+            "CREATE INDEX i\n    ON t (x);",
+            &crate::LintOptions::default(),
+        )
+        .findings[0];
+        let s = render_finding_human("m.sql", f);
+        assert!(
+            s.contains("  |     ON t (x)\n"),
+            "continuation must be guttered:\n{s}"
+        );
+        assert!(
+            !s.contains("\n    ON t (x)\n"),
+            "continuation must not fall to column 0:\n{s}"
+        );
+    }
+
+    #[test]
+    fn render_finding_human_keeps_a_single_line_snippet_inline() {
+        // The common case is unchanged: a single-line snippet is one `| ` gutter line.
+        let f = &lint_input("m.sql", "VACUUM FULL t;", &crate::LintOptions::default()).findings[0];
+        let s = render_finding_human("m.sql", f);
+        assert!(s.contains("  | VACUUM FULL t\n"), "{s}");
+    }
+
+    #[test]
     fn render_human_groups_findings_by_statement() {
         let reports = vec![lint_input(
             "m.sql",
@@ -594,6 +637,56 @@ mod tests {
         assert!(
             s.contains("\n\nm.sql:2:1"),
             "blank line between groups:\n{s}"
+        );
+    }
+
+    #[test]
+    fn a_multiline_statement_renders_as_an_indented_gutter_block() {
+        // A statement spanning multiple physical lines must not dump its continuation lines at
+        // column 0 (left of the finding body, which reads as broken). The location stands on its
+        // own line and the statement is quoted in a `| ` gutter block that preserves its own
+        // line breaks and indentation.
+        let reports = vec![lint_input(
+            "m.sql",
+            "CREATE INDEX i\n    ON t (x);",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_human(&reports);
+        // Location on its own line — no snippet appended.
+        assert!(
+            s.contains("m.sql:1:1\n"),
+            "location should stand alone:\n{s}"
+        );
+        // Each statement line is quoted in the gutter, indentation preserved.
+        assert!(
+            s.contains("  | CREATE INDEX i\n"),
+            "first line in gutter:\n{s}"
+        );
+        assert!(
+            s.contains("  |     ON t (x)\n"),
+            "continuation preserved in gutter:\n{s}"
+        );
+        // The bare, un-guttered continuation at column 0 (the bug) is gone.
+        assert!(
+            !s.contains("\n    ON t (x)\n"),
+            "continuation must not fall to column 0:\n{s}"
+        );
+    }
+
+    #[test]
+    fn a_single_line_statement_stays_inline_with_the_location() {
+        // The common case is unchanged (byte-identical): a single-line statement stays on the
+        // location line and never uses the gutter.
+        let reports = vec![lint_input(
+            "m.sql",
+            "DROP TABLE users;",
+            &crate::LintOptions::default(),
+        )];
+        let s = render_human(&reports);
+        assert!(s.contains("m.sql:1:1  DROP TABLE users\n"), "{s}");
+        assert!(
+            !s.contains("  | DROP TABLE"),
+            "single-line must not use the gutter:\n{s}"
         );
     }
 
