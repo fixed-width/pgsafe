@@ -3,14 +3,17 @@
 //! and a migration footgun.
 //!
 //! Covered targets (the relation a statement creates or operates on): `CREATE TABLE`,
-//! `CREATE TABLE … AS` / `CREATE MATERIALIZED VIEW`, `ALTER TABLE`, `CREATE INDEX`, `CREATE TRIGGER`
+//! `CREATE TABLE … AS` / `SELECT … INTO` / `CREATE MATERIALIZED VIEW`, `CREATE VIEW`,
+//! `CREATE SEQUENCE`, `CREATE FOREIGN TABLE`, `ALTER TABLE`, `CREATE INDEX`, `CREATE TRIGGER`
 //! (its `ON` table), `ALTER … RENAME`, `ALTER … SET SCHEMA`, `TRUNCATE`, and `DROP` of a relation
 //! (table/index/view/materialized view/sequence/foreign table). Names are reported relkind-neutral
 //! ("Unqualified name `x`") because one node kind (`AlterTableStmt`, `RenameStmt`, `DropStmt`) spans
 //! tables, indexes, and views alike.
 //!
 //! Intentionally out of scope: non-relation objects (e.g. `DROP FUNCTION`, `ALTER TYPE … RENAME`),
-//! whose names resolve through `search_path` too but are a separate concern.
+//! whose names resolve through `search_path` too but are a separate concern; and a few rare
+//! sequence/trigger corners — `ALTER SEQUENCE … RESTART`-style ops (`AlterSeqStmt`) and a
+//! constraint trigger's `FROM` referenced table (`CreateTrigStmt.constrrel`).
 //!
 //! Temp exemption: a `CREATE TEMP` target (parse-time `relpersistence == "t"`) resolves in `pg_temp`
 //! and is exempt. A later bare reference to that temp (e.g. `TRUNCATE t`) carries `relpersistence ==
@@ -50,6 +53,22 @@ fn target_rangevars(node: &NodeEnum) -> Vec<&RangeVar> {
             .into
             .as_ref()
             .and_then(|i| i.rel.as_ref())
+            .into_iter()
+            .collect(),
+        // Legacy `SELECT … INTO newtab` (the pre-CTAS spelling) parses as a SelectStmt with an
+        // into_clause; a plain SELECT has none, so this arm is empty for ordinary queries.
+        NodeEnum::SelectStmt(s) => s
+            .into_clause
+            .as_ref()
+            .and_then(|i| i.rel.as_ref())
+            .into_iter()
+            .collect(),
+        NodeEnum::ViewStmt(v) => v.view.as_ref().into_iter().collect(),
+        NodeEnum::CreateSeqStmt(s) => s.sequence.as_ref().into_iter().collect(),
+        NodeEnum::CreateForeignTableStmt(f) => f
+            .base_stmt
+            .as_ref()
+            .and_then(|b| b.relation.as_ref())
             .into_iter()
             .collect(),
         NodeEnum::AlterTableStmt(a) => a.relation.as_ref().into_iter().collect(),
@@ -163,6 +182,21 @@ mod tests {
     fn flags_create_table_as_and_matview() {
         assert_eq!(names("CREATE TABLE foo AS SELECT 1"), vec!["foo"]);
         assert_eq!(names("CREATE MATERIALIZED VIEW mv AS SELECT 1"), vec!["mv"]);
+    }
+
+    #[test]
+    fn flags_create_view_sequence_foreign_table() {
+        assert_eq!(names("CREATE VIEW v AS SELECT 1"), vec!["v"]);
+        assert_eq!(names("CREATE SEQUENCE s"), vec!["s"]);
+        assert_eq!(names("SELECT 1 INTO newtab"), vec!["newtab"]);
+        assert_eq!(
+            names("CREATE FOREIGN TABLE ft (id int) SERVER srv"),
+            vec!["ft"]
+        );
+        // qualified + temp forms are exempt
+        assert!(flagged("CREATE VIEW public.v AS SELECT 1").is_empty());
+        assert!(flagged("CREATE TEMP VIEW v AS SELECT 1").is_empty());
+        assert!(flagged("CREATE SEQUENCE app.s").is_empty());
     }
 
     #[test]
