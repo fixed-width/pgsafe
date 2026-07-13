@@ -88,7 +88,10 @@ output formats, and the full [rules reference](https://pgsafe.fixedwidth.tech/ru
 `pgsafe lsp` starts a Language Server over stdio, giving any LSP-capable editor live
 diagnostics on `.sql` files plus quickfix actions for findings that carry a safe rewrite.
 It reads the same `.pgsafe.toml` as the CLI, resolved per file and refreshed when the
-config changes.
+config changes. If that config sets a top-level `paths` key, the server only lints files
+matching those globs (relative to the config file) and offers no quickfixes for the rest —
+useful for scoping to a `migrations/` directory and skipping schema dumps or ad-hoc query
+files. With no `paths` key, every `.sql` file is linted, same as before.
 
 `lsp` is an opt-in Cargo feature (off by default):
 

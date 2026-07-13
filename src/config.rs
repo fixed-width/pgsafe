@@ -110,6 +110,8 @@ struct RawConfig {
     forbidden_types: BTreeMap<String, String>,
     #[serde(default, rename = "required-columns")]
     required_columns: Vec<String>,
+    #[serde(default)]
+    paths: Vec<String>,
 }
 
 /// A validated, compiled config ready for per-file resolution.
@@ -127,6 +129,14 @@ pub(crate) struct Config {
     naming: BTreeMap<NameKind, String>,
     forbidden_types: BTreeMap<String, String>,
     required_columns: BTreeSet<String>,
+    /// Compiled `paths` globs (§10 of the LSP design doc). Empty is the unset default —
+    /// see [`Config::in_scope`], the single place that interprets it. Always parsed
+    /// and validated (`compile()` runs under `any(cli, lsp)`, so a bad glob is still
+    /// a hard error in a `cli`-only build), but only *read* by `in_scope`, which only
+    /// the `lsp` feature currently calls — hence the explicit allow, matching
+    /// `options_for_path` below.
+    #[allow(dead_code)]
+    paths: Vec<globset::GlobMatcher>,
 }
 
 /// Walk up from `start` to the first directory holding a candidate config file,
@@ -241,6 +251,16 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         }
     }
 
+    let mut paths = Vec::new();
+    for p in &raw.paths {
+        let matcher = GlobBuilder::new(p)
+            .literal_separator(true)
+            .build()
+            .map_err(|e| ConfigError(format!("`paths` invalid glob `{p}`: {e}")))?
+            .compile_matcher();
+        paths.push(matcher);
+    }
+
     Ok(Config {
         fail_on: raw.fail_on,
         in_transaction: raw.in_transaction,
@@ -255,6 +275,7 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         // Stored verbatim; the `require-columns` rule folds names to lower case (matching
         // PostgreSQL's unquoted-identifier folding) and skips empties at match time.
         required_columns: raw.required_columns.into_iter().collect(),
+        paths,
     })
 }
 
@@ -294,6 +315,28 @@ impl Config {
     /// Column names every CREATE TABLE must include (global).
     pub(crate) fn required_columns(&self) -> &BTreeSet<String> {
         &self.required_columns
+    }
+
+    /// Whether `file_name` is in this config's `paths` scope, matched against its
+    /// path relative to `config_dir` (the same `rel_path` logic `options_from` uses
+    /// for `[[ignore]]`/`disabled_for`).
+    ///
+    /// This is the **single place** that encodes the unset-`paths` default: empty
+    /// `paths` (never set, or no `.pgsafe.toml` was discovered at all — the LSP's
+    /// untitled/non-`file` documents resolve to `Config::default()`) means every file
+    /// is in scope, matching the CLI's current lint-everything-you-pass-it behavior.
+    /// Once `paths` is set, only a file whose relative path matches one of the globs
+    /// is in scope. If this default is ever flipped (lint-nothing-when-unset), this is
+    /// the only line that needs to change — every caller (today: the LSP's
+    /// `ConfigCache::should_lint`; later: a CLI increment) follows it automatically.
+    // No caller in a `cli`-only build (deferred CLI increment — design doc §10); the
+    // `lsp` feature's `ConfigCache::should_lint` is the current production caller.
+    #[allow(dead_code)]
+    pub(crate) fn in_scope(&self, config_dir: Option<&Path>, file_name: &str) -> bool {
+        self.paths.is_empty() || {
+            let rel = rel_path(file_name, config_dir);
+            self.paths.iter().any(|m| m.is_match(&rel))
+        }
     }
 }
 
@@ -659,6 +702,31 @@ mod tests {
     fn required_columns_absent_is_empty() {
         let cfg = from_toml_str("", KNOWN).unwrap();
         assert!(cfg.required_columns().is_empty());
+    }
+
+    #[test]
+    fn in_scope_empty_paths_matches_everything() {
+        // Unset `paths` (the default) is the single place that encodes "lint all",
+        // matching today's CLI behavior. No config dir at all (untitled/non-file
+        // docs in the LSP) must also be in scope.
+        let cfg = from_toml_str("", KNOWN).unwrap();
+        assert!(cfg.in_scope(None, "anything.sql"));
+        assert!(cfg.in_scope(Some(Path::new("/proj")), "/proj/migrations/0001.sql"));
+    }
+
+    #[test]
+    fn in_scope_with_globs_matches_relative_to_config_dir() {
+        let cfg = from_toml_str("paths = [\"migrations/**\"]\n", KNOWN).unwrap();
+        let dir = Path::new("/proj");
+        assert!(cfg.in_scope(Some(dir), "/proj/migrations/0001.sql"));
+        assert!(!cfg.in_scope(Some(dir), "/proj/queries/q.sql"));
+    }
+
+    #[test]
+    fn invalid_paths_glob_is_rejected() {
+        // "a[" has an unterminated character class — definitely rejected by globset.
+        let err = from_toml_str("paths = [\"a[\"]\n", KNOWN).unwrap_err();
+        assert!(err.0.contains("paths") && err.0.contains("glob"));
     }
 
     #[test]

@@ -185,6 +185,110 @@ fn code_action_returns_quickfix() {
     handle.join().unwrap();
 }
 
+/// End-to-end proof of `paths`-scoped linting (§10 of the LSP design doc): a
+/// `.pgsafe.toml` with `paths = ["migrations/**"]` scopes the server to the
+/// migrations directory. A doc opened under `migrations/` gets diagnostics for
+/// unsafe DDL; the identical DDL opened under a sibling directory gets none. Neither
+/// subdirectory needs to exist on disk — only the `.pgsafe.toml` does, for discovery;
+/// linting works on the in-memory document text.
+#[test]
+fn paths_scoping_gates_diagnostics_to_matching_files() {
+    let (client, handle) = start();
+
+    // initialize
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(1),
+            method: "initialize".to_string(),
+            params: serde_json::to_value(InitializeParams::default()).unwrap(),
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(
+        &client,
+        "initialized",
+        serde_json::to_value(InitializedParams {}).unwrap(),
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "paths = [\"migrations/**\"]\n",
+    )
+    .unwrap();
+
+    // In-scope doc: under migrations/.
+    let in_scope_path = dir.path().join("migrations").join("0001.sql");
+    let in_scope_uri = uri(&format!("file://{}", in_scope_path.display()));
+    notify(
+        &client,
+        "textDocument/didOpen",
+        serde_json::to_value(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: in_scope_uri.clone(),
+                language_id: "sql".to_string(),
+                version: 1,
+                text: "CREATE INDEX idx ON t (col);".to_string(),
+            },
+        })
+        .unwrap(),
+    );
+    let msg = client.receiver.recv().unwrap();
+    let Message::Notification(n) = msg else {
+        panic!("expected a notification, got {msg:?}");
+    };
+    assert_eq!(n.method, "textDocument/publishDiagnostics");
+    let params: PublishDiagnosticsParams = serde_json::from_value(n.params).unwrap();
+    assert_eq!(params.uri, in_scope_uri);
+    assert!(
+        !params.diagnostics.is_empty(),
+        "expected diagnostics for a file under migrations/"
+    );
+
+    // Out-of-scope doc: identical unsafe DDL, sibling directory.
+    let out_of_scope_path = dir.path().join("queries").join("q.sql");
+    let out_of_scope_uri = uri(&format!("file://{}", out_of_scope_path.display()));
+    notify(
+        &client,
+        "textDocument/didOpen",
+        serde_json::to_value(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: out_of_scope_uri.clone(),
+                language_id: "sql".to_string(),
+                version: 1,
+                text: "CREATE INDEX idx ON t (col);".to_string(),
+            },
+        })
+        .unwrap(),
+    );
+    let msg = client.receiver.recv().unwrap();
+    let Message::Notification(n) = msg else {
+        panic!("expected a notification, got {msg:?}");
+    };
+    assert_eq!(n.method, "textDocument/publishDiagnostics");
+    let params: PublishDiagnosticsParams = serde_json::from_value(n.params).unwrap();
+    assert_eq!(params.uri, out_of_scope_uri);
+    assert!(
+        params.diagnostics.is_empty(),
+        "expected no diagnostics for a file outside `paths` scope, got {:?}",
+        params.diagnostics
+    );
+
+    // shutdown/exit
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2),
+            method: "shutdown".to_string(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(&client, "exit", serde_json::Value::Null);
+    handle.join().unwrap();
+}
+
 /// End-to-end proof of the config-cache invalidation wiring (not just the isolated
 /// `ConfigCache` unit test): open a SQL doc whose directory has no config (the
 /// default-enabled rule fires), then write a `.pgsafe.toml` disabling that rule and

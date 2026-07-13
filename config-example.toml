@@ -27,6 +27,11 @@
 # it must appear before any [section] below.
 # required-columns = ["created_at", "updated_at"]
 
+# Scope pgsafe to your migration files (globs, relative to this file). When set, only matching
+# files are linted — by the editor LSP now, and (in a future release) by the CLI. Unset = all SQL.
+# NOTE: a top-level key, so it must appear before any [section] below.
+# paths = ["migrations/**/*.sql", "db/migrate/*.sql"]
+
 # ── Rules ────────────────────────────────────────────────────────────────────────────────
 # Each entry is one of:
 #   true            enable an opt-in rule (the policy lints below are off by default)

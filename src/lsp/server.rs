@@ -77,6 +77,25 @@ impl ConfigCache {
     pub(crate) fn invalidate_dir(&mut self, dir: &Path) {
         self.by_dir.retain(|k, _| !k.starts_with(dir));
     }
+
+    /// Whether `file_path` is in scope of the resolved config's `paths` globs (§10 of
+    /// the LSP design doc) and should be linted at all. Resolves (and caches, by
+    /// directory) the config the same way `options_for` does, then delegates the
+    /// unset-default and glob matching to `config::Config::in_scope` — the single
+    /// place that logic lives.
+    pub(crate) fn should_lint(&mut self, file_path: &Path) -> bool {
+        let dir = file_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        let entry = self
+            .by_dir
+            .entry(dir)
+            .or_insert_with(|| config::resolve_config(file_path));
+        entry
+            .0
+            .in_scope(entry.1.as_deref(), &file_path.to_string_lossy())
+    }
 }
 
 /// Real stdio serve loop.
@@ -178,12 +197,13 @@ fn on_code_action(
         .map_err(|e| format!("codeAction params: {e:?}"))?;
     let key = params.text_document.uri.as_str().to_string();
     let result = if let Some(doc) = state.docs.get(&key) {
-        let options = match uri_to_path(&key) {
-            Some(path) => state.configs.options_for(&path),
-            None => crate::LintOptions::default(),
-        };
-        let findings = lint_sql(&doc.text, &options).unwrap_or_default();
-        super::actions::code_actions(&doc.uri, &doc.text, &findings, params.range)
+        match resolve_lint_options(doc, &mut state.configs) {
+            Some(options) => {
+                let findings = lint_sql(&doc.text, &options).unwrap_or_default();
+                super::actions::code_actions(&doc.uri, &doc.text, &findings, params.range)
+            }
+            None => Vec::new(), // out of `paths` scope: no quickfixes
+        }
     } else {
         Vec::new()
     };
@@ -321,18 +341,31 @@ fn publish(
     configs: &mut ConfigCache,
 ) -> Result<(), LspError> {
     let diagnostics = if doc.language_id == "sql" {
-        let options = match uri_to_path(doc.uri.as_str()) {
-            Some(path) => configs.options_for(&path),
-            None => crate::LintOptions::default(),
-        };
-        match lint_sql(&doc.text, &options) {
-            Ok(findings) => diagnostics_for(&doc.text, &findings),
-            Err(_) => Vec::new(), // mid-edit / unparseable: clear, don't spam
+        match resolve_lint_options(doc, configs) {
+            Some(options) => match lint_sql(&doc.text, &options) {
+                Ok(findings) => diagnostics_for(&doc.text, &findings),
+                Err(_) => Vec::new(), // mid-edit / unparseable: clear, don't spam
+            },
+            None => Vec::new(), // out of `paths` scope: clear any stale diagnostics
         }
     } else {
         Vec::new()
     };
     send_diagnostics(connection, &doc.uri, diagnostics)
+}
+
+/// Resolve the [`crate::LintOptions`] to lint `doc` with, or `None` if it's out of
+/// the resolved config's `paths` scope (§10 of the LSP design doc) and must not be
+/// linted at all — the shared gate `publish` and `on_code_action` both consult. A
+/// document with no file path (untitled buffer) or a non-`file` URI always lints
+/// with defaults: no config is discoverable for it, so `Config::in_scope`'s
+/// empty-`paths` default (in scope) would apply anyway.
+fn resolve_lint_options(doc: &Document, configs: &mut ConfigCache) -> Option<crate::LintOptions> {
+    match uri_to_path(doc.uri.as_str()) {
+        Some(path) if configs.should_lint(&path) => Some(configs.options_for(&path)),
+        Some(_) => None,
+        None => Some(crate::LintOptions::default()),
+    }
 }
 
 fn clear(connection: &Connection, uri: &Uri) -> Result<(), LspError> {
@@ -524,6 +557,37 @@ mod cache_tests {
         let mut cache = ConfigCache::default();
         let opts = cache.options_for(&sql);
         assert!(!opts.assume_in_transaction);
+    }
+
+    /// `should_lint` gates on the config's `paths` globs (§10 of the LSP design doc):
+    /// a file under a matching directory is in scope, a sibling outside the globs is
+    /// not — matched relative to the config's directory, same as `options_for`.
+    #[test]
+    fn should_lint_true_for_matching_path_false_for_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".pgsafe.toml")).unwrap();
+        writeln!(f, "paths = [\"migrations/**\"]").unwrap();
+        drop(f);
+
+        let matching = dir.path().join("migrations").join("0001.sql");
+        let sibling = dir.path().join("queries").join("q.sql");
+
+        let mut cache = ConfigCache::default();
+        assert!(cache.should_lint(&matching));
+        assert!(!cache.should_lint(&sibling));
+    }
+
+    /// No `paths` key at all is the unset default: lint everything, same as today.
+    #[test]
+    fn should_lint_defaults_true_when_paths_unset() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".pgsafe.toml")).unwrap();
+        writeln!(f, "[rules]\ndrop-table = false").unwrap();
+        drop(f);
+
+        let sql = dir.path().join("anything.sql");
+        let mut cache = ConfigCache::default();
+        assert!(cache.should_lint(&sql));
     }
 }
 
