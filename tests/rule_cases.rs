@@ -166,6 +166,20 @@ fn drop_database() {
     assert!(!fires("DROP TABLE t", "drop-database"));
 }
 
+// ── drop-not-null ────────────────────────────────────────────────────────────
+
+#[test]
+fn drop_not_null() {
+    assert!(fires(
+        "ALTER TABLE t ALTER COLUMN a DROP NOT NULL",
+        "drop-not-null"
+    ));
+    assert!(!fires(
+        "ALTER TABLE t ALTER COLUMN a SET NOT NULL",
+        "drop-not-null"
+    ));
+}
+
 // ── drop-column ─────────────────────────────────────────────────────────────
 
 #[test]

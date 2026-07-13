@@ -68,6 +68,19 @@ export const RULES: Record<string, RuleDoc> = {
     example: { unsafe: "DROP DATABASE analytics_old;" },
     related: ["drop-table"],
   },
+  "drop-not-null": {
+    id: "drop-not-null",
+    title: "ALTER COLUMN DROP NOT NULL",
+    severity: "warning",
+    category: "Constraints",
+    summary: "Dropping NOT NULL silently removes an invariant app code, ORMs, and the planner may rely on.",
+    whyUnsafe:
+      "`ALTER COLUMN … DROP NOT NULL` removes a not-null invariant that application code, ORMs, and the query planner may rely on — nulls can now appear where callers assume they cannot.",
+    safeRewrite:
+      "Confirm nothing depends on the column being non-null (planner assumptions, ORM models, application code) before dropping the constraint.",
+    example: { unsafe: "ALTER TABLE users ALTER COLUMN email DROP NOT NULL;" },
+    related: ["set-not-null", "drop-constraint"],
+  },
   "add-fk-without-not-valid": {
     id: "add-fk-without-not-valid",
     title: "ADD FOREIGN KEY without NOT VALID",
