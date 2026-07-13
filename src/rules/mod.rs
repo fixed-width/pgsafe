@@ -27,6 +27,7 @@ mod add_column_not_null_no_default;
 mod add_column_serial;
 mod add_column_volatile_default;
 mod add_domain_constraint_without_not_valid;
+mod add_domain_not_null;
 mod add_exclusion_constraint;
 mod add_fk_without_not_valid;
 mod add_index_non_concurrent;
@@ -89,6 +90,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(attach_partition::AttachPartition),
         Box::new(set_access_method::SetAccessMethod),
         Box::new(add_domain_constraint_without_not_valid::AddDomainConstraintWithoutNotValid),
+        Box::new(add_domain_not_null::AddDomainNotNull),
     ]
 });
 
@@ -259,6 +261,7 @@ mod tests {
             "detach-partition-non-concurrent",
             "set-access-method",
             "add-domain-constraint-without-not-valid",
+            "add-domain-not-null",
         ];
         let warnings = [
             "rename",
@@ -328,6 +331,7 @@ mod tests {
                 "attach-partition",
                 "set-access-method",
                 "add-domain-constraint-without-not-valid",
+                "add-domain-not-null",
             ]
         );
     }

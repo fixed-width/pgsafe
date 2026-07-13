@@ -109,6 +109,32 @@ fn add_domain_constraint_without_not_valid_silent() {
     ));
 }
 
+// ── add-domain-not-null ──────────────────────────────────────────────────────
+
+#[test]
+fn add_domain_not_null_fires() {
+    assert!(fires("ALTER DOMAIN d ADD NOT NULL", "add-domain-not-null"));
+    assert!(fires(
+        "ALTER DOMAIN d ADD CONSTRAINT nn NOT NULL",
+        "add-domain-not-null"
+    ));
+    // SET NOT NULL (the portable spelling) carries the same scan/lock hazard.
+    assert!(fires("ALTER DOMAIN d SET NOT NULL", "add-domain-not-null"));
+}
+
+#[test]
+fn add_domain_not_null_silent() {
+    // CHECK is the other rule's job; DROP NOT NULL relaxes the constraint (no scan).
+    assert!(!fires(
+        "ALTER DOMAIN d ADD CONSTRAINT c CHECK (VALUE > 0)",
+        "add-domain-not-null"
+    ));
+    assert!(!fires(
+        "ALTER DOMAIN d DROP NOT NULL",
+        "add-domain-not-null"
+    ));
+}
+
 // ── set-not-null ────────────────────────────────────────────────────────────
 
 #[test]

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New rule `add-domain-constraint-without-not-valid` (Error): flags `ALTER DOMAIN … ADD CONSTRAINT` that validates dependent tables under lock; autofixes to `NOT VALID` (#95).
 - New opt-in rule `require-schema-qualified` (Warning): flags DDL target relations named without a schema qualifier — CREATE/ALTER/RENAME/DROP/TRUNCATE/CREATE INDEX targets — which resolve through `search_path` (#95).
 - New rule `prefer-identity` (Warning): prefers `GENERATED … AS IDENTITY` over `serial`; autofixes `serial` in a `CREATE TABLE` to a width-preserving identity column (#95).
+- New rule `add-domain-not-null` (Error): flags `ALTER DOMAIN … SET NOT NULL` (and the PG17+ `ADD NOT NULL`), which scans and write-locks every dependent table and (unlike a CHECK) cannot be added `NOT VALID` (#95).
 
 ### Changed
 

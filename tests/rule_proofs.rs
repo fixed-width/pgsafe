@@ -793,6 +793,33 @@ fn scan_cases() -> Vec<ScanCase> {
             expect_scan: false,
             pg: 15..=18,
         },
+        ScanCase {
+            // Portable spelling (all supported versions). `ADD NOT NULL` is PG17+ only, so the
+            // SET form is the one to prove across the supported range.
+            rule: "add-domain-not-null (ALTER DOMAIN SET NOT NULL — scans dependent table)",
+            table: "proof_scan_domain_setnn",
+            setup: "DROP DOMAIN IF EXISTS proof_scan_dom_setnn CASCADE; \
+                    CREATE DOMAIN proof_scan_dom_setnn AS int; \
+                    CREATE TABLE proof_scan_domain_setnn (c proof_scan_dom_setnn); \
+                    INSERT INTO proof_scan_domain_setnn \
+                        SELECT g FROM generate_series(1, 1000) g;",
+            ddl: "ALTER DOMAIN proof_scan_dom_setnn SET NOT NULL",
+            expect_scan: true,
+            pg: 15..=18,
+        },
+        ScanCase {
+            // The PG17+ `ADD NOT NULL` spelling — same hazard, syntax available only on PG17+.
+            rule: "add-domain-not-null (ALTER DOMAIN ADD NOT NULL — scans dependent table)",
+            table: "proof_scan_domain_addnn",
+            setup: "DROP DOMAIN IF EXISTS proof_scan_dom_addnn CASCADE; \
+                    CREATE DOMAIN proof_scan_dom_addnn AS int; \
+                    CREATE TABLE proof_scan_domain_addnn (c proof_scan_dom_addnn); \
+                    INSERT INTO proof_scan_domain_addnn \
+                        SELECT g FROM generate_series(1, 1000) g;",
+            ddl: "ALTER DOMAIN proof_scan_dom_addnn ADD NOT NULL",
+            expect_scan: true,
+            pg: 17..=18,
+        },
     ]
 }
 
