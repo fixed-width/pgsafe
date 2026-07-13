@@ -553,6 +553,102 @@ fn naming_convention_via_config_fires() {
         .stdout(predicate::str::contains("naming-convention"));
 }
 
+// ── `paths` scoping (§10 of the LSP design doc — CLI addendum) ───────────────
+//
+// The CLI now consults the same `Config::in_scope` the LSP uses: a file input that
+// doesn't match the config's `paths` globs is dropped before linting, with a note on
+// stderr. Stdin is exempt (no path identity), and the filter is a no-op when `paths`
+// is unset — existing invocations without `paths` must lint exactly as before.
+
+#[test]
+fn paths_scoping_lints_in_scope_file_and_skips_out_of_scope_file() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "paths = [\"migrations/**\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("migrations")).unwrap();
+    std::fs::create_dir_all(dir.path().join("queries")).unwrap();
+    std::fs::write(
+        dir.path().join("migrations/0001_add_index.sql"),
+        "CREATE INDEX idx ON t (col);\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("queries/report.sql"),
+        "CREATE INDEX idx ON t (col);\n",
+    )
+    .unwrap();
+
+    // In scope (matches `paths`): linted normally, findings gate the run.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path())
+        .arg("migrations/0001_add_index.sql")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
+
+    // Out of scope: dropped before linting, noted on stderr, exits clean — a
+    // scoped-out file must not silently look "clean" without the stderr note.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path())
+        .arg("queries/report.sql")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("add-index-non-concurrent").not())
+        .stderr(predicate::str::contains("skipped"))
+        .stderr(predicate::str::contains("paths"))
+        .stderr(predicate::str::contains("report.sql"));
+}
+
+#[test]
+fn paths_scoping_never_filters_stdin() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "paths = [\"migrations/**\"]\n",
+    )
+    .unwrap();
+
+    // Piped SQL has no path identity, so it's linted regardless of `paths`.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path())
+        .write_stdin("CREATE INDEX idx ON t (col);\n")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
+}
+
+#[test]
+fn paths_scoping_is_a_noop_when_unset() {
+    // Control: with no `paths` key (here, no config at all via --no-config), a file
+    // shaped like the "out of scope" fixture above is still linted — proving the
+    // filter changes nothing for the common case of a project that never sets `paths`.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("queries")).unwrap();
+    std::fs::write(
+        dir.path().join("queries/report.sql"),
+        "CREATE INDEX idx ON t (col);\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path())
+        .arg("--no-config")
+        .arg("queries/report.sql")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
+}
+
 // ── color / summary ──────────────────────────────────────────────────────────
 
 #[test]

@@ -93,6 +93,10 @@ matching those globs (relative to the config file) and offers no quickfixes for 
 useful for scoping to a `migrations/` directory and skipping schema dumps or ad-hoc query
 files. With no `paths` key, every `.sql` file is linted, same as before.
 
+The CLI honors the same `paths` key: a file you pass that doesn't match is skipped (a note
+listing what was skipped goes to stderr, so it isn't mistaken for a clean pass), and piped
+stdin is never filtered. One `paths` setting scopes both surfaces.
+
 `lsp` is an opt-in Cargo feature (off by default):
 
 ```sh

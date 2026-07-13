@@ -13,8 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   quickfix code actions for SQL migration files (build with `--features lsp`). A new
   global `paths` config key scopes it to specific globs (e.g. `paths =
   ["migrations/**/*.sql"]`) so schema dumps and ad-hoc queries aren't flagged as
-  migration hazards; unset, it lints every `.sql` file as before. CLI file selection
-  is unchanged for now.
+  migration hazards; unset, it lints every `.sql` file as before.
+- The CLI now honors `paths` too: selected file inputs that don't match the config's
+  `paths` globs are dropped before linting, with a note on stderr listing what was
+  skipped. Stdin is exempt (piped SQL is always linted), and the filter is a no-op
+  when `paths` is unset — one policy now scopes both the CLI and the LSP.
 
 ### Fixed
 

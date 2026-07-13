@@ -132,10 +132,8 @@ pub(crate) struct Config {
     /// Compiled `paths` globs (§10 of the LSP design doc). Empty is the unset default —
     /// see [`Config::in_scope`], the single place that interprets it. Always parsed
     /// and validated (`compile()` runs under `any(cli, lsp)`, so a bad glob is still
-    /// a hard error in a `cli`-only build), but only *read* by `in_scope`, which only
-    /// the `lsp` feature currently calls — hence the explicit allow, matching
-    /// `options_for_path` below.
-    #[allow(dead_code)]
+    /// a hard error in a `cli`-only build), and read by `in_scope`, which both the
+    /// `cli` and `lsp` features call.
     paths: Vec<globset::GlobMatcher>,
 }
 
@@ -327,11 +325,9 @@ impl Config {
     /// is in scope, matching the CLI's current lint-everything-you-pass-it behavior.
     /// Once `paths` is set, only a file whose relative path matches one of the globs
     /// is in scope. If this default is ever flipped (lint-nothing-when-unset), this is
-    /// the only line that needs to change — every caller (today: the LSP's
-    /// `ConfigCache::should_lint`; later: a CLI increment) follows it automatically.
-    // No caller in a `cli`-only build (deferred CLI increment — design doc §10); the
-    // `lsp` feature's `ConfigCache::should_lint` is the current production caller.
-    #[allow(dead_code)]
+    /// the only line that needs to change — every caller (the LSP's
+    /// `ConfigCache::should_lint` and the CLI's `cli::scope_to_paths`) follows it
+    /// automatically.
     pub(crate) fn in_scope(&self, config_dir: Option<&Path>, file_name: &str) -> bool {
         self.paths.is_empty() || {
             let rel = rel_path(file_name, config_dir);
