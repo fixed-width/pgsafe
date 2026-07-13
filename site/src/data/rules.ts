@@ -132,16 +132,16 @@ export const RULES: Record<string, RuleDoc> = {
   },
   "add-domain-not-null": {
     id: "add-domain-not-null",
-    title: "ALTER DOMAIN ADD NOT NULL",
+    title: "ALTER DOMAIN ADD/SET NOT NULL",
     severity: "error",
     category: "Constraints",
     summary:
-      "Adding NOT NULL to a domain scans and write-locks every dependent table, with no `NOT VALID` escape.",
+      "Making a domain `NOT NULL` scans and write-locks every dependent table, with no `NOT VALID` escape.",
     whyUnsafe:
-      "`ALTER DOMAIN … ADD NOT NULL` checks that no existing value of the domain type is null across every dependent table, scanning them and holding a lock that blocks writes for the scan's duration. Unlike a `CHECK`, a domain `NOT NULL` cannot be added `NOT VALID`.",
+      "`ALTER DOMAIN … SET NOT NULL` (and the PG17+ `ADD [CONSTRAINT] NOT NULL`) checks that no existing value of the domain type is null across every dependent table, scanning them and holding a lock that blocks writes for the scan's duration. Unlike a `CHECK`, a domain `NOT NULL` cannot be added `NOT VALID`.",
     safeRewrite:
       "Add it while the domain has few or no dependent rows, or drop the domain-level `NOT NULL` and set `NOT NULL` on each dependent column via the safe two-step (`CHECK (col IS NOT NULL) NOT VALID`, `VALIDATE CONSTRAINT`, then `SET NOT NULL`).",
-    example: { unsafe: "ALTER DOMAIN us_postal ADD NOT NULL;" },
+    example: { unsafe: "ALTER DOMAIN us_postal SET NOT NULL;" },
     related: ["add-domain-constraint-without-not-valid", "set-not-null"],
   },
   "set-not-null": {

@@ -10,6 +10,9 @@ impl Rule for AddDomainNotNull {
     fn id(&self) -> &'static str {
         "add-domain-not-null"
     }
+    // Error, per the documented criterion (a blocking scan-lock on live, in-service dependent tables
+    // + a well-known safe alternative). There is no NOT VALID for a domain NOT NULL, so the safe
+    // path is the column-level redesign in `guidance` (a redesign counts as the safe rewrite).
     fn severity(&self) -> Severity {
         Severity::Error
     }
@@ -17,21 +20,24 @@ impl Rule for AddDomainNotNull {
         let NodeEnum::AlterDomainStmt(a) = node else {
             return;
         };
-        // "C" = ADD CONSTRAINT (both `ADD NOT NULL` and `ADD CONSTRAINT c NOT NULL` use it, with a
-        // `ConstrNotnull` def). A NOT NULL domain constraint cannot be added `NOT VALID`, so — unlike
-        // the sibling `add-domain-constraint-without-not-valid` (CHECK) — there is no `skip_validation`
-        // form to exempt and no autofix to offer.
-        if a.subtype != "C" {
-            return;
-        }
-        let Some(NodeEnum::Constraint(con)) = a.def.as_ref().and_then(|n| n.node.as_ref()) else {
-            return;
+        // Establishing a NOT NULL on an existing domain — either `ADD [CONSTRAINT] NOT NULL`
+        // (subtype "C" with a `ConstrNotnull` def; PG17+) or `SET NOT NULL` (subtype "O", no def;
+        // the portable spelling, all supported versions). `DROP NOT NULL` (subtype "N") relaxes the
+        // constraint — no scan, brief lock — and is not flagged.
+        let establishes_not_null = match a.subtype.as_str() {
+            "O" => true,
+            "C" => matches!(
+                a.def.as_ref().and_then(|n| n.node.as_ref()),
+                Some(NodeEnum::Constraint(con))
+                    if ConstrType::try_from(con.contype) == Ok(ConstrType::ConstrNotnull)
+            ),
+            _ => false,
         };
-        if ConstrType::try_from(con.contype) == Ok(ConstrType::ConstrNotnull) {
+        if establishes_not_null {
             out.push(RuleHit {
-                message: "ALTER DOMAIN ... ADD NOT NULL checks that no existing value of the domain \
-                          type is null across every dependent table, scanning them and holding a lock \
-                          that blocks writes for the scan's duration."
+                message: "ALTER DOMAIN ... ADD/SET NOT NULL checks that no existing value of the \
+                          domain type is null across every dependent table, scanning them and holding \
+                          a lock that blocks writes for the scan's duration."
                     .into(),
                 guidance: "A domain NOT NULL cannot be added NOT VALID (unlike a CHECK). Add it while \
                            the domain has few or no dependent rows, or drop the domain-level NOT NULL \
@@ -76,15 +82,20 @@ mod tests {
     }
 
     #[test]
+    fn flags_set_not_null() {
+        // SET NOT NULL (subtype "O") is the portable spelling and carries the same scan/lock hazard.
+        assert!(fires("ALTER DOMAIN d SET NOT NULL"));
+    }
+
+    #[test]
     fn ignores_add_check_constraint() {
         // The CHECK form is owned by add-domain-constraint-without-not-valid, not this rule.
         assert!(!fires("ALTER DOMAIN d ADD CONSTRAINT c CHECK (VALUE > 0)"));
     }
 
     #[test]
-    fn ignores_drop_and_set_not_null() {
-        // SET/DROP NOT NULL toggle the domain's own flag; they are not ADD CONSTRAINT (subtype "C").
-        assert!(!fires("ALTER DOMAIN d SET NOT NULL"));
+    fn ignores_drop_not_null() {
+        // DROP NOT NULL relaxes the constraint: no scan, brief lock — genuinely safe.
         assert!(!fires("ALTER DOMAIN d DROP NOT NULL"));
     }
 
