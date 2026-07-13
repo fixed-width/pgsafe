@@ -27,8 +27,11 @@ impl Rule for AddDomainConstraintWithoutNotValid {
         let Some(NodeEnum::Constraint(con)) = a.def.as_ref().and_then(|n| n.node.as_ref()) else {
             return;
         };
-        // Domain ADD CONSTRAINT is CHECK-only; guard the contype anyway. `NOT VALID` sets
-        // `skip_validation`, which defers the scan — exactly the safe form we want.
+        // The `contype == ConstrCheck` guard is load-bearing, not defensive: `ALTER DOMAIN … ADD
+        // CONSTRAINT` also admits NOT NULL (and, at parse time, UNIQUE/PK/FK) under the same "C"
+        // subtype. A NOT NULL domain constraint scans dependent tables too, but can't take
+        // `NOT VALID`, so it's a separate concern owned by the domain-NOT-NULL rule — not this one.
+        // `NOT VALID` sets `skip_validation`, deferring the CHECK scan: the safe form this rule steers to.
         if ConstrType::try_from(con.contype) == Ok(ConstrType::ConstrCheck) && !con.skip_validation
         {
             out.push(RuleHit {
@@ -39,8 +42,8 @@ impl Rule for AddDomainConstraintWithoutNotValid {
                 guidance: "Add the constraint with NOT VALID, then run ALTER DOMAIN ... VALIDATE \
                            CONSTRAINT separately."
                     .into(),
-                // An ALTER DOMAIN statement carries exactly one action, so StatementBodyEnd is
-                // unambiguous (unlike a multi-command ALTER TABLE) — the fix is always safe to offer.
+                // An ALTER DOMAIN statement carries exactly one action, so StatementBodyEnd has no
+                // multi-command ambiguity (unlike ALTER TABLE) — no per-statement fix guard needed.
                 fix: Some(FixDraft {
                     title: "Add NOT VALID",
                     edits: vec![FixDraftEdit {
@@ -99,6 +102,33 @@ mod tests {
     #[test]
     fn ignores_drop_constraint() {
         assert!(!fires("ALTER DOMAIN us_postal DROP CONSTRAINT fmt"));
+    }
+
+    #[test]
+    fn ignores_add_not_null_constraint() {
+        // `ADD [CONSTRAINT] NOT NULL` also parses as subtype "C" but is contype NotNull; it scans
+        // dependent tables too, yet can't take NOT VALID, so it is out of this rule's scope (owned
+        // by the separate domain-NOT-NULL rule).
+        assert!(!fires("ALTER DOMAIN us_postal ADD NOT NULL"));
+        assert!(!fires("ALTER DOMAIN us_postal ADD CONSTRAINT nn NOT NULL"));
+    }
+
+    #[test]
+    fn autofix_preserves_regex_check_expression() {
+        // The marquee doc example (site/src/data/rules.ts) — a CHECK whose expression contains
+        // quotes and braces must have ` NOT VALID` spliced at the statement end without disturbing
+        // the expression. Locks the published doc example ↔ actual autofix behavior.
+        use crate::fix::apply;
+        let sql = "ALTER DOMAIN us_postal ADD CONSTRAINT fmt CHECK (VALUE ~ '^[0-9]{5}$');";
+        let fix = findings(sql)
+            .into_iter()
+            .find(|f| f.rule_id == "add-domain-constraint-without-not-valid")
+            .and_then(|f| f.fix)
+            .expect("fix present");
+        assert_eq!(
+            apply(sql, &fix.edits),
+            "ALTER DOMAIN us_postal ADD CONSTRAINT fmt CHECK (VALUE ~ '^[0-9]{5}$') NOT VALID;"
+        );
     }
 
     #[test]
