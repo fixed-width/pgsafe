@@ -52,7 +52,7 @@ impl ConfigCache {
     /// config on first use, then recomputes this file's `disabled_rules` from it on
     /// every call — so two sibling files with different `[[ignore]]` matches each get
     /// their own correct answer even though they share one cached `Config`.
-    pub(crate) fn options_for(&mut self, file_path: &Path, in_txn: bool) -> crate::LintOptions {
+    pub(crate) fn options_for(&mut self, file_path: &Path) -> crate::LintOptions {
         let dir = file_path
             .parent()
             .map(Path::to_path_buf)
@@ -61,6 +61,9 @@ impl ConfigCache {
             .by_dir
             .entry(dir)
             .or_insert_with(|| config::resolve_config(file_path));
+        // The LSP has no per-invocation transaction flag to OR in (unlike the CLI's
+        // `--in-transaction`), so it comes purely from the resolved `.pgsafe.toml`.
+        let in_txn = entry.0.in_transaction.unwrap_or(false);
         config::options_from(
             &entry.0,
             entry.1.as_deref(),
@@ -127,7 +130,7 @@ pub(crate) fn run_loop(connection: &Connection) -> Result<(), LspError> {
                     let key = params.text_document.uri.as_str().to_string();
                     let result = if let Some(doc) = state.docs.get(&key) {
                         let options = match uri_to_path(&key) {
-                            Some(path) => state.configs.options_for(&path, false),
+                            Some(path) => state.configs.options_for(&path),
                             None => crate::LintOptions::default(),
                         };
                         let findings = lint_sql(&doc.text, &options).unwrap_or_default();
@@ -232,7 +235,7 @@ fn publish(
 ) -> Result<(), LspError> {
     let diagnostics = if doc.language_id == "sql" {
         let options = match uri_to_path(doc.uri.as_str()) {
-            Some(path) => configs.options_for(&path, false),
+            Some(path) => configs.options_for(&path),
             None => crate::LintOptions::default(),
         };
         match lint_sql(&doc.text, &options) {
@@ -333,17 +336,17 @@ mod cache_tests {
         let sql = dir.path().join("a.sql");
 
         let mut cache = ConfigCache::default();
-        let o1 = cache.options_for(&sql, false);
+        let o1 = cache.options_for(&sql);
         assert!(o1.disabled_rules.contains("add-index-non-concurrent"));
 
         // Rewrite the config to re-enable the rule.
         std::fs::write(&cfg, "[rules]\n").unwrap();
         // Stale until invalidated.
-        let o2 = cache.options_for(&sql, false);
+        let o2 = cache.options_for(&sql);
         assert!(o2.disabled_rules.contains("add-index-non-concurrent"));
         // After invalidation, re-read reflects the new config.
         cache.invalidate_dir(dir.path());
-        let o3 = cache.options_for(&sql, false);
+        let o3 = cache.options_for(&sql);
         assert!(!o3.disabled_rules.contains("add-index-non-concurrent"));
     }
 
@@ -371,8 +374,8 @@ mod cache_tests {
         // Non-matching file looked up first, then the matching one: the first lookup
         // must not poison the second.
         let mut cache = ConfigCache::default();
-        let o_other = cache.options_for(&other, false);
-        let o_matching = cache.options_for(&matching, false);
+        let o_other = cache.options_for(&other);
+        let o_matching = cache.options_for(&matching);
         assert!(
             !o_other.disabled_rules.contains("truncate"),
             "non-matching sibling must not have `truncate` disabled, got {:?}",
@@ -387,8 +390,8 @@ mod cache_tests {
         // Reversed order, fresh cache: the matching file looked up first must not
         // poison the non-matching sibling looked up second either.
         let mut cache = ConfigCache::default();
-        let o_matching = cache.options_for(&matching, false);
-        let o_other = cache.options_for(&other, false);
+        let o_matching = cache.options_for(&matching);
+        let o_other = cache.options_for(&other);
         assert!(
             o_matching.disabled_rules.contains("truncate"),
             "matching file must have `truncate` disabled (matching-first order), got {:?}",
@@ -399,6 +402,41 @@ mod cache_tests {
             "non-matching sibling must not have `truncate` disabled (matching-first order), got {:?}",
             o_other.disabled_rules
         );
+    }
+
+    /// Regression test for the bug where the LSP hardcoded `assume_in_transaction` to
+    /// `false` at every call site instead of reading the resolved config's
+    /// `in_transaction` key, silently diverging from the CLI (which computes
+    /// `args.in_transaction || config.in_transaction.unwrap_or(false)`) for the
+    /// concurrently-in-transaction rule. Proves `options_for` now derives the flag from
+    /// the cached `Config` — parity with the CLI for the same file + `.pgsafe.toml`.
+    #[test]
+    fn options_for_honors_config_in_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".pgsafe.toml")).unwrap();
+        writeln!(f, "in_transaction = true").unwrap();
+        drop(f);
+        let sql = dir.path().join("a.sql");
+
+        let mut cache = ConfigCache::default();
+        let opts = cache.options_for(&sql);
+        assert!(
+            opts.assume_in_transaction,
+            "expected assume_in_transaction=true from `.pgsafe.toml`'s `in_transaction = true`"
+        );
+    }
+
+    /// Default/absent config (no `.pgsafe.toml`, or one that omits `in_transaction`)
+    /// must still yield `assume_in_transaction = false` — the LSP shouldn't invent a
+    /// transaction assumption the CLI wouldn't make either.
+    #[test]
+    fn options_for_defaults_to_no_transaction_when_config_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let sql = dir.path().join("a.sql");
+
+        let mut cache = ConfigCache::default();
+        let opts = cache.options_for(&sql);
+        assert!(!opts.assume_in_transaction);
     }
 }
 

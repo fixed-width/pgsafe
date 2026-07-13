@@ -36,5 +36,11 @@ jobs:
       - name: clippy
         run: cargo clippy --all-targets --locked -- -D warnings
 
+      - name: clippy (lsp feature)
+        run: cargo clippy --all-targets --features lsp --locked -- -D warnings
+
       - name: test
         run: cargo test --locked
+
+      - name: test (lsp feature)
+        run: cargo test --features lsp --locked
