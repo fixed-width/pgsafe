@@ -423,6 +423,66 @@ pub(super) fn render_diff(name: &str, original: &str, edits: &[FixEdit]) -> Stri
     out
 }
 
+/// Coarse, dependency-free unified diff of two whole strings, used only when the
+/// fixpoint loop needed ≥2 applying passes (so per-edit offsets against the
+/// original are gone). Trims the common leading/trailing lines and emits ONE hunk
+/// covering everything in between, surrounded by up to [`CONTEXT`] context lines.
+/// Coarser than [`render_diff`]'s coalesced per-edit hunks but correct and
+/// `git apply`-able. Returns `""` when the strings are equal.
+// Standalone this task (task 3 of the fixpoint-iteration plan wires it into `run()`),
+// so nothing outside `#[cfg(test)]` uses it yet.
+#[allow(dead_code)]
+fn render_diff_strings(name: &str, original: &str, updated: &str) -> String {
+    if original == updated {
+        return String::new();
+    }
+    let a: Vec<&str> = original.split_inclusive('\n').collect();
+    let b: Vec<&str> = updated.split_inclusive('\n').collect();
+
+    // Common leading lines.
+    let mut pre = 0usize;
+    while pre < a.len() && pre < b.len() && a[pre] == b[pre] {
+        pre += 1;
+    }
+    // Common trailing lines (not re-counting the shared prefix).
+    let mut suf = 0usize;
+    while suf < a.len() - pre && suf < b.len() - pre && a[a.len() - 1 - suf] == b[b.len() - 1 - suf]
+    {
+        suf += 1;
+    }
+
+    let a_first = pre;
+    let a_last_excl = a.len() - suf; // exclusive
+    let b_first = pre;
+    let b_last_excl = b.len() - suf;
+
+    let ctx_before = pre.min(CONTEXT);
+    let ctx_after = suf.min(CONTEXT);
+
+    let old_start = a_first - ctx_before + 1; // 1-based
+    let new_start = b_first - ctx_before + 1;
+    let old_count = ctx_before + (a_last_excl - a_first) + ctx_after;
+    let new_count = ctx_before + (b_last_excl - b_first) + ctx_after;
+
+    let mut out = format!("--- a/{name}\n+++ b/{name}\n");
+    out.push_str(&format!(
+        "@@ -{old_start},{old_count} +{new_start},{new_count} @@\n"
+    ));
+    for &line in &a[a_first - ctx_before..a_first] {
+        push_diff_line(&mut out, ' ', line);
+    }
+    for &line in &a[a_first..a_last_excl] {
+        push_diff_line(&mut out, '-', line);
+    }
+    for &line in &b[b_first..b_last_excl] {
+        push_diff_line(&mut out, '+', line);
+    }
+    for &line in &a[a_last_excl..a_last_excl + ctx_after] {
+        push_diff_line(&mut out, ' ', line);
+    }
+    out
+}
+
 /// Push one unified-diff body line — `prefix` then `content` — appending git's
 /// `\ No newline at end of file` marker when `content` (a file's final line)
 /// carries no trailing newline. `split_inclusive('\n')` yields a marker-worthy
@@ -943,6 +1003,27 @@ mod tests {
         let fp = super::fix_to_fixpoint("t", "ok", lint, super::MAX_FIX_ITERATIONS);
         assert_eq!(fp.sql, "ok");
         assert!(matches!(fp.withheld, Some(super::Withheld::ParseBroke(_))));
+    }
+
+    #[test]
+    fn render_diff_strings_single_hunk_between_common_context() {
+        let a = "keep 1;\nOLD a;\nOLD b;\nkeep 2;\n";
+        let b = "keep 1;\nNEW a;\nkeep 2;\n";
+        let out = super::render_diff_strings("f.sql", a, b);
+        assert!(out.starts_with("--- a/f.sql\n+++ b/f.sql\n"), "{out}");
+        assert!(out.contains("@@ "), "{out}");
+        assert!(out.contains(" keep 1;\n"), "leading context: {out}");
+        assert!(out.contains(" keep 2;\n"), "trailing context: {out}");
+        assert!(
+            out.contains("-OLD a;\n") && out.contains("-OLD b;\n"),
+            "removed lines: {out}"
+        );
+        assert!(out.contains("+NEW a;\n"), "added line: {out}");
+    }
+
+    #[test]
+    fn render_diff_strings_equal_is_empty() {
+        assert_eq!(super::render_diff_strings("f.sql", "x;\n", "x;\n"), "");
     }
 
     #[test]
