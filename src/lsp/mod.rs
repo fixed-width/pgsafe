@@ -10,7 +10,7 @@
 mod actions;
 mod diagnostics;
 mod position;
-mod server;
+pub(crate) mod server;
 
 /// Boxed error for the serve loop: `lsp-server` transport, JSON, and IO errors
 /// all convert into this via `?`.

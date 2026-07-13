@@ -34,6 +34,22 @@ use synthesized::{
 #[cfg(feature = "cli")]
 pub mod cli;
 
+/// Test-only helpers exposed for the `tests/` integration suite. Not part of the
+/// stable public API.
+#[cfg(feature = "lsp")]
+#[doc(hidden)]
+pub mod testing {
+    /// Run the LSP initialize handshake on `connection`, then the dispatch loop.
+    ///
+    /// # Errors
+    /// Propagates any transport/protocol error.
+    pub fn lsp_run_loop_with_handshake(
+        connection: &lsp_server::Connection,
+    ) -> Result<(), crate::lsp::LspError> {
+        crate::lsp::server::handshake_and_run(connection)
+    }
+}
+
 pub use output::{
     gate, lint_input, render_errors, render_finding_body, render_finding_human, render_github,
     render_human, render_human_styled, render_json, render_statement_header, render_summary,
