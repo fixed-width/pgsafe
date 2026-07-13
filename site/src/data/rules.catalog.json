@@ -8,6 +8,7 @@
         "rename",
         "drop-index-non-concurrent",
         "drop-table",
+        "drop-database",
         "drop-column",
         "truncate",
         "vacuum-full-cluster",

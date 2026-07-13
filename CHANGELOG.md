@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New rule `drop-database` (Warning): flags `DROP DATABASE` as irreversible data loss (#95).
+
 ### Changed
 
 - `--fix` / `--diff` now apply fixes iteratively to a fixpoint (bounded at 10

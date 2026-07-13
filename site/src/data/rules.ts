@@ -55,6 +55,19 @@ export const RULES: Record<string, RuleDoc> = {
     example: { unsafe: "ALTER TABLE users DROP COLUMN legacy_flag;" },
     related: ["rename", "drop-table"],
   },
+  "drop-database": {
+    id: "drop-database",
+    title: "DROP DATABASE",
+    severity: "warning",
+    category: "Destructive",
+    summary: "Dropping a database irreversibly destroys it and terminates every connection to it.",
+    whyUnsafe:
+      "`DROP DATABASE` permanently and irreversibly removes the database and all its contents, and terminates existing connections to it — their in-flight work is lost.",
+    safeRewrite:
+      "Confirm the database is fully retired and has no active connections before dropping it; take a final backup first if the data may be needed.",
+    example: { unsafe: "DROP DATABASE analytics_old;" },
+    related: ["drop-table"],
+  },
   "add-fk-without-not-valid": {
     id: "add-fk-without-not-valid",
     title: "ADD FOREIGN KEY without NOT VALID",
