@@ -83,6 +83,47 @@ stdin don't map back to files GitHub can annotate as code-scanning alerts.
 See [pgsafe.fixedwidth.tech/docs](https://pgsafe.fixedwidth.tech/docs/) for configuration,
 output formats, and the full [rules reference](https://pgsafe.fixedwidth.tech/rules/).
 
+## Editor integration (LSP)
+
+`pgsafe lsp` starts a Language Server over stdio, giving any LSP-capable editor live
+diagnostics on `.sql` files plus quickfix actions for findings that carry a safe rewrite.
+It reads the same `.pgsafe.toml` as the CLI, resolved per file and refreshed when the
+config changes.
+
+`lsp` is an opt-in Cargo feature (off by default):
+
+```sh
+cargo install pgsafe --features lsp
+```
+
+Building from source works the same way: `cargo build --release --features lsp`.
+
+**Neovim** (built-in `vim.lsp`, Neovim 0.11+):
+
+```lua
+vim.lsp.config.pgsafe = {
+  cmd = { "pgsafe", "lsp" },
+  filetypes = { "sql" },
+  root_markers = { ".pgsafe.toml", ".git" },
+}
+vim.lsp.enable("pgsafe")
+```
+
+**Helix** (`languages.toml`):
+
+```toml
+[language-server.pgsafe]
+command = "pgsafe"
+args = ["lsp"]
+
+[[language]]
+name = "sql"
+language-servers = ["pgsafe"]
+```
+
+**Zed and other editors**: register `pgsafe lsp` as a custom stdio language server for
+the `sql` language; see your editor's docs for where custom servers are configured.
+
 ## Changelog
 
 Notable changes for each release are in [CHANGELOG.md](CHANGELOG.md).
