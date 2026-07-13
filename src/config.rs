@@ -16,7 +16,7 @@ use crate::{FailOn, Format, LintOptions, NameKind, Severity};
 /// `pgsafe.toml` first (preferred — dotfiles are easy to overlook and many tools
 /// skip them), then the hidden `.pgsafe.toml`. If a directory holds both, the
 /// non-dotfile wins.
-const CANDIDATES: &[&str] = &["pgsafe.toml", ".pgsafe.toml"];
+pub(crate) const CANDIDATES: &[&str] = &["pgsafe.toml", ".pgsafe.toml"];
 
 /// The annotated example config (`pgsafe --example-config`). Every option is shown, commented
 /// out, so the file is a valid no-op as-is. Kept in sync with the schema by `example_config_*`
@@ -298,7 +298,9 @@ impl Config {
 }
 
 /// Build [`LintOptions`] for one file from a resolved config. Shared by the CLI's
-/// `ResolvedRun::options_for` and the LSP's `options_for_path`.
+/// `ResolvedRun::options_for` and the LSP's `ConfigCache::options_for`, which each
+/// call this per file even when the `Config` itself is cached/reused — the result is
+/// per-file (`disabled_rules` depends on which `[[ignore]]` globs match this file).
 pub(crate) fn options_from(
     config: &Config,
     config_dir: Option<&Path>,
@@ -318,15 +320,16 @@ pub(crate) fn options_from(
     }
 }
 
-/// Resolve `.pgsafe.toml` (walk-up from `file_path`'s directory) and build the
-/// [`LintOptions`] for `file_path`. A missing or malformed config yields defaults —
-/// the LSP degrades gracefully rather than failing the session.
-// The only production caller is `lsp::server::ConfigCache`, which only exists in an
-// `lsp`-enabled build; a plain `cli`-only build otherwise sees this as unused (exercised
-// there only by the tests below).
-#[allow(dead_code)]
-pub(crate) fn options_for_path(file_path: &Path, assume_in_transaction: bool) -> LintOptions {
-    let (config, config_dir) = match file_path.parent().and_then(discover) {
+/// Discover and load the config governing `file_path` (walk-up from its directory),
+/// returning the parsed [`Config`] plus the directory it was found in (for
+/// relative-path glob matching). A missing or malformed config yields
+/// `(Config::default(), None)` — the same graceful fallback `options_for_path` has
+/// always had; callers that need per-file resolution (e.g. `lsp::server::ConfigCache`,
+/// which caches this expensive part by directory but must recompute the per-file
+/// `disabled_rules` on every lookup) call `options_from` themselves against the
+/// result instead of going through `options_for_path`.
+pub(crate) fn resolve_config(file_path: &Path) -> (Config, Option<PathBuf>) {
+    match file_path.parent().and_then(discover) {
         Some(cfg_path) => {
             let known = crate::known_rule_ids();
             match load(&cfg_path, &known) {
@@ -335,7 +338,20 @@ pub(crate) fn options_for_path(file_path: &Path, assume_in_transaction: bool) ->
             }
         }
         None => (Config::default(), None),
-    };
+    }
+}
+
+/// Resolve `.pgsafe.toml` (walk-up from `file_path`'s directory) and build the
+/// [`LintOptions`] for `file_path`. A missing or malformed config yields defaults —
+/// the LSP degrades gracefully rather than failing the session.
+// No production caller: `lsp::server::ConfigCache` calls `resolve_config` +
+// `options_from` directly (it caches the `Config` by directory and must recompute
+// `disabled_rules` per file, so going through this single-shot helper would defeat the
+// cache). Kept for the tests below, which exercise the discover-then-resolve path as
+// one unit.
+#[allow(dead_code)]
+pub(crate) fn options_for_path(file_path: &Path, assume_in_transaction: bool) -> LintOptions {
+    let (config, config_dir) = resolve_config(file_path);
     let name = file_path.to_string_lossy();
     options_from(&config, config_dir.as_deref(), &name, assume_in_transaction)
 }

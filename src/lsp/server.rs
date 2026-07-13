@@ -29,28 +29,44 @@ struct State {
     configs: ConfigCache,
 }
 
-/// The basenames pgsafe treats as a project config file (matches `config::discover`).
-const CONFIG_BASENAMES: [&str; 2] = ["pgsafe.toml", ".pgsafe.toml"];
-
-/// Caches resolved `LintOptions` keyed by the document's parent directory, so a
-/// keystroke doesn't re-read `.pgsafe.toml` from disk each time. Invalidated when
-/// a `.pgsafe.toml` under that directory is saved.
+/// Caches the *expensive* part of config resolution — discovery, file read, TOML
+/// parse, and glob compilation — keyed by the document's parent directory, so a
+/// keystroke doesn't redo that work each time. Invalidated when a `.pgsafe.toml`
+/// under that directory is saved.
+///
+/// Deliberately does **not** cache the resolved [`crate::LintOptions`] itself:
+/// `disabled_rules` is per-*file*, not per-directory (`config::options_from` unions
+/// the global disables with every `[[ignore]]` glob that matches this specific file's
+/// relative path). Caching the fully-resolved options by directory would return the
+/// first file's `disabled_rules` for every sibling — an order-dependent false
+/// negative if a later sibling file should have been ignored (or not) differently.
+/// So `options_for` recomputes `disabled_rules` from the cached, already-compiled
+/// `Config` on every call.
 #[derive(Default)]
 pub(crate) struct ConfigCache {
-    by_dir: HashMap<PathBuf, crate::LintOptions>,
+    by_dir: HashMap<PathBuf, (config::Config, Option<PathBuf>)>,
 }
 
 impl ConfigCache {
-    /// Options for `file_path`, resolving (and caching) on first use per directory.
+    /// Options for `file_path`: resolves (and caches, by directory) the underlying
+    /// config on first use, then recomputes this file's `disabled_rules` from it on
+    /// every call — so two sibling files with different `[[ignore]]` matches each get
+    /// their own correct answer even though they share one cached `Config`.
     pub(crate) fn options_for(&mut self, file_path: &Path, in_txn: bool) -> crate::LintOptions {
         let dir = file_path
             .parent()
             .map(Path::to_path_buf)
             .unwrap_or_default();
-        self.by_dir
+        let entry = self
+            .by_dir
             .entry(dir)
-            .or_insert_with(|| config::options_for_path(file_path, in_txn))
-            .clone()
+            .or_insert_with(|| config::resolve_config(file_path));
+        config::options_from(
+            &entry.0,
+            entry.1.as_deref(),
+            &file_path.to_string_lossy(),
+            in_txn,
+        )
     }
 
     /// Drop cached entries at or under `dir` (called when a `.pgsafe.toml` saves).
@@ -253,11 +269,12 @@ fn send_diagnostics(
 }
 
 /// Whether `path`'s file name is a pgsafe config file (`pgsafe.toml` / `.pgsafe.toml`),
-/// matching `config::discover`'s candidates.
+/// matching `config::discover`'s candidates (`config::CANDIDATES` — the single source
+/// of truth, so this can't drift from what discovery actually looks for).
 fn is_config_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|name| CONFIG_BASENAMES.contains(&name))
+        .is_some_and(|name| config::CANDIDATES.contains(&name))
 }
 
 /// Convert a `file://` URI string to a filesystem path (percent-decoded). Returns
@@ -328,6 +345,60 @@ mod cache_tests {
         cache.invalidate_dir(dir.path());
         let o3 = cache.options_for(&sql, false);
         assert!(!o3.disabled_rules.contains("add-index-non-concurrent"));
+    }
+
+    /// Regression test for the bug where `ConfigCache` cached a fully-resolved
+    /// `LintOptions` by directory: whichever file was looked up FIRST in a directory
+    /// determined `disabled_rules` for every sibling looked up afterward, silently
+    /// mis-suppressing rules for files a per-file `[[ignore]]` glob didn't actually
+    /// match (or should have matched). Proves each sibling file gets its own correct
+    /// `disabled_rules` from one shared `ConfigCache` (and therefore one shared,
+    /// cached `Config`), independent of lookup order.
+    #[test]
+    fn per_file_ignore_globs_are_not_conflated_across_sibling_lookups() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut f = std::fs::File::create(dir.path().join(".pgsafe.toml")).unwrap();
+        writeln!(
+            f,
+            "[[ignore]]\npath = \"*_seed.sql\"\nrules = [\"truncate\"]"
+        )
+        .unwrap();
+        drop(f);
+
+        let matching = dir.path().join("9_seed.sql"); // matches the ignore glob
+        let other = dir.path().join("0001_add_index.sql"); // does not
+
+        // Non-matching file looked up first, then the matching one: the first lookup
+        // must not poison the second.
+        let mut cache = ConfigCache::default();
+        let o_other = cache.options_for(&other, false);
+        let o_matching = cache.options_for(&matching, false);
+        assert!(
+            !o_other.disabled_rules.contains("truncate"),
+            "non-matching sibling must not have `truncate` disabled, got {:?}",
+            o_other.disabled_rules
+        );
+        assert!(
+            o_matching.disabled_rules.contains("truncate"),
+            "matching file must have `truncate` disabled, got {:?}",
+            o_matching.disabled_rules
+        );
+
+        // Reversed order, fresh cache: the matching file looked up first must not
+        // poison the non-matching sibling looked up second either.
+        let mut cache = ConfigCache::default();
+        let o_matching = cache.options_for(&matching, false);
+        let o_other = cache.options_for(&other, false);
+        assert!(
+            o_matching.disabled_rules.contains("truncate"),
+            "matching file must have `truncate` disabled (matching-first order), got {:?}",
+            o_matching.disabled_rules
+        );
+        assert!(
+            !o_other.disabled_rules.contains("truncate"),
+            "non-matching sibling must not have `truncate` disabled (matching-first order), got {:?}",
+            o_other.disabled_rules
+        );
     }
 }
 

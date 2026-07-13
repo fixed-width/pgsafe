@@ -114,7 +114,14 @@ pub fn main_entry(cli: Cli) -> ExitCode {
                 ExitCode::from(2)
             }
         },
-        None => run(cli.args),
+        // A wildcard, not `None`: in a `cli`-only build the `Lsp` variant is `#[cfg]`'d
+        // out, so `Command` is uninhabited and `Some(_)` can never be constructed — but
+        // recognizing that as exhaustive (so a bare `None` arm suffices) needs
+        // `min_exhaustive_patterns`, stabilized in Rust 1.82. This crate's MSRV is 1.80,
+        // so match `_` here: it's exhaustive on 1.80/1.81 in both the `lsp` and
+        // `cli`-only builds, and still runs the default lint for `None` (the only
+        // reachable case when `lsp` is off, and the only *other* case when it's on).
+        _ => run(cli.args),
     }
 }
 

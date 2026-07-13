@@ -1,10 +1,12 @@
 //! `pgsafe lsp` — a synchronous stdio Language Server surfacing pgsafe findings
 //! as editor diagnostics and quickfix code actions. Thin wrapper over `lint_sql`.
 
-// Scaffold-only: nothing calls `run()` yet (the CLI wiring lands in a later task), so
-// `cargo clippy --features lsp -- -D warnings` would otherwise flag this whole subtree
-// as dead code. Lint levels cascade to child modules, so this one `allow` at the `lsp`
-// module root covers `server::serve` too. Remove once a caller reaches `run()`.
+// `pgsafe lsp` (src/cli/mod.rs's `main_entry`) is the production caller of `run()`.
+// This `allow` stays anyway: an `lsp`-only build (no `cli` feature) has no binary
+// wiring anything up, so `cargo clippy --no-default-features --features lsp -- -D
+// warnings` would otherwise flag this whole subtree as dead code. Lint levels cascade
+// to child modules, so this one `allow` at the `lsp` module root covers `server::serve`
+// too.
 #![allow(dead_code)]
 
 mod actions;
