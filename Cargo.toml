@@ -29,6 +29,9 @@ anstyle = "1"
 [features]
 default = ["cli"]
 cli = ["dep:clap", "dep:toml", "dep:globset"]
+# Stub: no `lsp` deps or `mod lsp` exist yet (arrives in a later task). Declared now so
+# `#[cfg(feature = "lsp")]` in src/config.rs is a recognized cfg, not an unexpected one.
+lsp = []
 
 [[bin]]
 name = "pgsafe"

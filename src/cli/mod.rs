@@ -8,11 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::{
-    gate, lint_input, render_errors, render_github, render_human_styled, render_json, render_sarif,
-    render_summary, ColorWhen, FailOn, FileReport, Format, LintOptions, Styling,
+    config, gate, lint_input, render_errors, render_github, render_human_styled, render_json,
+    render_sarif, render_summary, ColorWhen, FailOn, FileReport, Format, LintOptions, Styling,
 };
 
-mod config;
 mod fix;
 mod gitdiff;
 
@@ -103,17 +102,12 @@ impl ResolvedRun {
     /// (path-relative) + the global `severity_overrides` and `enabled_rules`.
     #[must_use]
     pub fn options_for(&self, name: &str) -> LintOptions {
-        let rel = rel_path(name, self.config_dir.as_deref());
-        LintOptions {
-            assume_in_transaction: self.assume_in_transaction,
-            disabled_rules: self.config.disabled_for(&rel),
-            enabled_rules: self.config.enabled().clone(),
-            severity_overrides: self.config.overrides().clone(),
-            naming_patterns: self.config.naming().clone(),
-            forbidden_column_types: self.config.forbidden_types().clone(),
-            required_columns: self.config.required_columns().clone(),
-            ..LintOptions::default()
-        }
+        config::options_from(
+            &self.config,
+            self.config_dir.as_deref(),
+            name,
+            self.assume_in_transaction,
+        )
     }
 }
 
@@ -268,32 +262,6 @@ fn load_config(args: &CommonArgs) -> Result<(config::Config, Option<PathBuf>), S
         }
         None => Ok((config::Config::default(), None)),
     }
-}
-
-/// A linted file's path made relative to the config dir (for glob matching).
-/// Both the file path and the config dir are absolutized against the current
-/// working directory first, so an ignore glob written relative to the config
-/// dir still matches when pgsafe is invoked from a subdirectory.
-fn rel_path(name: &str, config_dir: Option<&Path>) -> String {
-    let Some(dir) = config_dir else {
-        return name.to_string();
-    };
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let abs_name = if Path::new(name).is_absolute() {
-        PathBuf::from(name)
-    } else {
-        cwd.join(name)
-    };
-    let abs_dir = if dir.is_absolute() {
-        dir.to_path_buf()
-    } else {
-        cwd.join(dir)
-    };
-    abs_name
-        .strip_prefix(&abs_dir)
-        .unwrap_or(&abs_name)
-        .to_string_lossy()
-        .into_owned()
 }
 
 /// Select + read the inputs per `--git-diff` / `--since` / positional paths.

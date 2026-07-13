@@ -11,6 +11,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 mod ast;
+#[cfg(any(feature = "cli", feature = "lsp"))]
+mod config;
 mod fix;
 mod output;
 mod rules;
