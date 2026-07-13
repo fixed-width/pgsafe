@@ -25,6 +25,7 @@
         "refresh-matview-non-concurrent",
         "add-exclusion-constraint",
         "prefer-jsonb",
+        "prefer-identity",
         "prefer-bigint-primary-key",
         "drop-constraint",
         "add-trigger",

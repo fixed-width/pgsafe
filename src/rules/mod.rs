@@ -43,6 +43,7 @@ mod drop_index_non_concurrent;
 mod drop_not_null;
 mod drop_table;
 mod prefer_bigint_primary_key;
+mod prefer_identity;
 mod prefer_jsonb;
 mod refresh_matview_non_concurrent;
 mod reindex_non_concurrent;
@@ -80,6 +81,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(refresh_matview_non_concurrent::RefreshMatviewNonConcurrent),
         Box::new(add_exclusion_constraint::AddExclusionConstraint),
         Box::new(prefer_jsonb::PreferJsonb),
+        Box::new(prefer_identity::PreferIdentity),
         Box::new(prefer_bigint_primary_key::PreferBigintPrimaryKey),
         Box::new(drop_constraint::DropConstraint),
         Box::new(add_trigger::AddTrigger),
@@ -266,6 +268,7 @@ mod tests {
             "drop-column",
             "truncate",
             "prefer-jsonb",
+            "prefer-identity",
             "prefer-bigint-primary-key",
             "drop-constraint",
             "add-trigger",
@@ -317,6 +320,7 @@ mod tests {
                 "refresh-matview-non-concurrent",
                 "add-exclusion-constraint",
                 "prefer-jsonb",
+                "prefer-identity",
                 "prefer-bigint-primary-key",
                 "drop-constraint",
                 "add-trigger",
