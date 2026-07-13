@@ -12,11 +12,13 @@ pub(crate) fn diagnostics_for(sql: &str, findings: &[Finding]) -> Vec<Diagnostic
     findings
         .iter()
         .filter(|f| !f.is_suppressed())
-        .map(|f| finding_to_diagnostic(f, &index))
+        .map(|f| finding_diagnostic(f, &index))
         .collect()
 }
 
-fn finding_to_diagnostic(finding: &Finding, index: &LineIndex) -> Diagnostic {
+/// Build the single `Diagnostic` for `finding`. Shared with `actions::code_actions`,
+/// which links this same diagnostic to the quickfix it offers.
+pub(crate) fn finding_diagnostic(finding: &Finding, index: &LineIndex) -> Diagnostic {
     let start = finding.location.byte as usize;
     let end = start + finding.snippet.len();
     Diagnostic {

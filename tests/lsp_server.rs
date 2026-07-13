@@ -92,3 +92,95 @@ fn open_publishes_diagnostics() {
     notify(&client, "exit", serde_json::Value::Null);
     handle.join().unwrap();
 }
+
+#[test]
+fn code_action_returns_quickfix() {
+    use lsp_types::{
+        CodeActionContext, CodeActionParams, PartialResultParams, Position, Range,
+        TextDocumentIdentifier, WorkDoneProgressParams,
+    };
+
+    let (client, handle) = start();
+
+    // initialize
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(1),
+            method: "initialize".to_string(),
+            params: serde_json::to_value(InitializeParams::default()).unwrap(),
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(
+        &client,
+        "initialized",
+        serde_json::to_value(InitializedParams {}).unwrap(),
+    );
+
+    let doc_uri = uri("file:///tmp/0001.sql");
+    let open = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: doc_uri.clone(),
+            language_id: "sql".to_string(),
+            version: 1,
+            text: "CREATE INDEX idx ON t (col);".to_string(),
+        },
+    };
+    notify(
+        &client,
+        "textDocument/didOpen",
+        serde_json::to_value(open).unwrap(),
+    );
+    let _ = client.receiver.recv().unwrap(); // publishDiagnostics
+
+    let ca = CodeActionParams {
+        text_document: TextDocumentIdentifier {
+            uri: doc_uri.clone(),
+        },
+        range: Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 27,
+            },
+        },
+        context: CodeActionContext::default(),
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2),
+            method: "textDocument/codeAction".to_string(),
+            params: serde_json::to_value(ca).unwrap(),
+        }))
+        .unwrap();
+
+    let resp = loop {
+        match client.receiver.recv().unwrap() {
+            Message::Response(r) if r.id == RequestId::from(2) => break r,
+            _ => continue,
+        }
+    };
+    let value = resp.result.expect("code action result");
+    let arr = value.as_array().expect("array of actions");
+    assert!(!arr.is_empty(), "expected at least one quickfix");
+
+    // shutdown/exit
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(3),
+            method: "shutdown".to_string(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(&client, "exit", serde_json::Value::Null);
+    handle.join().unwrap();
+}

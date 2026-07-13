@@ -3,12 +3,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use lsp_server::{Connection, Message};
+use lsp_server::{Connection, Message, Response};
 use lsp_types::{
-    CodeActionKind, CodeActionOptions, CodeActionProviderCapability, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    PositionEncodingKind, PublishDiagnosticsParams, ServerCapabilities, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Uri,
+    CodeActionKind, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, PositionEncodingKind, PublishDiagnosticsParams, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
 };
 
 use super::diagnostics::diagnostics_for;
@@ -66,9 +66,31 @@ pub(crate) fn run_loop(connection: &Connection) -> Result<(), LspError> {
                 if connection.handle_shutdown(&req)? {
                     return Ok(());
                 }
-                // codeAction handled in Task 6; other requests are ignored for MVP.
+                if req.method == "textDocument/codeAction" {
+                    let (id, params) = req
+                        .extract::<CodeActionParams>("textDocument/codeAction")
+                        .map_err(|e| format!("codeAction params: {e:?}"))?;
+                    let key = params.text_document.uri.as_str().to_string();
+                    let result = if let Some(doc) = state.docs.get(&key) {
+                        let options = match uri_to_path(&key) {
+                            Some(path) => config::options_for_path(&path, false),
+                            None => crate::LintOptions::default(),
+                        };
+                        let findings = lint_sql(&doc.text, &options).unwrap_or_default();
+                        super::actions::code_actions(&doc.uri, &doc.text, &findings, params.range)
+                    } else {
+                        Vec::new()
+                    };
+                    connection.sender.send(Message::Response(Response {
+                        id,
+                        result: Some(serde_json::to_value(result)?),
+                        error: None,
+                    }))?;
+                }
+                // Other requests are ignored for MVP.
             }
             Message::Notification(not) => match not.method.as_str() {
+                "exit" => return Ok(()),
                 "textDocument/didOpen" => {
                     let p: DidOpenTextDocumentParams = serde_json::from_value(not.params)?;
                     let doc = Document {
