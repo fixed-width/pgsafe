@@ -31,6 +31,7 @@
         "detach-partition-non-concurrent",
         "attach-partition",
         "set-access-method",
+        "add-domain-constraint-without-not-valid",
         "concurrently-in-transaction",
         "require-timeout",
         "identifier-too-long",

@@ -771,6 +771,28 @@ fn scan_cases() -> Vec<ScanCase> {
             expect_scan: false,
             pg: 15..=18,
         },
+        ScanCase {
+            rule: "add-domain-constraint-without-not-valid (ALTER DOMAIN ADD CONSTRAINT — scans dependent table)",
+            table: "proof_scan_domain",
+            setup: "DROP DOMAIN IF EXISTS proof_scan_dom CASCADE; \
+                    CREATE DOMAIN proof_scan_dom AS int; \
+                    CREATE TABLE proof_scan_domain (c proof_scan_dom); \
+                    INSERT INTO proof_scan_domain SELECT g FROM generate_series(1, 1000) g;",
+            ddl: "ALTER DOMAIN proof_scan_dom ADD CONSTRAINT chk CHECK (VALUE > 0)",
+            expect_scan: true,
+            pg: 15..=18,
+        },
+        ScanCase {
+            rule: "add-domain-constraint-without-not-valid (control: NOT VALID — does NOT scan)",
+            table: "proof_scan_domain_nv",
+            setup: "DROP DOMAIN IF EXISTS proof_scan_dom_nv CASCADE; \
+                    CREATE DOMAIN proof_scan_dom_nv AS int; \
+                    CREATE TABLE proof_scan_domain_nv (c proof_scan_dom_nv); \
+                    INSERT INTO proof_scan_domain_nv SELECT g FROM generate_series(1, 1000) g;",
+            ddl: "ALTER DOMAIN proof_scan_dom_nv ADD CONSTRAINT chk CHECK (VALUE > 0) NOT VALID",
+            expect_scan: false,
+            pg: 15..=18,
+        },
     ]
 }
 
