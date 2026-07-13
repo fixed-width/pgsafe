@@ -23,8 +23,8 @@ mod synthesized;
 // registered rules in `rules`. The engine dispatch itself lives in `synthesized::run_all`.
 use synthesized::{
     do_block, enum_value, fk_index, forbid_nullable_fk, forbidden_types, identifier, naming,
-    require_columns, require_comment, require_if_exists, require_not_null, require_pk, timeout,
-    txn,
+    require_columns, require_comment, require_if_exists, require_not_null, require_pk,
+    require_schema_qualified, timeout, txn,
 };
 
 #[cfg(feature = "cli")]
@@ -282,7 +282,8 @@ pub(crate) fn line_col(sql: &str, byte: usize) -> (u32, u32) {
 /// (`concurrently-in-transaction`, `require-timeout`, `identifier-too-long`,
 /// `fk-without-covering-index`, `enum-value-used-in-transaction`, `require-primary-key`,
 /// `require-not-null`, `naming-convention`, `forbidden-column-type`, `require-if-exists`,
-/// `unchecked-do-block`, `require-comment`, `require-columns`, `forbid-nullable-fk`).
+/// `unchecked-do-block`, `require-comment`, `require-columns`, `forbid-nullable-fk`,
+/// `require-schema-qualified`).
 /// NOT the `suppression-*` hygiene ids.
 pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     let mut ids = rules::rule_ids();
@@ -292,6 +293,7 @@ pub(crate) fn known_rule_ids() -> Vec<&'static str> {
     ids.push(fk_index::ID);
     ids.push(enum_value::ID);
     ids.push(require_pk::ID);
+    ids.push(require_schema_qualified::ID);
     ids.push(require_not_null::ID);
     ids.push(naming::ID);
     ids.push(forbidden_types::ID);

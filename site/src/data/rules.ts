@@ -659,6 +659,22 @@ export const RULES: Record<string, RuleDoc> = {
     },
     related: ["add-primary-key-without-index", "require-not-null"],
   },
+  "require-schema-qualified": {
+    id: "require-schema-qualified",
+    title: "Unqualified table name",
+    severity: "warning",
+    category: "Policy",
+    summary: "(opt-in) A DDL target table named without a schema qualifier.",
+    whyUnsafe:
+      "An unqualified table name resolves through the session's `search_path`, which is environment-dependent — the same migration can hit a different table in a different environment.",
+    safeRewrite:
+      "Qualify the table name with its schema (e.g. `public.orders`) so resolution does not depend on `search_path`.",
+    example: {
+      unsafe: "ALTER TABLE orders ADD COLUMN note text;",
+      safe: "ALTER TABLE public.orders ADD COLUMN note text;",
+    },
+    related: ["require-primary-key"],
+  },
   "require-not-null": {
     id: "require-not-null",
     title: "Nullable column (policy)",

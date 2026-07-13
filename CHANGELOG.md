@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New rule `drop-database` (Warning): flags `DROP DATABASE` as irreversible data loss (#95).
 - New rule `drop-not-null` (Warning): flags `ALTER COLUMN … DROP NOT NULL` removing a relied-on not-null invariant (#95).
 - New rule `add-domain-constraint-without-not-valid` (Error): flags `ALTER DOMAIN … ADD CONSTRAINT` that validates dependent tables under lock; autofixes to `NOT VALID` (#95).
+- New opt-in rule `require-schema-qualified` (Warning): flags DDL target tables named without a schema qualifier, which resolve through `search_path` (#95).
 
 ### Changed
 
