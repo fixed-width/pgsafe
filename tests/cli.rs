@@ -553,7 +553,7 @@ fn naming_convention_via_config_fires() {
         .stdout(predicate::str::contains("naming-convention"));
 }
 
-// ── `paths` scoping (§10 of the LSP design doc — CLI addendum) ───────────────
+// ── `paths` scoping (CLI honors the same globs as the LSP) ──────────────────
 //
 // The CLI now consults the same `Config::in_scope` the LSP uses: a file input that
 // doesn't match the config's `paths` globs is silently dropped before linting.

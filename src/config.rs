@@ -129,7 +129,7 @@ pub(crate) struct Config {
     naming: BTreeMap<NameKind, String>,
     forbidden_types: BTreeMap<String, String>,
     required_columns: BTreeSet<String>,
-    /// Compiled `paths` globs (§10 of the LSP design doc). Empty is the unset default —
+    /// Compiled `paths` globs that scope which files are linted. Empty is the unset default —
     /// see [`Config::in_scope`], the single place that interprets it. Always parsed
     /// and validated (`compile()` runs under `any(cli, lsp)`, so a bad glob is still
     /// a hard error in a `cli`-only build), and read by `in_scope`, which both the
@@ -320,7 +320,7 @@ impl Config {
     /// for `[[ignore]]`/`disabled_for`).
     ///
     /// This is the **single place** that encodes the unset-`paths` default: empty
-    /// `paths` (never set, or no `.pgsafe.toml` was discovered at all — the LSP's
+    /// `paths` (never set, or no `pgsafe.toml` was discovered at all — the LSP's
     /// untitled/non-`file` documents resolve to `Config::default()`) means every file
     /// is in scope, matching the CLI's current lint-everything-you-pass-it behavior.
     /// Once `paths` is set, only a file whose relative path matches one of the globs
@@ -380,7 +380,7 @@ pub(crate) fn resolve_config(file_path: &Path) -> (Config, Option<PathBuf>) {
     }
 }
 
-/// Resolve `.pgsafe.toml` (walk-up from `file_path`'s directory) and build the
+/// Resolve `pgsafe.toml` (walk-up from `file_path`'s directory) and build the
 /// [`LintOptions`] for `file_path`. A missing or malformed config yields defaults —
 /// the LSP degrades gracefully rather than failing the session.
 // No production caller: `lsp::server::ConfigCache` calls `resolve_config` +

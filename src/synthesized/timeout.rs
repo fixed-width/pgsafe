@@ -135,8 +135,7 @@ pub(crate) fn require_timeout_indices(
                     // session_timeout/local_timeout booleans — either satisfies the rule.
                     // This means deactivating one variable while a SET LOCAL of the *other*
                     // is still active is not tracked independently. We deliberately accept
-                    // this rare imprecision; tracking both vars separately is not worth it
-                    // (consistent with the spec's out-of-scope notes).
+                    // this rare imprecision; tracking both vars separately is not worth it.
                     let activates = set_activates(set);
                     if set.is_local {
                         // SET LOCAL only takes effect inside an explicit transaction.

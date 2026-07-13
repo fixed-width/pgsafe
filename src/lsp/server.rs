@@ -32,7 +32,7 @@ struct State {
 
 /// Caches the *expensive* part of config resolution — discovery, file read, TOML
 /// parse, and glob compilation — keyed by the document's parent directory, so a
-/// keystroke doesn't redo that work each time. Invalidated when a `.pgsafe.toml`
+/// keystroke doesn't redo that work each time. Invalidated when a `pgsafe.toml`
 /// under that directory is saved.
 ///
 /// Deliberately does **not** cache the resolved [`crate::LintOptions`] itself:
@@ -63,7 +63,7 @@ impl ConfigCache {
             .entry(dir)
             .or_insert_with(|| config::resolve_config(file_path));
         // The LSP has no per-invocation transaction flag to OR in (unlike the CLI's
-        // `--in-transaction`), so it comes purely from the resolved `.pgsafe.toml`.
+        // `--in-transaction`), so it comes purely from the resolved `pgsafe.toml`.
         let in_txn = entry.0.in_transaction.unwrap_or(false);
         config::options_from(
             &entry.0,
@@ -73,13 +73,13 @@ impl ConfigCache {
         )
     }
 
-    /// Drop cached entries at or under `dir` (called when a `.pgsafe.toml` saves).
+    /// Drop cached entries at or under `dir` (called when a `pgsafe.toml` saves).
     pub(crate) fn invalidate_dir(&mut self, dir: &Path) {
         self.by_dir.retain(|k, _| !k.starts_with(dir));
     }
 
-    /// Whether `file_path` is in scope of the resolved config's `paths` globs (§10 of
-    /// the LSP design doc) and should be linted at all. Resolves (and caches, by
+    /// Whether `file_path` is in scope of the resolved config's `paths` globs and
+    /// should be linted at all. Resolves (and caches, by
     /// directory) the config the same way `options_for` does, then delegates the
     /// unset-default and glob matching to `config::Config::in_scope` — the single
     /// place that logic lives.
@@ -266,7 +266,7 @@ fn on_did_save(
     let config_dir = saved_path.as_deref().filter(|p| is_config_file(p));
 
     if let Some(dir) = config_dir.and_then(Path::parent) {
-        // A `.pgsafe.toml`/`pgsafe.toml` saved: its directory (and any subdirectory)
+        // A `pgsafe.toml`/`.pgsafe.toml` saved: its directory (and any subdirectory)
         // may now resolve to different options, so drop the stale cache entries and
         // re-lint every open SQL doc under it — not just the config file itself,
         // which usually isn't a tracked document at all.
@@ -353,7 +353,7 @@ fn publish(
 }
 
 /// Resolve the [`crate::LintOptions`] to lint `doc` with, or `None` if it's out of
-/// the resolved config's `paths` scope (§10 of the LSP design doc) and must not be
+/// the resolved config's `paths` scope and must not be
 /// linted at all — the shared gate `publish` and `on_code_action` both consult. A
 /// document with no file path (untitled buffer) or a non-`file` URI always lints
 /// with defaults: no config is discoverable for it, so `Config::in_scope`'s
@@ -525,7 +525,7 @@ mod cache_tests {
     /// `in_transaction` key, silently diverging from the CLI (which computes
     /// `args.in_transaction || config.in_transaction.unwrap_or(false)`) for the
     /// concurrently-in-transaction rule. Proves `options_for` now derives the flag from
-    /// the cached `Config` — parity with the CLI for the same file + `.pgsafe.toml`.
+    /// the cached `Config` — parity with the CLI for the same file + `pgsafe.toml`.
     #[test]
     fn options_for_honors_config_in_transaction() {
         let dir = tempfile::tempdir().unwrap();
@@ -542,7 +542,7 @@ mod cache_tests {
         );
     }
 
-    /// Default/absent config (no `.pgsafe.toml`, or one that omits `in_transaction`)
+    /// Default/absent config (no `pgsafe.toml`, or one that omits `in_transaction`)
     /// must still yield `assume_in_transaction = false` — the LSP shouldn't invent a
     /// transaction assumption the CLI wouldn't make either.
     #[test]
@@ -555,7 +555,7 @@ mod cache_tests {
         assert!(!opts.assume_in_transaction);
     }
 
-    /// `should_lint` gates on the config's `paths` globs (§10 of the LSP design doc):
+    /// `should_lint` gates on the config's `paths` globs:
     /// a file under a matching directory is in scope, a sibling outside the globs is
     /// not — matched relative to the config's directory, same as `options_for`.
     #[test]

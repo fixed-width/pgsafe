@@ -188,7 +188,7 @@ fn code_action_returns_quickfix() {
     handle.join().unwrap();
 }
 
-/// End-to-end proof of `paths`-scoped linting (§10 of the LSP design doc): a
+/// End-to-end proof of `paths`-scoped linting: a
 /// `.pgsafe.toml` with `paths = ["migrations/**"]` scopes the server to the
 /// migrations directory. A doc opened under `migrations/` gets diagnostics for
 /// unsafe DDL; the identical DDL opened under a sibling directory gets none. Neither
