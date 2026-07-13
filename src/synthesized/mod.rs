@@ -324,8 +324,8 @@ pub(crate) fn run_all(
                     (
                         i,
                         format!(
-                            "Unqualified table name `{name}` resolves through search_path, which is \
-                             environment-dependent — a migration footgun."
+                            "Unqualified name `{name}` resolves through the session's search_path, \
+                             which is environment-dependent — a migration footgun."
                         ),
                         require_schema_qualified::GUIDANCE.to_string(),
                         None,

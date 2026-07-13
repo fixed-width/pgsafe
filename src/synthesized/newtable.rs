@@ -11,7 +11,7 @@ use crate::ast::NodeEnum;
 use crate::{Finding, Severity};
 
 /// `RangeVar.relpersistence` for a temporary relation (libpg_query's `RELPERSISTENCE_TEMP`).
-const RELPERSISTENCE_TEMP: &str = "t";
+pub(crate) const RELPERSISTENCE_TEMP: &str = "t";
 
 /// A cross-statement table key. The default `public` schema is normalized to bare, so a table
 /// written `t` in one statement and `public.t` in another correlates (`public` is the default

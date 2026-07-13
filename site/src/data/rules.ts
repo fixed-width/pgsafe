@@ -661,14 +661,14 @@ export const RULES: Record<string, RuleDoc> = {
   },
   "require-schema-qualified": {
     id: "require-schema-qualified",
-    title: "Unqualified table name",
+    title: "Unqualified relation name",
     severity: "warning",
     category: "Policy",
-    summary: "(opt-in) A DDL target table named without a schema qualifier.",
+    summary: "(opt-in) A DDL target relation named without a schema qualifier.",
     whyUnsafe:
-      "An unqualified table name resolves through the session's `search_path`, which is environment-dependent — the same migration can hit a different table in a different environment.",
+      "An unqualified name in a DDL statement resolves through the session's `search_path`, which is environment-dependent — the same migration can hit a different object in a different environment. Covers the relations that `CREATE` / `ALTER` / `RENAME` / `DROP` / `TRUNCATE` / `CREATE INDEX` target (tables, indexes, views, sequences).",
     safeRewrite:
-      "Qualify the table name with its schema (e.g. `public.orders`) so resolution does not depend on `search_path`.",
+      "Qualify the name with its schema (e.g. `public.orders`) so resolution does not depend on `search_path`.",
     example: {
       unsafe: "ALTER TABLE orders ADD COLUMN note text;",
       safe: "ALTER TABLE public.orders ADD COLUMN note text;",
