@@ -10,7 +10,7 @@
 //!   unless explicitly disabled.
 //! - **Policy lints** (opt-in or config-gated) — [`require_pk`], [`require_not_null`],
 //!   [`require_if_exists`], [`require_comment`], [`forbid_nullable_fk`], [`do_block`],
-//!   [`naming`], [`forbidden_types`], [`require_columns`].
+//!   [`naming`], [`forbidden_types`], [`require_columns`], [`require_schema_qualified`].
 //!
 //! Two shared helpers support the family: [`newtable`] (drops findings on tables the
 //! migration itself creates empty, and supplies the `rangevar_key`/`lintable_create_relation`
@@ -40,6 +40,7 @@ pub(crate) mod require_comment;
 pub(crate) mod require_if_exists;
 pub(crate) mod require_not_null;
 pub(crate) mod require_pk;
+pub(crate) mod require_schema_qualified;
 pub(crate) mod timeout;
 pub(crate) mod txn;
 
@@ -301,6 +302,32 @@ pub(crate) fn run_all(
                         i,
                         require_pk::MESSAGE.to_string(),
                         require_pk::GUIDANCE.to_string(),
+                        None,
+                    )
+                }),
+        );
+    }
+    if options.enabled_rules.contains(require_schema_qualified::ID)
+        && !options
+            .disabled_rules
+            .contains(require_schema_qualified::ID)
+    {
+        push_synthesized(
+            &mut findings,
+            sql,
+            geoms,
+            require_schema_qualified::ID,
+            Severity::Warning,
+            require_schema_qualified::unqualified_targets(stmts)
+                .into_iter()
+                .map(|(i, name)| {
+                    (
+                        i,
+                        format!(
+                            "Unqualified name `{name}` resolves through the session's search_path, \
+                             which is environment-dependent — a migration footgun."
+                        ),
+                        require_schema_qualified::GUIDANCE.to_string(),
                         None,
                     )
                 }),

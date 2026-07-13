@@ -38,6 +38,7 @@
         "fk-without-covering-index",
         "enum-value-used-in-transaction",
         "require-primary-key",
+        "require-schema-qualified",
         "require-not-null",
         "naming-convention",
         "forbidden-column-type",

@@ -46,6 +46,7 @@
 # require-if-exists   = true
 # forbid-nullable-fk  = true
 # unchecked-do-block  = true
+# require-schema-qualified = true
 
 # ── Path ignores ─────────────────────────────────────────────────────────────────────────
 # Skip findings for files matching a glob. `rules` defaults to ["*"] (ignore everything for the
