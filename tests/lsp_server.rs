@@ -189,10 +189,10 @@ fn code_action_returns_quickfix() {
 }
 
 /// End-to-end proof of `paths`-scoped linting: a
-/// `.pgsafe.toml` with `paths = ["migrations/**"]` scopes the server to the
+/// `pgsafe.toml` with `paths = ["migrations/**"]` scopes the server to the
 /// migrations directory. A doc opened under `migrations/` gets diagnostics for
 /// unsafe DDL; the identical DDL opened under a sibling directory gets none. Neither
-/// subdirectory needs to exist on disk — only the `.pgsafe.toml` does, for discovery;
+/// subdirectory needs to exist on disk — only the `pgsafe.toml` does, for discovery;
 /// linting works on the in-memory document text.
 #[test]
 fn paths_scoping_gates_diagnostics_to_matching_files() {
@@ -216,7 +216,7 @@ fn paths_scoping_gates_diagnostics_to_matching_files() {
 
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
-        dir.path().join(".pgsafe.toml"),
+        dir.path().join("pgsafe.toml"),
         "paths = [\"migrations/**\"]\n",
     )
     .unwrap();
@@ -294,7 +294,7 @@ fn paths_scoping_gates_diagnostics_to_matching_files() {
 
 /// End-to-end proof of the config-cache invalidation wiring (not just the isolated
 /// `ConfigCache` unit test): open a SQL doc whose directory has no config (the
-/// default-enabled rule fires), then write a `.pgsafe.toml` disabling that rule and
+/// default-enabled rule fires), then write a `pgsafe.toml` disabling that rule and
 /// `didSave` it — even though the config file itself was never `didOpen`ed. The
 /// server must invalidate its cache and re-publish the open SQL doc unprompted, with
 /// no further `didChange` needed.
@@ -351,7 +351,7 @@ fn did_save_of_config_file_invalidates_cache_and_relints() {
     );
 
     // Write a config disabling the rule, then didSave it (it was never didOpen'd).
-    let cfg_path = dir.path().join(".pgsafe.toml");
+    let cfg_path = dir.path().join("pgsafe.toml");
     std::fs::write(&cfg_path, "[rules]\nadd-index-non-concurrent = false\n").unwrap();
     let cfg_uri = uri(&format!("file://{}", cfg_path.display()));
     notify(
