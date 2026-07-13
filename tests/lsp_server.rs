@@ -167,7 +167,10 @@ fn code_action_returns_quickfix() {
             _ => continue,
         }
     };
-    let value = resp.result.expect("code action result");
+    let value = match resp.response_kind {
+        lsp_server::ResponseKind::Ok { result } => result,
+        other => panic!("expected an Ok code-action response, got {other:?}"),
+    };
     let arr = value.as_array().expect("array of actions");
     assert!(!arr.is_empty(), "expected at least one quickfix");
 

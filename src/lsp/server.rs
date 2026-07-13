@@ -207,11 +207,9 @@ fn on_code_action(
     } else {
         Vec::new()
     };
-    connection.sender.send(Message::Response(Response {
-        id,
-        result: Some(serde_json::to_value(result)?),
-        error: None,
-    }))?;
+    connection
+        .sender
+        .send(Message::Response(Response::new_ok(id, result)))?;
     Ok(())
 }
 
