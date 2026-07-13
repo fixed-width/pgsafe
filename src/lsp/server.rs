@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
-use lsp_server::{Connection, Message, Response};
+use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::{
     CodeActionKind, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -155,7 +155,7 @@ pub(crate) fn run_loop(connection: &Connection) -> Result<(), LspError> {
 fn handle_request(
     connection: &Connection,
     state: &mut State,
-    req: lsp_server::Request,
+    req: Request,
 ) -> Result<ControlFlow<()>, LspError> {
     if connection.handle_shutdown(&req)? {
         return Ok(ControlFlow::Break(()));
@@ -172,7 +172,7 @@ fn handle_request(
 fn handle_notification(
     connection: &Connection,
     state: &mut State,
-    not: lsp_server::Notification,
+    not: Notification,
 ) -> Result<ControlFlow<()>, LspError> {
     match not.method.as_str() {
         "exit" => return Ok(ControlFlow::Break(())),
@@ -190,7 +190,7 @@ fn handle_notification(
 fn on_code_action(
     connection: &Connection,
     state: &mut State,
-    req: lsp_server::Request,
+    req: Request,
 ) -> Result<(), LspError> {
     let (id, params) = req
         .extract::<CodeActionParams>("textDocument/codeAction")
@@ -215,8 +215,8 @@ fn on_code_action(
     Ok(())
 }
 
-/// Handle `textDocument/didOpen`: start tracking the document and publish its
-/// diagnostics.
+/// Handle `textDocument/didOpen`: publish the document's diagnostics, then start
+/// tracking it (publish-before-insert order is intentional).
 fn on_did_open(
     connection: &Connection,
     state: &mut State,
@@ -382,12 +382,10 @@ fn send_diagnostics(
         diagnostics,
         version: None,
     };
-    connection
-        .sender
-        .send(Message::Notification(lsp_server::Notification {
-            method: "textDocument/publishDiagnostics".to_string(),
-            params: serde_json::to_value(params)?,
-        }))?;
+    connection.sender.send(Message::Notification(Notification {
+        method: "textDocument/publishDiagnostics".to_string(),
+        params: serde_json::to_value(params)?,
+    }))?;
     Ok(())
 }
 
