@@ -14,6 +14,8 @@ mod ast;
 #[cfg(any(feature = "cli", feature = "lsp"))]
 mod config;
 mod fix;
+#[cfg(feature = "lsp")]
+mod lsp;
 mod output;
 mod rules;
 mod sarif;

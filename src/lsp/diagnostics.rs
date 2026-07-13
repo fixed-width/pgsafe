@@ -1,0 +1,1 @@
+//! `Finding` → LSP `Diagnostic` translation.

@@ -1,0 +1,1 @@
+//! `Fix` → quickfix `CodeAction` translation.
