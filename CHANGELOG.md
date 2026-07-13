@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `--fix` no longer adds `CONCURRENTLY` to index operations inside an explicit transaction block, where it would be invalid (#91).
+- `--fix` now inserts a statement-body fix (e.g. `NOT VALID`) before a trailing comment instead of inside it, when the statement has a trailing comment and no terminating `;`. Previously the fix landed within the comment (leaving the hazard unfixed) and the fixpoint loop failed to converge (#102).
 
 ## [0.10.0] - 2026-07-06
 
