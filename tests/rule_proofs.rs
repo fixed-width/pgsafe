@@ -793,6 +793,18 @@ fn scan_cases() -> Vec<ScanCase> {
             expect_scan: false,
             pg: 15..=18,
         },
+        ScanCase {
+            rule: "add-domain-not-null (ALTER DOMAIN ADD NOT NULL — scans dependent table)",
+            table: "proof_scan_domain_notnull",
+            setup: "DROP DOMAIN IF EXISTS proof_scan_dom_notnull CASCADE; \
+                    CREATE DOMAIN proof_scan_dom_notnull AS int; \
+                    CREATE TABLE proof_scan_domain_notnull (c proof_scan_dom_notnull); \
+                    INSERT INTO proof_scan_domain_notnull \
+                        SELECT g FROM generate_series(1, 1000) g;",
+            ddl: "ALTER DOMAIN proof_scan_dom_notnull ADD NOT NULL",
+            expect_scan: true,
+            pg: 15..=18,
+        },
     ]
 }
 

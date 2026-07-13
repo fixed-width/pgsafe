@@ -33,6 +33,7 @@
         "attach-partition",
         "set-access-method",
         "add-domain-constraint-without-not-valid",
+        "add-domain-not-null",
         "concurrently-in-transaction",
         "require-timeout",
         "identifier-too-long",
