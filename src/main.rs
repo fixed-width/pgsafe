@@ -2,5 +2,5 @@
 use clap::Parser;
 
 fn main() -> std::process::ExitCode {
-    pgsafe::cli::run(pgsafe::cli::Cli::parse().args)
+    pgsafe::cli::main_entry(pgsafe::cli::Cli::parse())
 }

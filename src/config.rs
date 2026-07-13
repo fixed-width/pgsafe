@@ -321,8 +321,9 @@ pub(crate) fn options_from(
 /// Resolve `.pgsafe.toml` (walk-up from `file_path`'s directory) and build the
 /// [`LintOptions`] for `file_path`. A missing or malformed config yields defaults —
 /// the LSP degrades gracefully rather than failing the session.
-// No production caller until the LSP (a later task) lands; exercised by the tests below
-// in the meantime, so a plain `cli`-only build sees it as unused.
+// The only production caller is `lsp::server::ConfigCache`, which only exists in an
+// `lsp`-enabled build; a plain `cli`-only build otherwise sees this as unused (exercised
+// there only by the tests below).
 #[allow(dead_code)]
 pub(crate) fn options_for_path(file_path: &Path, assume_in_transaction: bool) -> LintOptions {
     let (config, config_dir) = match file_path.parent().and_then(discover) {

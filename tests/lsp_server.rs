@@ -184,3 +184,108 @@ fn code_action_returns_quickfix() {
     notify(&client, "exit", serde_json::Value::Null);
     handle.join().unwrap();
 }
+
+/// End-to-end proof of the config-cache invalidation wiring (not just the isolated
+/// `ConfigCache` unit test): open a SQL doc whose directory has no config (the
+/// default-enabled rule fires), then write a `.pgsafe.toml` disabling that rule and
+/// `didSave` it — even though the config file itself was never `didOpen`ed. The
+/// server must invalidate its cache and re-publish the open SQL doc unprompted, with
+/// no further `didChange` needed.
+#[test]
+fn did_save_of_config_file_invalidates_cache_and_relints() {
+    use lsp_types::{DidSaveTextDocumentParams, TextDocumentIdentifier};
+
+    let (client, handle) = start();
+
+    // initialize
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(1),
+            method: "initialize".to_string(),
+            params: serde_json::to_value(InitializeParams::default()).unwrap(),
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(
+        &client,
+        "initialized",
+        serde_json::to_value(InitializedParams {}).unwrap(),
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let sql_path = dir.path().join("0001_add_index.sql");
+    let sql_uri = uri(&format!("file://{}", sql_path.display()));
+
+    let open = DidOpenTextDocumentParams {
+        text_document: TextDocumentItem {
+            uri: sql_uri.clone(),
+            language_id: "sql".to_string(),
+            version: 1,
+            text: "CREATE INDEX idx ON t (col);".to_string(),
+        },
+    };
+    notify(
+        &client,
+        "textDocument/didOpen",
+        serde_json::to_value(open).unwrap(),
+    );
+
+    // Initial publish: no config on disk yet, so add-index-non-concurrent (on by
+    // default) fires.
+    let msg = client.receiver.recv().unwrap();
+    let Message::Notification(n) = msg else {
+        panic!("expected a notification, got {msg:?}");
+    };
+    let params: PublishDiagnosticsParams = serde_json::from_value(n.params).unwrap();
+    assert!(
+        !params.diagnostics.is_empty(),
+        "expected findings before the config disables the rule"
+    );
+
+    // Write a config disabling the rule, then didSave it (it was never didOpen'd).
+    let cfg_path = dir.path().join(".pgsafe.toml");
+    std::fs::write(&cfg_path, "[rules]\nadd-index-non-concurrent = false\n").unwrap();
+    let cfg_uri = uri(&format!("file://{}", cfg_path.display()));
+    notify(
+        &client,
+        "textDocument/didSave",
+        serde_json::to_value(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier { uri: cfg_uri },
+            text: None,
+        })
+        .unwrap(),
+    );
+
+    // The server re-lints the open SQL doc under the same directory unprompted; the
+    // now-disabled rule's diagnostic is gone (a still-enabled rule, require-timeout,
+    // is expected to remain — this asserts the specific rule cleared, not silence).
+    let msg = client.receiver.recv().unwrap();
+    let Message::Notification(n) = msg else {
+        panic!("expected a notification, got {msg:?}");
+    };
+    assert_eq!(n.method, "textDocument/publishDiagnostics");
+    let params: PublishDiagnosticsParams = serde_json::from_value(n.params).unwrap();
+    assert_eq!(params.uri, sql_uri);
+    assert!(
+        !params.diagnostics.iter().any(|d| d.code
+            == Some(lsp_types::NumberOrString::String(
+                "add-index-non-concurrent".to_string()
+            ))),
+        "expected add-index-non-concurrent to be disabled after the config was saved, got {:?}",
+        params.diagnostics
+    );
+
+    // shutdown/exit
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2),
+            method: "shutdown".to_string(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(&client, "exit", serde_json::Value::Null);
+    handle.join().unwrap();
+}

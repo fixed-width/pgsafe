@@ -1,6 +1,72 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
+// ── `lsp` subcommand vs. positional-path coexistence ────────────────────────
+//
+// `CommonArgs` has a positional `paths: Vec<String>`. Adding an optional
+// `Command` subcommand alongside it risks clap treating `lsp` as just another
+// positional path, or (worse) treating an ordinary filename as an attempted
+// subcommand. These tests pin the coexistence.
+
+#[cfg(feature = "lsp")]
+#[test]
+fn lsp_subcommand_is_recognized() {
+    // `--help` for the subcommand exits 0 and mentions the language server.
+    let mut cmd = Command::cargo_bin("pgsafe").unwrap();
+    cmd.args(["lsp", "--help"]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("language server"));
+}
+
+#[cfg(feature = "lsp")]
+#[test]
+fn lsp_subcommand_serves_over_real_stdio_and_exits_cleanly() {
+    // Regression test for a real deadlock: `server::serve()` originally kept its
+    // `Connection` (and thus its message `Sender`) alive across `io_threads.join()`,
+    // so the background writer thread's channel never saw its last sender drop and
+    // `join()` blocked forever. The in-memory `Connection::memory()` harness used by
+    // tests/lsp_server.rs never exercises this real-stdio path, so only spawning the
+    // actual binary with piped stdin/stdout — as this test does — can catch it. A
+    // bounded `.timeout()` turns a regression back into a failing test instead of a
+    // hung `cargo test`.
+    fn lsp_msg(body: &str) -> String {
+        format!("Content-Length: {}\r\n\r\n{body}", body.len())
+    }
+    let payload = format!(
+        "{}{}{}{}",
+        lsp_msg(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}"#),
+        lsp_msg(r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#),
+        lsp_msg(r#"{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}"#),
+        lsp_msg(r#"{"jsonrpc":"2.0","method":"exit","params":null}"#),
+    );
+
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg("lsp")
+        .timeout(std::time::Duration::from_secs(10))
+        .write_stdin(payload)
+        .assert()
+        .success();
+}
+
+#[test]
+fn positional_path_still_lints_after_subcommand_added() {
+    // A plain filename must still be treated as a lint target, not an unknown
+    // subcommand, whether or not this build has the `lsp` subcommand at all.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("subcommand_coexistence.sql");
+    std::fs::write(&path, "CREATE INDEX i ON t (x);").unwrap();
+
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg(path.to_str().unwrap())
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
+}
+
 // ── existing tests ───────────────────────────────────────────────────────────
 
 #[test]

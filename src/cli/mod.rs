@@ -67,6 +67,14 @@ pub struct CommonArgs {
 }
 
 /// The `pgsafe` binary's top-level parser.
+///
+/// `CommonArgs` has a positional `paths: Vec<String>`; `command` adds an optional
+/// subcommand alongside it. clap resolves the ambiguity itself: a leading token that
+/// matches a known subcommand name (e.g. `lsp`) dispatches to `Command`, and anything
+/// else — including a path that happens to look like one, since `Vec<String>` never
+/// requires a value — falls through to `CommonArgs::paths` as before. Verified for
+/// `pgsafe <path>`, bare `pgsafe` (stdin), `pgsafe lsp`/`pgsafe lsp --help`, and the
+/// existing flag suite (`--git-diff`, `--list-rules`, …); see `tests/cli.rs`.
 #[non_exhaustive]
 #[derive(clap::Parser)]
 #[command(
@@ -75,9 +83,39 @@ pub struct CommonArgs {
     about = "Lint PostgreSQL DDL migrations for unsafe operations"
 )]
 pub struct Cli {
-    /// The shared linting flags.
+    /// The shared linting flags (used when no subcommand is given).
     #[command(flatten)]
     pub args: CommonArgs,
+
+    /// The subcommand to run, if any (absence runs the default lint over `args`).
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// Subcommands beyond the default lint run.
+#[non_exhaustive]
+#[derive(clap::Subcommand)]
+pub enum Command {
+    /// Run the language server over stdio (for editor integration).
+    #[cfg(feature = "lsp")]
+    Lsp,
+}
+
+/// Entry the `pgsafe` binary calls with the fully-parsed CLI. Routes to a
+/// subcommand if present, else runs the default lint over `args`.
+#[must_use]
+pub fn main_entry(cli: Cli) -> ExitCode {
+    match cli.command {
+        #[cfg(feature = "lsp")]
+        Some(Command::Lsp) => match crate::lsp::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(2)
+            }
+        },
+        None => run(cli.args),
+    }
 }
 
 /// Everything the CLI front-end resolves from the args + config: the selected inputs,
