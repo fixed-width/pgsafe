@@ -129,6 +129,12 @@ pub(crate) struct StatementGeom {
     pub prologue_anchor: usize,
     /// Byte offset one past the statement's last non-whitespace character.
     pub end: usize,
+    /// Byte offset one past the statement's last non-whitespace, non-comment character — i.e. `end`
+    /// with any trailing comment(s) trimmed off. Equals `end` for the common case; differs only when
+    /// pg_query folds a trailing comment into the statement extent (a `stmt_len == 0` last statement
+    /// with no terminating `;`). This is the correct anchor for a `StatementBodyEnd` fix insertion,
+    /// so the spliced text lands before a trailing comment rather than inside it.
+    pub body_end: usize,
     /// 1-based line number of the statement's first real token.
     pub first_line: u32,
     /// 1-based line number of the statement's last non-whitespace character.
@@ -168,6 +174,7 @@ pub(crate) fn geometry(
         // `start` advances past any leading comments to the statement's first real token.
         let start = skip_leading_comments(sql, content_start, &comment_spans);
         let end = raw_end.saturating_sub(trail).max(start);
+        let body_end = trim_trailing_comments(sql, start, end, &comment_spans);
         let first_line = line_col(sql, start).0;
         let last_line = line_col(sql, end.saturating_sub(1).max(start)).0;
         // Walk backward from `start`'s line over any contiguous own-line comment lines so
@@ -179,11 +186,38 @@ pub(crate) fn geometry(
             start,
             prologue_anchor,
             end,
+            body_end,
             first_line,
             last_line,
         });
     }
     out
+}
+
+/// Back `end` up over any trailing comment(s) pg_query folded into the statement extent — which
+/// happens for a `stmt_len == 0` last statement with no terminating `;`, where the extent runs to
+/// end-of-input and swallows a trailing `-- …` or `/* … */`. Trailing whitespace between the
+/// statement body and the comment (and between stacked comments) is trimmed too. Returns `end`
+/// unchanged when nothing trails the body.
+fn trim_trailing_comments(
+    sql: &str,
+    start: usize,
+    mut end: usize,
+    spans: &[(usize, usize)],
+) -> usize {
+    loop {
+        let trimmed_len = sql.get(start..end).map_or(0, |s| s.trim_end().len());
+        let new_end = start + trimmed_len;
+        // A comment that starts within the body and whose span reaches `new_end` means the body's
+        // trailing bytes are that comment — drop it and re-trim the whitespace before it.
+        match spans
+            .iter()
+            .find(|&&(cs, ce)| cs >= start && cs < new_end && ce >= new_end)
+        {
+            Some(&(cs, _)) => end = cs,
+            None => return new_end.max(start),
+        }
+    }
 }
 
 /// Returns the byte offset of the first byte on the line containing `pos`.
