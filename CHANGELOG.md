@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - New rule `drop-database` (Warning): flags `DROP DATABASE` as irreversible data loss (#95).
+- New rule `drop-not-null` (Warning): flags `ALTER COLUMN … DROP NOT NULL` removing a relied-on not-null invariant (#95).
 
 ### Changed
 

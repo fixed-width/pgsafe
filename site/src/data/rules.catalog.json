@@ -9,6 +9,7 @@
         "drop-index-non-concurrent",
         "drop-table",
         "drop-database",
+        "drop-not-null",
         "drop-column",
         "truncate",
         "vacuum-full-cluster",
