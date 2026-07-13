@@ -37,6 +37,7 @@ mod attach_partition;
 mod detach_partition_non_concurrent;
 mod drop_column;
 mod drop_constraint;
+mod drop_database;
 mod drop_index_non_concurrent;
 mod drop_table;
 mod prefer_bigint_primary_key;
@@ -60,6 +61,7 @@ static RULES: LazyLock<Vec<Box<dyn Rule>>> = LazyLock::new(|| {
         Box::new(rename::Rename),
         Box::new(drop_index_non_concurrent::DropIndexNonConcurrent),
         Box::new(drop_table::DropTable),
+        Box::new(drop_database::DropDatabase),
         Box::new(drop_column::DropColumn),
         Box::new(truncate::Truncate),
         Box::new(vacuum_full_cluster::VacuumFullOrCluster),
@@ -254,6 +256,7 @@ mod tests {
         let warnings = [
             "rename",
             "drop-table",
+            "drop-database",
             "drop-column",
             "truncate",
             "prefer-jsonb",
@@ -291,6 +294,7 @@ mod tests {
                 "rename",
                 "drop-index-non-concurrent",
                 "drop-table",
+                "drop-database",
                 "drop-column",
                 "truncate",
                 "vacuum-full-cluster",
