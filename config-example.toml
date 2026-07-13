@@ -1,9 +1,9 @@
-# .pgsafe.toml — annotated pgsafe configuration. Every option is shown; all settings are
+# pgsafe.toml — annotated pgsafe configuration. Every option is shown; all settings are
 # commented out (so this file is a no-op as-is — the values shown are examples/defaults).
 # Uncomment and edit what you want. Generate this with `pgsafe --example-config`.
 #
 # Discovery: pgsafe walks up the directory tree from each SQL file to the nearest
-# `.pgsafe.toml` (or `pgsafe.toml`). Unknown keys are a hard error, so a typo won't be ignored.
+# `pgsafe.toml` (or the alternate `.pgsafe.toml`). Unknown keys are a hard error, so a typo won't be ignored.
 # CLI flags override the matching config keys.
 
 # ── Run defaults (each mirrors a CLI flag; the flag wins when both are set) ───────────────
@@ -29,8 +29,8 @@
 
 # Scope pgsafe to your migration files (globs, relative to this file). When set, both the
 # CLI and the editor LSP honor it: files you pass to the CLI that don't match are skipped
-# (with a note on stderr; piped stdin is never filtered), and the LSP only lints matching
-# documents. Unset = all SQL, same as before.
+# (piped stdin is never filtered), and the LSP only lints matching documents. Unset =
+# every SQL file is linted.
 # NOTE: a top-level key, so it must appear before any [section] below.
 # paths = ["migrations/**/*.sql", "db/migrate/*.sql"]
 

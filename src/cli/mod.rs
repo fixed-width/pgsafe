@@ -348,34 +348,17 @@ fn select_inputs(
 /// Drop file inputs the config's `paths` globs don't govern. No-op when `paths`
 /// is unset (`Config::in_scope` returns true for everything), so a config without
 /// `paths` selects exactly as before. Stdin (`"<stdin>"`) has no path identity and
-/// is always kept — piped SQL is never filtered. When one or more files are
-/// dropped, a note is written to stderr so a scoped-out file isn't silently
-/// treated as clean.
+/// is always kept — piped SQL is never filtered. Silent: scoped-out files are
+/// dropped without a note (a `--verbose` flag can surface them later if wanted).
 fn scope_to_paths(
     inputs: Vec<(String, String)>,
     config: &config::Config,
     config_dir: Option<&Path>,
 ) -> Vec<(String, String)> {
-    let mut skipped = Vec::new();
-    let kept: Vec<(String, String)> = inputs
+    inputs
         .into_iter()
-        .filter(|(name, _)| {
-            if name == "<stdin>" || config.in_scope(config_dir, name) {
-                true
-            } else {
-                skipped.push(name.clone());
-                false
-            }
-        })
-        .collect();
-    if !skipped.is_empty() {
-        eprintln!(
-            "note: skipped {} file(s) not matching the configured `paths`: {}",
-            skipped.len(),
-            skipped.join(", ")
-        );
-    }
-    kept
+        .filter(|(name, _)| name == "<stdin>" || config.in_scope(config_dir, name))
+        .collect()
 }
 
 fn read_inputs(paths: &[String]) -> Result<Vec<(String, String)>, String> {

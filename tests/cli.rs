@@ -556,8 +556,8 @@ fn naming_convention_via_config_fires() {
 // ── `paths` scoping (§10 of the LSP design doc — CLI addendum) ───────────────
 //
 // The CLI now consults the same `Config::in_scope` the LSP uses: a file input that
-// doesn't match the config's `paths` globs is dropped before linting, with a note on
-// stderr. Stdin is exempt (no path identity), and the filter is a no-op when `paths`
+// doesn't match the config's `paths` globs is silently dropped before linting.
+// Stdin is exempt (no path identity), and the filter is a no-op when `paths`
 // is unset — existing invocations without `paths` must lint exactly as before.
 
 #[test]
@@ -591,8 +591,8 @@ fn paths_scoping_lints_in_scope_file_and_skips_out_of_scope_file() {
         .code(1)
         .stdout(predicate::str::contains("add-index-non-concurrent"));
 
-    // Out of scope: dropped before linting, noted on stderr, exits clean — a
-    // scoped-out file must not silently look "clean" without the stderr note.
+    // Out of scope: silently dropped before linting, exits clean, and prints no
+    // note (silent by default — an out-of-scope file produces no output at all).
     Command::cargo_bin("pgsafe")
         .unwrap()
         .current_dir(dir.path())
@@ -600,9 +600,7 @@ fn paths_scoping_lints_in_scope_file_and_skips_out_of_scope_file() {
         .assert()
         .success()
         .stdout(predicate::str::contains("add-index-non-concurrent").not())
-        .stderr(predicate::str::contains("skipped"))
-        .stderr(predicate::str::contains("paths"))
-        .stderr(predicate::str::contains("report.sql"));
+        .stderr(predicate::str::contains("skipped").not());
 }
 
 #[test]
