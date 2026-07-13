@@ -360,7 +360,7 @@ pub fn lint_sql(sql: &str, options: &LintOptions) -> Result<Vec<Finding>, LintEr
             rule.check(node, &mut hits);
             for h in hits.drain(..) {
                 let fix = h.fix.as_ref().and_then(|d| {
-                    let r = crate::fix::resolve(d, sql, g.start, g.end);
+                    let r = crate::fix::resolve(d, sql, g.start, g.body_end);
                     debug_assert!(
                         r.is_some() || d.may_legitimately_not_resolve(),
                         "rule {}: fix draft {:?} failed to resolve",

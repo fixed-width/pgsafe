@@ -15,7 +15,8 @@ pub(crate) enum FixAnchor {
     /// Insert at the statement's first-token byte (`span.start`).
     #[allow(dead_code)] // Plan 2 producer: reserved for statement-prologue insertions
     StatementStart,
-    /// Insert at the statement body's end (`span.end`, before any `;`).
+    /// Insert at the statement body's end (`geoms[i].body_end` — after the last real token, before
+    /// any trailing comment or `;`).
     StatementBodyEnd,
     /// Insert immediately after the first whole-word, ASCII-case-insensitive
     /// occurrence of this keyword within the statement span.
@@ -52,10 +53,13 @@ impl FixDraft {
     }
 }
 
-/// Resolve a draft against the source. `start`/`end` are the statement's byte
-/// span (`geoms[i].start/end`). Returns `None` if any anchor can't be located,
-/// or if the draft carries no edits (upholding "fix present ⇒ at least one edit").
-pub(crate) fn resolve(draft: &FixDraft, sql: &str, start: usize, end: usize) -> Option<Fix> {
+/// Resolve a draft against the source. `start` is the statement's first-token offset
+/// (`geoms[i].start`); `body_end` is one past its last real token, before any trailing comment
+/// (`geoms[i].body_end`) — the correct right-hand bound for a body-end insertion and for the
+/// keyword-search window, so a fix never lands in (or matches a keyword inside) a trailing comment.
+/// Returns `None` if any anchor can't be located, or if the draft carries no edits (upholding
+/// "fix present ⇒ at least one edit").
+pub(crate) fn resolve(draft: &FixDraft, sql: &str, start: usize, body_end: usize) -> Option<Fix> {
     if draft.edits.is_empty() {
         return None;
     }
@@ -69,9 +73,9 @@ pub(crate) fn resolve(draft: &FixDraft, sql: &str, start: usize, end: usize) -> 
                 (s, e)
             }
             FixAnchor::StatementStart => (start, start),
-            FixAnchor::StatementBodyEnd => (end, end),
+            FixAnchor::StatementBodyEnd => (body_end, body_end),
             FixAnchor::AfterKeyword(kw) => {
-                let at = keyword_end(sql.get(start..end)?, kw)? + start;
+                let at = keyword_end(sql.get(start..body_end)?, kw)? + start;
                 (at, at)
             }
             FixAnchor::ReplaceTokenAt(at) => {

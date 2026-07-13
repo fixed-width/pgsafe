@@ -68,7 +68,7 @@ fn push_synthesized(
         let g = &geoms[i];
         let (line, column) = line_col(sql, g.start);
         let fix = draft.as_ref().and_then(|d| {
-            let r = crate::fix::resolve(d, sql, g.start, g.end);
+            let r = crate::fix::resolve(d, sql, g.start, g.body_end);
             debug_assert!(
                 r.is_some() || d.may_legitimately_not_resolve(),
                 "rule {rule_id}: fix draft {:?} failed to resolve",

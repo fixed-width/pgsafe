@@ -314,3 +314,30 @@ fn prefer_bigint_fix_clears() {
         "prefer-bigint-primary-key",
     );
 }
+
+/// A StatementBodyEnd fix on a statement with a trailing comment and NO terminating semicolon must
+/// splice before the comment, not inside it — and must converge (regression for the trailing-comment
+/// corruption where ` NOT VALID` landed inside the comment and the fixpoint looped).
+#[test]
+fn body_end_fix_lands_before_trailing_line_comment() {
+    let sql = "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0) -- keep me";
+    let (_, fix) = fix_for(sql, "add-check-without-not-valid");
+    let fixed = apply(sql, &fix.expect("fix present"));
+    assert_eq!(
+        fixed,
+        "ALTER TABLE t ADD CONSTRAINT ck CHECK (a > 0) NOT VALID -- keep me"
+    );
+    assert_clears(sql, "add-check-without-not-valid");
+}
+
+#[test]
+fn body_end_fix_lands_before_trailing_block_comment() {
+    let sql = "ALTER DOMAIN d ADD CONSTRAINT c CHECK (VALUE > 0) /* keep */";
+    let (_, fix) = fix_for(sql, "add-domain-constraint-without-not-valid");
+    let fixed = apply(sql, &fix.expect("fix present"));
+    assert_eq!(
+        fixed,
+        "ALTER DOMAIN d ADD CONSTRAINT c CHECK (VALUE > 0) NOT VALID /* keep */"
+    );
+    assert_clears(sql, "add-domain-constraint-without-not-valid");
+}

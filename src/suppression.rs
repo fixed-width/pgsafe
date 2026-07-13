@@ -129,6 +129,13 @@ pub(crate) struct StatementGeom {
     pub prologue_anchor: usize,
     /// Byte offset one past the statement's last non-whitespace character.
     pub end: usize,
+    /// Byte offset one past the statement's last non-whitespace, non-comment character — i.e. `end`
+    /// with any trailing comment(s) trimmed off. Equals `end` unless a comment sits between the
+    /// statement's last real token and its terminator (the next `;`, or end-of-input for a final
+    /// statement with no `;`): pg_query's `stmt_len` spans up to that terminator, folding the comment
+    /// (and preceding whitespace) into the extent. This is the correct anchor for a `StatementBodyEnd`
+    /// fix insertion, so the spliced text lands before a trailing comment rather than inside it.
+    pub body_end: usize,
     /// 1-based line number of the statement's first real token.
     pub first_line: u32,
     /// 1-based line number of the statement's last non-whitespace character.
@@ -168,6 +175,7 @@ pub(crate) fn geometry(
         // `start` advances past any leading comments to the statement's first real token.
         let start = skip_leading_comments(sql, content_start, &comment_spans);
         let end = raw_end.saturating_sub(trail).max(start);
+        let body_end = trim_trailing_comments(sql, start, end, &comment_spans);
         let first_line = line_col(sql, start).0;
         let last_line = line_col(sql, end.saturating_sub(1).max(start)).0;
         // Walk backward from `start`'s line over any contiguous own-line comment lines so
@@ -179,11 +187,41 @@ pub(crate) fn geometry(
             start,
             prologue_anchor,
             end,
+            body_end,
             first_line,
             last_line,
         });
     }
     out
+}
+
+/// Back `end` up over any trailing comment(s) pg_query folded into the statement extent — which
+/// happens whenever a comment precedes the statement's terminator (`;` or end-of-input), since
+/// `stmt_len` spans up to that terminator and swallows a trailing `-- …` or `/* … */` (the no-`;`
+/// last statement, whose extent runs to end-of-input, is one instance, not the only one). Trailing
+/// whitespace between the statement body and the comment (and between stacked comments) is trimmed
+/// too. Returns `end` unchanged when nothing trails the body.
+fn trim_trailing_comments(
+    sql: &str,
+    start: usize,
+    mut end: usize,
+    spans: &[(usize, usize)],
+) -> usize {
+    loop {
+        // `start..end` is always a valid char-boundary slice (both are token/whitespace boundaries
+        // within the input), so `get` is `Some`; `new_end >= start` by construction.
+        let trimmed_len = sql.get(start..end).map_or(0, |s| s.trim_end().len());
+        let new_end = start + trimmed_len;
+        // A comment that starts within the body and whose span reaches `new_end` means the body's
+        // trailing bytes are that comment — drop it and re-trim the whitespace before it.
+        match spans
+            .iter()
+            .find(|&&(cs, ce)| cs >= start && cs < new_end && ce >= new_end)
+        {
+            Some(&(cs, _)) => end = cs,
+            None => return new_end,
+        }
+    }
 }
 
 /// Returns the byte offset of the first byte on the line containing `pos`.
@@ -524,6 +562,73 @@ mod tests {
             attach_map("-- pgsafe:ignore drop-table  r\n\nDROP TABLE x;"),
             vec![None]
         );
+    }
+
+    /// The `body_end`-bounded body text of each statement — what a `StatementBodyEnd` fix inserts
+    /// after. Excludes any trailing comment folded into the extent.
+    fn bodies(sql: &str) -> Vec<String> {
+        let parsed = crate::ast::parse(sql).unwrap();
+        let comments = scan_comments(sql).unwrap();
+        geometry(sql, &parsed.protobuf.stmts, &comments)
+            .iter()
+            .map(|g| sql[g.start..g.body_end].to_string())
+            .collect()
+    }
+
+    #[test]
+    fn body_end_excludes_trailing_line_comment_without_semicolon() {
+        assert_eq!(
+            bodies("ALTER TABLE t ADD CHECK (a > 0) -- note"),
+            vec!["ALTER TABLE t ADD CHECK (a > 0)"]
+        );
+    }
+
+    #[test]
+    fn body_end_excludes_comment_before_semicolon() {
+        // The comment sits between the last token and `;`; pg_query's stmt_len spans to `;`, so the
+        // comment is folded into the extent and must still be trimmed (not just the no-`;` case).
+        assert_eq!(
+            bodies("ALTER TABLE t ADD CHECK (a > 0) /* c */;"),
+            vec!["ALTER TABLE t ADD CHECK (a > 0)"]
+        );
+    }
+
+    #[test]
+    fn body_end_peels_stacked_trailing_comments() {
+        // The trim loop iterates: a block comment then a line comment, and a newline-separated pair.
+        assert_eq!(
+            bodies("ALTER TABLE t ADD CHECK (a > 0) /* a */ -- b"),
+            vec!["ALTER TABLE t ADD CHECK (a > 0)"]
+        );
+        assert_eq!(
+            bodies("ALTER TABLE t ADD CHECK (a > 0) -- a\n-- b"),
+            vec!["ALTER TABLE t ADD CHECK (a > 0)"]
+        );
+    }
+
+    #[test]
+    fn body_end_scopes_trailing_comment_to_its_own_statement() {
+        // A trailing comment on statement 0 must not bleed into statement 1's body_end (the
+        // `cs >= start` lower bound), and statement 1's trailing comment is trimmed independently.
+        assert_eq!(
+            bodies("SELECT 1 -- lead\n; ALTER TABLE t ADD CHECK (a > 0) -- keep"),
+            vec!["SELECT 1", "ALTER TABLE t ADD CHECK (a > 0)"]
+        );
+    }
+
+    #[test]
+    fn body_end_equals_end_when_nothing_trails_the_body() {
+        // No trailing comment inside the extent (comment after `;`, or none): body_end == end.
+        for sql in [
+            "ALTER TABLE t ADD CHECK (a > 0);",
+            "ALTER TABLE t ADD CHECK (a > 0); -- after the terminator",
+        ] {
+            let parsed = crate::ast::parse(sql).unwrap();
+            let comments = scan_comments(sql).unwrap();
+            for g in geometry(sql, &parsed.protobuf.stmts, &comments) {
+                assert_eq!(g.body_end, g.end, "body_end must equal end for: {sql}");
+            }
+        }
     }
     #[test]
     fn trailing_directive_attaches_to_its_statement() {
