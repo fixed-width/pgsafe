@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 
 use super::ResolvedRun;
-use crate::{gate, lint_input, Finding, Fix, FixEdit, Severity};
+use crate::{gate, lint_input, FileReport, Finding, Fix, FixEdit, Severity};
 
 /// Stdin inputs carry this display-name (see `cli::mod::read_inputs`).
 const STDIN_NAME: &str = "<stdin>";
@@ -47,69 +47,94 @@ fn introduces_new_error(before: &[Finding], after: &[Finding]) -> bool {
 }
 
 /// Run fix mode over the resolved inputs. Summaries go to stderr; `--fix` on
-/// stdin and all `--diff` output go to stdout. `--fix` re-lints the composed
-/// text before writing and refuses to write if the fixes broke parsing. Exit: 2
-/// on any parse/IO error; otherwise `--fix` gates on that pre-write re-lint,
-/// `--diff` on the original findings → 1 if gated findings remain, else 0. When
-/// gating findings survive that no fix touched, a stderr note explains why (never
-/// a silent nonzero exit).
+/// stdin and all `--diff` output go to stdout. Fixes are driven to a fixpoint and
+/// every accepted intermediate is re-linted (parses, introduces no new Error). If
+/// a candidate no longer parses that's a tool bug: a hard error (exit 2) leaving
+/// the file untouched and never echoing stdin — the pre-fixpoint behaviour. If a
+/// candidate would instead introduce a new Error, only that further fix is backed
+/// off: the safe fixes already made are still written/previewed and the run exits
+/// on the gate. Exit: 2 on any parse/IO error; otherwise `--fix` gates on the final
+/// re-lint, `--diff` on the original findings → 1 if gated findings remain, else 0.
+/// When gating findings survive that no fix touched, a stderr note explains why
+/// (never a silent nonzero exit).
 pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
     let mut had_error = false;
     let mut gated = false;
 
     for (name, sql) in &r.inputs {
-        let report = lint_input(name.clone(), sql, &r.options_for(name));
-        if let Some(err) = &report.error {
+        let lint = |s: &str| lint_input(name.clone(), s, &r.options_for(name));
+        let fp = fix_to_fixpoint(sql, lint, MAX_FIX_ITERATIONS);
+
+        // Original didn't parse: report exactly as before and move on.
+        if let Some(err) = &fp.final_report.error {
             eprintln!("error: {name}: {err}");
             had_error = true;
             continue;
         }
-        // Fixes from non-suppressed findings only; count non-suppressed unfixable.
-        let fixes: Vec<&Fix> = report
-            .findings
-            .iter()
-            .filter(|f| !f.is_suppressed())
-            .filter_map(|f| f.fix.as_ref())
-            .collect();
-        let unfixable = report
-            .findings
-            .iter()
-            .filter(|f| !f.is_suppressed() && f.fix.is_none())
-            .count();
 
-        let applied = crate::fix::apply_all(sql, &fixes);
+        // A candidate that no longer parses is a tool bug, not a "findings remain"
+        // outcome: hard error (exit 2), matching pre-fixpoint behaviour — leave the
+        // file untouched and never echo stdin. Handled before the soft-withhold path
+        // so `NewError` is the only back-off that writes/previews a partial result.
+        if let Termination::Withheld(Withheld::ParseBroke(err)) = &fp.termination {
+            let tail = match mode {
+                Mode::Apply => "file left unchanged",
+                Mode::Diff => "no diff shown",
+            };
+            eprintln!(
+                "error: {name}: applying fixes produced SQL that no longer parses ({err}); {tail}"
+            );
+            had_error = true;
+            continue;
+        }
+
+        let changed = fp.sql != *sql;
+
+        // The soft back-off note: a further fix was withheld because applying it would
+        // introduce a new Error. Only `NewError` reaches here (`ParseBroke` is the hard
+        // error above), phrased by whether any safe fixes still landed. `verb` is the
+        // mode's word for the changed case (Apply "wrote", Diff "previewing").
+        let withheld_note = |verb: &str| -> Option<String> {
+            matches!(fp.termination, Termination::Withheld(Withheld::NewError)).then(|| {
+                if changed {
+                    format!(
+                        "{name}: some further fixes withheld — applying them would introduce a new issue; {verb} the safe ones"
+                    )
+                } else {
+                    format!(
+                        "{name}: fixes withheld — applying them would introduce a new issue; lint `{name}` to see the findings"
+                    )
+                }
+            })
+        };
 
         match mode {
             Mode::Diff => {
-                // Re-lint the composed result. If applying the fixes would break parsing or
-                // introduce a new Error, show no diff for this file — matching what `--fix`
-                // refuses to write, so a `--diff` preview never differs from what `--fix` does.
-                let after = lint_input(name.clone(), &applied.sql, &r.options_for(name));
-                if let Some(err) = &after.error {
-                    eprintln!(
-                        "error: {name}: applying fixes produced SQL that no longer parses ({err}); no diff shown"
-                    );
-                    had_error = true;
-                    continue;
-                }
-                if introduces_new_error(&report.findings, &after.findings) {
-                    eprintln!(
-                        "{name}: fixes withheld — applying them would introduce a new issue; lint `{name}` to see the findings"
-                    );
-                    if gate(&report.findings, r.fail_on) {
-                        gated = true;
+                if let Some(note) = withheld_note("previewing") {
+                    eprintln!("{note}");
+                    if !changed {
+                        // Nothing safe to preview; gate on the original state (as today).
+                        if gate(&fp.original_findings, r.fail_on) {
+                            gated = true;
+                        }
+                        continue;
                     }
-                    continue;
                 }
-                print!("{}", render_diff(name, sql, &applied.edits));
-                if gate(&report.findings, r.fail_on) {
+                if matches!(fp.termination, Termination::CapHit) {
+                    eprintln!(
+                        "{name}: fixes did not converge after {} iterations; showing the last stable result",
+                        fp.iterations
+                    );
+                }
+                let diff = match &fp.edits {
+                    Some(edits) => render_diff(name, sql, edits),
+                    None => render_diff_strings(name, sql, &fp.sql),
+                };
+                print!("{diff}");
+                // Diff gates on the original findings (it changes nothing on disk).
+                if gate(&fp.original_findings, r.fail_on) {
                     gated = true;
-                    // Residual gating findings the diff can't show: those with no
-                    // automatic fix, PLUS fixable ones whose edit `apply_all` skipped
-                    // for overlapping an accepted fix. Both are absent from the diff, so
-                    // report them rather than exiting nonzero in silence — even when the
-                    // diff above is non-empty (a mixed fixable/unfixable file).
-                    let residual = unfixable + applied.skipped_overlapping;
+                    let residual = fp.unfixable + fp.skipped_overlapping;
                     if residual > 0 {
                         eprintln!(
                             "{name}: {residual} finding(s) have no automatic fix or were skipped (overlapping another fix); lint `{name}` to see them"
@@ -118,71 +143,56 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                 }
             }
             Mode::Apply => {
-                // Verify the composed result still parses BEFORE writing anything;
-                // this same re-lint also drives the exit gate below.
-                let after = lint_input(name.clone(), &applied.sql, &r.options_for(name));
-                if let Some(err) = &after.error {
-                    eprintln!(
-                        "error: {name}: applying fixes produced SQL that no longer parses ({err}); file left unchanged"
-                    );
-                    had_error = true;
-                    continue;
-                }
-                // No-regression backstop: never write a result whose fixes introduced a new
-                // Error the original lacked. Leave the file unchanged; the original findings
-                // still drive the gate. (stdin still emits its unchanged input.)
-                if introduces_new_error(&report.findings, &after.findings) {
-                    if name == STDIN_NAME {
-                        print!("{sql}");
-                    }
-                    eprintln!(
-                        "{name}: fixes withheld — applying them would introduce a new issue; lint `{name}` to see the findings"
-                    );
-                    if gate(&report.findings, r.fail_on) {
-                        gated = true;
-                    }
-                    continue;
-                }
-                let changed = applied.sql != *sql;
+                // `fp.sql` is guaranteed parse-valid and regression-free; safe to write.
                 if name == STDIN_NAME {
-                    print!("{}", applied.sql);
+                    print!("{}", fp.sql);
                 } else if changed {
-                    if let Err(e) = write_atomic(name, &applied.sql) {
+                    if let Err(e) = write_atomic(name, &fp.sql) {
                         eprintln!("error: {name}: {e}");
                         had_error = true;
                         continue;
                     }
                 }
+                if let Some(note) = withheld_note("wrote") {
+                    eprintln!("{note}");
+                }
+                if matches!(fp.termination, Termination::CapHit) {
+                    // Gate the "wrote" phrasing on `changed`: an oscillation that returns
+                    // to the original at the cap leaves the file untouched (nothing written).
+                    let verb = if changed { "wrote" } else { "kept" };
+                    eprintln!(
+                        "{name}: fixes did not converge after {} iterations; {verb} the last stable result",
+                        fp.iterations
+                    );
+                }
                 if changed {
                     let mut note = String::new();
-                    if unfixable > 0 {
-                        note.push_str(&format!("{unfixable} unfixable"));
+                    if fp.unfixable > 0 {
+                        note.push_str(&format!("{} unfixable", fp.unfixable));
                     }
-                    if applied.skipped_overlapping > 0 {
+                    if fp.skipped_overlapping > 0 {
                         if !note.is_empty() {
                             note.push_str(", ");
                         }
-                        note.push_str(&format!(
-                            "{} skipped-overlapping",
-                            applied.skipped_overlapping
-                        ));
+                        note.push_str(&format!("{} skipped-overlapping", fp.skipped_overlapping));
                     }
                     let suffix = if note.is_empty() {
                         String::new()
                     } else {
                         format!(" ({note})")
                     };
-                    eprintln!("fixed {} findings in {name}{suffix}", applied.applied);
+                    eprintln!("fixed {} findings in {name}{suffix}", fp.applied);
                 }
-                // Exit gate: the pre-write re-lint of the composed text.
-                if gate(&after.findings, r.fail_on) {
+                // Apply gates on the post-fix re-lint.
+                if gate(&fp.final_report.findings, r.fail_on) {
                     gated = true;
                     if !changed {
-                        // Gating findings remain but nothing was rewritten: don't exit
-                        // nonzero silently. (When `changed`, the "fixed …" line above
-                        // already reports the unfixable/skipped count.)
-                        let remaining =
-                            after.findings.iter().filter(|f| !f.is_suppressed()).count();
+                        let remaining = fp
+                            .final_report
+                            .findings
+                            .iter()
+                            .filter(|f| !f.is_suppressed())
+                            .count();
                         eprintln!(
                             "{name}: {remaining} finding(s) remain that --fix cannot resolve; lint `{name}` to see them"
                         );
@@ -423,6 +433,65 @@ pub(super) fn render_diff(name: &str, original: &str, edits: &[FixEdit]) -> Stri
     out
 }
 
+/// Coarse, dependency-free unified diff of two whole strings, used whenever
+/// [`Fixpoint::edits`] is `None` — i.e. **0 or ≥2** applying passes (a single pass
+/// keeps byte-exact edits for [`render_diff`]). The 0-pass/equal case has nothing
+/// to show and returns `""`; the real work is the ≥2-pass case, where per-edit
+/// offsets against the original are gone. Trims the common leading/trailing lines
+/// and emits ONE hunk covering everything in between, surrounded by up to
+/// [`CONTEXT`] context lines. Coarser than [`render_diff`]'s coalesced per-edit
+/// hunks but correct and `git apply`-able.
+fn render_diff_strings(name: &str, original: &str, updated: &str) -> String {
+    if original == updated {
+        return String::new();
+    }
+    let a: Vec<&str> = original.split_inclusive('\n').collect();
+    let b: Vec<&str> = updated.split_inclusive('\n').collect();
+
+    // Common leading lines.
+    let mut pre = 0usize;
+    while pre < a.len() && pre < b.len() && a[pre] == b[pre] {
+        pre += 1;
+    }
+    // Common trailing lines (not re-counting the shared prefix).
+    let mut suf = 0usize;
+    while suf < a.len() - pre && suf < b.len() - pre && a[a.len() - 1 - suf] == b[b.len() - 1 - suf]
+    {
+        suf += 1;
+    }
+
+    let a_first = pre;
+    let a_last_excl = a.len() - suf; // exclusive
+    let b_first = pre;
+    let b_last_excl = b.len() - suf;
+
+    let ctx_before = pre.min(CONTEXT);
+    let ctx_after = suf.min(CONTEXT);
+
+    let old_start = a_first - ctx_before + 1; // 1-based
+    let new_start = b_first - ctx_before + 1;
+    let old_count = ctx_before + (a_last_excl - a_first) + ctx_after;
+    let new_count = ctx_before + (b_last_excl - b_first) + ctx_after;
+
+    let mut out = format!("--- a/{name}\n+++ b/{name}\n");
+    out.push_str(&format!(
+        "@@ -{old_start},{old_count} +{new_start},{new_count} @@\n"
+    ));
+    for &line in &a[a_first - ctx_before..a_first] {
+        push_diff_line(&mut out, ' ', line);
+    }
+    for &line in &a[a_first..a_last_excl] {
+        push_diff_line(&mut out, '-', line);
+    }
+    for &line in &b[b_first..b_last_excl] {
+        push_diff_line(&mut out, '+', line);
+    }
+    for &line in &a[a_last_excl..a_last_excl + ctx_after] {
+        push_diff_line(&mut out, ' ', line);
+    }
+    out
+}
+
 /// Push one unified-diff body line — `prefix` then `content` — appending git's
 /// `\ No newline at end of file` marker when `content` (a file's final line)
 /// carries no trailing newline. `split_inclusive('\n')` yields a marker-worthy
@@ -443,14 +512,178 @@ fn push_diff_line(out: &mut String, prefix: char, content: &str) {
     }
 }
 
+/// Hard cap on fixpoint iterations. A deliberately generous bound: no real rule
+/// cascades past a single applying pass today, so this ceiling is only ever reached
+/// by a pathological or oscillating rule — the cap just lets such a rule stop
+/// gracefully (last validated-good result kept) instead of looping forever.
+const MAX_FIX_ITERATIONS: usize = 10;
+
+/// A candidate the loop refused to accept, keeping the prior validated-good text.
+enum Withheld {
+    /// A candidate no longer parsed; its error message.
+    ParseBroke(String),
+    /// A candidate introduced a new Error vs the original.
+    NewError,
+}
+
+/// How the fixpoint loop stopped. Exactly one of these holds per run, so the
+/// withheld-note and non-convergence-note diagnostics are mutually exclusive by
+/// construction (a contradictory pair is unrepresentable).
+enum Termination {
+    /// Reached a fixpoint: no remaining fix, or a pass made no textual progress.
+    Converged,
+    /// A candidate was backed off (see [`Withheld`]); prior good text is kept.
+    Withheld(Withheld),
+    /// Hit the iteration cap while still making textual progress.
+    CapHit,
+}
+
+/// Result of driving `apply_all` to a fixpoint over one input.
+struct Fixpoint {
+    /// Final text: parse-valid and regression-free vs the original (may equal it)
+    /// whenever `final_report.error` is `None`; otherwise (the input itself didn't
+    /// parse) it equals the unparseable original and is unused.
+    sql: String,
+    /// `Some(edits-against-original)` iff **exactly one** applying pass occurred (the
+    /// universal case today whenever any fix applies) — lets `--diff` reuse the
+    /// byte-exact edit renderer. `None` when zero passes apply (nothing changed) or
+    /// ≥2 do (offsets have shifted; use an original-vs-final diff).
+    edits: Option<Vec<FixEdit>>,
+    /// Total fixes applied across all passes.
+    applied: usize,
+    /// Applying passes performed.
+    iterations: usize,
+    /// How the loop stopped (fixpoint, back-off, or cap) — see [`Termination`].
+    termination: Termination,
+    /// The original input's findings (regression baseline; also the `--diff` gate basis).
+    original_findings: Vec<Finding>,
+    /// Re-lint of `sql` (drives the `--fix` exit gate and the unfixable count).
+    final_report: FileReport,
+    /// Non-suppressed findings in `final_report` with no automatic fix.
+    unfixable: usize,
+    /// Residual overlap-skips in the last applying pass.
+    skipped_overlapping: usize,
+}
+
+/// Drive `apply_all` to a fixpoint. `lint` is injected so the loop is testable
+/// without CLI wiring and can be exercised with a simulated cascade no real rule
+/// produces yet. Every accepted intermediate is validated (parses, introduces no
+/// new Error vs `original`), so `sql` is always safe to write.
+fn fix_to_fixpoint(
+    original: &str,
+    lint: impl Fn(&str) -> FileReport,
+    max_iters: usize,
+) -> Fixpoint {
+    let original_report = lint(original);
+    let original_findings = original_report.findings.clone();
+
+    // If the input itself doesn't parse, there's nothing to do; surface the error
+    // via `final_report` (the caller reports it exactly as before).
+    if original_report.error.is_some() {
+        return Fixpoint {
+            sql: original.to_string(),
+            edits: None,
+            applied: 0,
+            iterations: 0,
+            termination: Termination::Converged,
+            original_findings,
+            final_report: original_report,
+            unfixable: 0,
+            skipped_overlapping: 0,
+        };
+    }
+
+    let mut current = original.to_string();
+    let mut report = original_report; // always == lint(current)
+    let mut first_edits: Option<Vec<FixEdit>> = None;
+    let mut iterations = 0usize;
+    let mut applied_total = 0usize;
+    let mut skipped_overlapping = 0usize;
+    // Set on every natural stop; left `None` iff the loop exhausts `max_iters`.
+    let mut termination: Option<Termination> = None;
+
+    for _ in 0..max_iters {
+        let fixes: Vec<&Fix> = report
+            .findings
+            .iter()
+            .filter(|f| !f.is_suppressed())
+            .filter_map(|f| f.fix.as_ref())
+            .collect();
+        if fixes.is_empty() {
+            termination = Some(Termination::Converged); // nothing left to do
+            break;
+        }
+        let step = crate::fix::apply_all(&current, &fixes);
+        if step.sql == current {
+            // No textual progress (remaining fixes all mutually overlap) — a fixpoint.
+            skipped_overlapping = step.skipped_overlapping;
+            termination = Some(Termination::Converged);
+            break;
+        }
+        let candidate = lint(&step.sql);
+        if let Some(err) = &candidate.error {
+            termination = Some(Termination::Withheld(Withheld::ParseBroke(err.clone())));
+            break;
+        }
+        if introduces_new_error(&original_findings, &candidate.findings) {
+            termination = Some(Termination::Withheld(Withheld::NewError));
+            break;
+        }
+        // Accept the candidate.
+        current = step.sql;
+        iterations += 1;
+        applied_total += step.applied;
+        skipped_overlapping = step.skipped_overlapping;
+        first_edits = if iterations == 1 {
+            Some(step.edits)
+        } else {
+            None
+        };
+        report = candidate; // == lint(current)
+    }
+
+    let unfixable = report
+        .findings
+        .iter()
+        .filter(|f| !f.is_suppressed() && f.fix.is_none())
+        .count();
+
+    // No natural stop ⇒ the loop ran the full `max_iters`. Decide by the final
+    // report: a non-suppressed finding still carrying a fix means we were cut off
+    // mid-progress (CapHit); otherwise the last accepted pass actually reached the
+    // fixpoint on the `max_iters`-th step, so it converged.
+    let termination = termination.unwrap_or_else(|| {
+        let still_fixable = report
+            .findings
+            .iter()
+            .any(|f| !f.is_suppressed() && f.fix.is_some());
+        if still_fixable {
+            Termination::CapHit
+        } else {
+            Termination::Converged
+        }
+    });
+
+    Fixpoint {
+        sql: current,
+        edits: first_edits,
+        applied: applied_total,
+        iterations,
+        termination,
+        original_findings,
+        final_report: report,
+        unfixable,
+        skipped_overlapping,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::render_diff;
-    use crate::FixEdit;
+    use crate::{FileReport, Fix, FixEdit, Location, Severity};
 
     #[test]
     fn introduces_new_error_detects_a_new_error_rule() {
-        use crate::{Location, Severity};
         let mk = |rule: &str, sev| crate::Finding {
             rule_id: rule.into(),
             severity: sev,
@@ -601,5 +834,395 @@ mod tests {
             2,
             "one marker per side: {out}"
         );
+    }
+
+    // --- fixpoint driver test helpers ---
+
+    fn finding_with_fix(rule: &str, sev: Severity, fix: Option<Fix>) -> crate::Finding {
+        crate::Finding {
+            rule_id: rule.into(),
+            severity: sev,
+            message: String::new(),
+            guidance: String::new(),
+            statement_index: 0,
+            location: Location {
+                byte: 0,
+                line: 1,
+                column: 1,
+            },
+            snippet: String::new(),
+            suppression: None,
+            fix,
+        }
+    }
+
+    fn report_with(findings: Vec<crate::Finding>) -> FileReport {
+        FileReport {
+            name: "t".into(),
+            findings,
+            error: None,
+        }
+    }
+
+    // Replace the single char at byte 0 with `to`.
+    fn swap_first_char(to: &str) -> Fix {
+        Fix {
+            title: "swap".into(),
+            edits: vec![FixEdit {
+                start: 0,
+                end: 1,
+                replacement: to.into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn fixpoint_cascades_until_no_fix() {
+        // "1"→"2"→"3"→none, Warning severity so the no-regression check never fires.
+        let lint = |s: &str| match s {
+            "1" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("2")),
+            )]),
+            "2" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("3")),
+            )]),
+            _ => report_with(vec![]),
+        };
+        let fp = super::fix_to_fixpoint("1", lint, super::MAX_FIX_ITERATIONS);
+        assert_eq!(fp.sql, "3");
+        assert_eq!(fp.iterations, 2);
+        assert!(matches!(fp.termination, super::Termination::Converged));
+        assert_eq!(fp.applied, 2);
+        // Two applying passes → original-coordinate edits are no longer valid.
+        assert!(fp.edits.is_none());
+    }
+
+    #[test]
+    fn fixpoint_single_pass_keeps_original_edits() {
+        // One fix, converges after one apply → edits available for the byte-exact diff.
+        let lint = |s: &str| match s {
+            "1" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("2")),
+            )]),
+            _ => report_with(vec![]),
+        };
+        let fp = super::fix_to_fixpoint("1", lint, super::MAX_FIX_ITERATIONS);
+        assert_eq!(fp.sql, "2");
+        assert_eq!(fp.iterations, 1);
+        assert!(matches!(fp.termination, super::Termination::Converged));
+        assert_eq!(
+            fp.edits.as_deref(),
+            Some(
+                &[FixEdit {
+                    start: 0,
+                    end: 1,
+                    replacement: "2".into()
+                }][..]
+            )
+        );
+    }
+
+    #[test]
+    fn fixpoint_no_fixes_is_a_noop() {
+        let lint = |_: &str| report_with(vec![]);
+        let fp = super::fix_to_fixpoint("SELECT 1;", lint, super::MAX_FIX_ITERATIONS);
+        assert_eq!(fp.sql, "SELECT 1;");
+        assert_eq!(fp.iterations, 0);
+        assert!(matches!(fp.termination, super::Termination::Converged));
+        assert!(fp.edits.is_none());
+        assert_eq!(fp.applied, 0);
+    }
+
+    #[test]
+    fn fixpoint_oscillation_hits_cap() {
+        // "a"→"b"→"a"→… never stabilizes; the cap stops it with the last good text.
+        let lint = |s: &str| match s {
+            "a" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("b")),
+            )]),
+            "b" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("a")),
+            )]),
+            _ => report_with(vec![]),
+        };
+        let fp = super::fix_to_fixpoint("a", lint, 4);
+        assert!(matches!(fp.termination, super::Termination::CapHit));
+        assert_eq!(fp.iterations, 4);
+        // Result is one of the validated intermediates — always parse-valid SQL.
+        assert!(fp.sql == "a" || fp.sql == "b");
+    }
+
+    #[test]
+    fn fixpoint_backs_off_new_error_on_second_pass() {
+        // Pass 1 (Warning) applies; pass 2's result introduces a NEW Error rule → back off.
+        let lint = |s: &str| match s {
+            "1" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("2")),
+            )]),
+            "2" => report_with(vec![
+                finding_with_fix("r", Severity::Warning, Some(swap_first_char("3"))),
+                // no error yet at "2"; the error appears only in the *candidate* "3":
+            ]),
+            "3" => report_with(vec![finding_with_fix("boom", Severity::Error, None)]),
+            _ => report_with(vec![]),
+        };
+        let fp = super::fix_to_fixpoint("1", lint, super::MAX_FIX_ITERATIONS);
+        assert_eq!(fp.sql, "2"); // kept the last validated-good result
+        assert_eq!(fp.iterations, 1);
+        assert!(matches!(
+            fp.termination,
+            super::Termination::Withheld(super::Withheld::NewError)
+        ));
+    }
+
+    #[test]
+    fn fixpoint_backs_off_on_first_pass_leaves_original() {
+        // The very first candidate introduces a new Error → nothing accepted, original kept.
+        let lint = |s: &str| match s {
+            "1" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("2")),
+            )]),
+            _ => report_with(vec![finding_with_fix("boom", Severity::Error, None)]),
+        };
+        let fp = super::fix_to_fixpoint("1", lint, super::MAX_FIX_ITERATIONS);
+        assert_eq!(fp.sql, "1");
+        assert_eq!(fp.iterations, 0);
+        assert!(matches!(
+            fp.termination,
+            super::Termination::Withheld(super::Withheld::NewError)
+        ));
+        assert!(fp.edits.is_none());
+    }
+
+    #[test]
+    fn fixpoint_backs_off_parse_break() {
+        let lint = |s: &str| match s {
+            "ok" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("X")),
+            )]),
+            _ => FileReport {
+                name: "t".into(),
+                findings: vec![],
+                error: Some("boom".into()),
+            },
+        };
+        let fp = super::fix_to_fixpoint("ok", lint, super::MAX_FIX_ITERATIONS);
+        assert_eq!(fp.sql, "ok");
+        assert!(matches!(
+            fp.termination,
+            super::Termination::Withheld(super::Withheld::ParseBroke(_))
+        ));
+    }
+
+    #[test]
+    fn fixpoint_cap_reached_exactly_at_convergence() {
+        // A cascade that produces exactly N fixes then none, run with max_iters = N:
+        // the final accepted pass lands the fixpoint on the Nth step. The loop
+        // exhausts the cap without a natural break, but the final report carries no
+        // remaining fix, so this is Converged — not the false CapHit the old
+        // `iterations == max_iters` shortcut would have reported.
+        let lint = |s: &str| match s {
+            "1" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("2")),
+            )]),
+            "2" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("3")),
+            )]),
+            "3" => report_with(vec![finding_with_fix(
+                "r",
+                Severity::Warning,
+                Some(swap_first_char("4")),
+            )]),
+            _ => report_with(vec![]),
+        };
+        let fp = super::fix_to_fixpoint("1", lint, 3);
+        assert!(
+            matches!(fp.termination, super::Termination::Converged),
+            "reached the fixpoint exactly at the cap"
+        );
+        assert_eq!(fp.sql, "4");
+        assert_eq!(fp.iterations, 3);
+    }
+
+    #[test]
+    fn fixpoint_recovers_skipped_overlap_on_next_pass() {
+        // Pass 1 emits two fixes whose edits overlap at byte 0: `apply_all` accepts
+        // the first ([0,1)→"X") and skips the second for overlap. Pass 2's re-lint
+        // re-reports the loser with a now-non-overlapping fix ([1,2)→"Y") that lands.
+        // The driver must recover it across passes and end clean with no residual skip.
+        let lint = |s: &str| match s {
+            "ab" => report_with(vec![
+                finding_with_fix("winner", Severity::Warning, Some(swap_first_char("X"))),
+                finding_with_fix(
+                    "loser",
+                    Severity::Warning,
+                    Some(Fix {
+                        title: "loser".into(),
+                        edits: vec![FixEdit {
+                            start: 0,
+                            end: 2,
+                            replacement: "?".into(),
+                        }],
+                    }),
+                ),
+            ]),
+            "Xb" => report_with(vec![finding_with_fix(
+                "loser",
+                Severity::Warning,
+                Some(Fix {
+                    title: "loser".into(),
+                    edits: vec![FixEdit {
+                        start: 1,
+                        end: 2,
+                        replacement: "Y".into(),
+                    }],
+                }),
+            )]),
+            _ => report_with(vec![]),
+        };
+        let fp = super::fix_to_fixpoint("ab", lint, super::MAX_FIX_ITERATIONS);
+        assert!(matches!(fp.termination, super::Termination::Converged));
+        assert_eq!(fp.sql, "XY"); // the skipped fix landed on the second pass
+        assert_eq!(fp.applied, 2);
+        assert_eq!(fp.skipped_overlapping, 0); // no residual skip after recovery
+    }
+
+    #[test]
+    fn fixpoint_no_textual_progress_converges() {
+        // A fix whose edit is a textual no-op (replace byte 0 with itself) makes a
+        // pass produce no change; the loop treats that as a fixpoint, not a cap hit.
+        let lint = |s: &str| match s {
+            "x" => report_with(vec![finding_with_fix(
+                "noop",
+                Severity::Warning,
+                Some(swap_first_char("x")),
+            )]),
+            _ => report_with(vec![]),
+        };
+        let fp = super::fix_to_fixpoint("x", lint, super::MAX_FIX_ITERATIONS);
+        assert!(matches!(fp.termination, super::Termination::Converged));
+        assert_eq!(fp.iterations, 0);
+        assert_eq!(fp.sql, "x");
+    }
+
+    #[test]
+    fn render_diff_strings_single_hunk_between_common_context() {
+        let a = "keep 1;\nOLD a;\nOLD b;\nkeep 2;\n";
+        let b = "keep 1;\nNEW a;\nkeep 2;\n";
+        let out = super::render_diff_strings("f.sql", a, b);
+        assert!(out.starts_with("--- a/f.sql\n+++ b/f.sql\n"), "{out}");
+        assert!(out.contains("@@ "), "{out}");
+        assert!(out.contains(" keep 1;\n"), "leading context: {out}");
+        assert!(out.contains(" keep 2;\n"), "trailing context: {out}");
+        assert!(
+            out.contains("-OLD a;\n") && out.contains("-OLD b;\n"),
+            "removed lines: {out}"
+        );
+        assert!(out.contains("+NEW a;\n"), "added line: {out}");
+    }
+
+    #[test]
+    fn render_diff_strings_equal_is_empty() {
+        assert_eq!(super::render_diff_strings("f.sql", "x;\n", "x;\n"), "");
+    }
+
+    #[test]
+    fn render_diff_strings_change_on_first_line() {
+        // Change on the FIRST line: no common prefix (pre == 0 → ctx_before == 0), so
+        // the hunk starts at line 1 with no leading context ahead of the change.
+        let a = "OLD;\nkeep;\n";
+        let b = "NEW;\nkeep;\n";
+        let out = super::render_diff_strings("f.sql", a, b);
+        assert!(out.contains("@@ -1,2 +1,2 @@\n"), "{out}");
+        assert!(out.contains("-OLD;\n"), "{out}");
+        assert!(out.contains("+NEW;\n"), "{out}");
+        assert!(out.contains(" keep;\n"), "trailing context: {out}");
+        // The change is the very first body line — nothing precedes it.
+        assert!(
+            out.starts_with("--- a/f.sql\n+++ b/f.sql\n@@ -1,2 +1,2 @@\n-OLD;\n"),
+            "no leading context before a first-line change: {out}"
+        );
+    }
+
+    #[test]
+    fn render_diff_strings_change_reaching_last_line() {
+        // Change reaching the LAST line: no common suffix (suf == 0 → ctx_after == 0),
+        // so the hunk ends at the changed line with no trailing context after it.
+        let a = "keep;\nOLD;\n";
+        let b = "keep;\nNEW;\n";
+        let out = super::render_diff_strings("f.sql", a, b);
+        assert!(out.contains("@@ -1,2 +1,2 @@\n"), "{out}");
+        assert!(out.contains(" keep;\n"), "leading context: {out}");
+        assert!(out.contains("-OLD;\n"), "{out}");
+        assert!(out.contains("+NEW;\n"), "{out}");
+        // The added line is the end of output — no trailing context follows.
+        assert!(
+            out.ends_with("+NEW;\n"),
+            "no trailing context after a last-line change: {out}"
+        );
+    }
+
+    #[test]
+    fn real_inputs_converge_in_one_pass() {
+        use crate::LintOptions;
+        let opts = LintOptions::default();
+        // Representative single- and multi-fix inputs across the fix-producing rules.
+        let inputs = [
+            "CREATE INDEX i ON t (c);",
+            "ALTER TABLE t ADD COLUMN c json;",
+            "ALTER TABLE t ADD CONSTRAINT fk FOREIGN KEY (a) REFERENCES u (id);",
+            "REINDEX INDEX i;",
+            "DROP INDEX i;",
+            // A statement that triggers two independent fixes at once:
+            "CREATE INDEX i ON t (c);\nALTER TABLE t ADD COLUMN c json;",
+        ];
+        for sql in inputs {
+            let lint = |s: &str| crate::lint_input("<test>", s, &opts);
+            let fp = super::fix_to_fixpoint(sql, lint, super::MAX_FIX_ITERATIONS);
+            assert!(
+                fp.iterations <= 1,
+                "input unexpectedly cascaded ({} passes): {sql:?}",
+                fp.iterations
+            );
+            assert!(
+                matches!(fp.termination, super::Termination::Converged),
+                "input did not converge: {sql:?}"
+            );
+            // When a fix applied, the fixpoint result matches a single apply_all.
+            if fp.iterations == 1 {
+                let report = crate::lint_input("<test>", sql, &opts);
+                let fixes: Vec<&crate::Fix> = report
+                    .findings
+                    .iter()
+                    .filter(|f| !f.is_suppressed())
+                    .filter_map(|f| f.fix.as_ref())
+                    .collect();
+                let once = crate::fix::apply_all(sql, &fixes);
+                assert_eq!(
+                    fp.sql, once.sql,
+                    "fixpoint diverged from single-pass for {sql:?}"
+                );
+            }
+        }
     }
 }
