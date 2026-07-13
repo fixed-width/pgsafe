@@ -114,6 +114,22 @@ export const RULES: Record<string, RuleDoc> = {
     },
     related: ["add-fk-without-not-valid", "set-not-null"],
   },
+  "add-domain-constraint-without-not-valid": {
+    id: "add-domain-constraint-without-not-valid",
+    title: "ALTER DOMAIN ADD CONSTRAINT without NOT VALID",
+    severity: "error",
+    category: "Constraints",
+    summary: "Adding a domain `CHECK` without `NOT VALID` scans and locks every dependent table.",
+    whyUnsafe:
+      "`ALTER DOMAIN … ADD CONSTRAINT` without `NOT VALID` validates the new `CHECK` against every existing value of the domain type across all dependent tables, scanning and locking them.",
+    safeRewrite:
+      "Add the constraint with `NOT VALID`, then run `ALTER DOMAIN … VALIDATE CONSTRAINT` separately.",
+    example: {
+      unsafe: "ALTER DOMAIN us_postal ADD CONSTRAINT fmt CHECK (VALUE ~ '^[0-9]{5}$');",
+      safe: "ALTER DOMAIN us_postal ADD CONSTRAINT fmt CHECK (VALUE ~ '^[0-9]{5}$') NOT VALID;\nALTER DOMAIN us_postal VALIDATE CONSTRAINT fmt;",
+    },
+    related: ["add-check-without-not-valid"],
+  },
   "set-not-null": {
     id: "set-not-null",
     title: "SET NOT NULL",

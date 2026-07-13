@@ -85,6 +85,30 @@ fn add_check_without_not_valid_silent() {
     ));
 }
 
+// ── add-domain-constraint-without-not-valid ──────────────────────────────────
+
+#[test]
+fn add_domain_constraint_without_not_valid_fires() {
+    assert!(fires(
+        "ALTER DOMAIN d ADD CONSTRAINT c CHECK (VALUE > 0)",
+        "add-domain-constraint-without-not-valid"
+    ));
+}
+
+#[test]
+fn add_domain_constraint_without_not_valid_silent() {
+    // NOT VALID defers validation
+    assert!(!fires(
+        "ALTER DOMAIN d ADD CONSTRAINT c CHECK (VALUE > 0) NOT VALID",
+        "add-domain-constraint-without-not-valid"
+    ));
+    // VALIDATE CONSTRAINT is the sanctioned safe follow-up
+    assert!(!fires(
+        "ALTER DOMAIN d VALIDATE CONSTRAINT c",
+        "add-domain-constraint-without-not-valid"
+    ));
+}
+
 // ── set-not-null ────────────────────────────────────────────────────────────
 
 #[test]
