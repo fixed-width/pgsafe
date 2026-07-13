@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `--fix` / `--diff` now apply fixes iteratively to a fixpoint (bounded at 10
+  passes), so a fix that unblocks another is fully resolved in one run. No change
+  for current rules (all converge in a single pass); the loop never writes SQL
+  that fails to parse or introduces a new error.
 - Human output indent-aligns the continuation lines of multi-line statements so wrapped SQL stays readable (#92).
 
 ### Fixed

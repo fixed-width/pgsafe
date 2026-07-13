@@ -58,58 +58,63 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
     let mut gated = false;
 
     for (name, sql) in &r.inputs {
-        let report = lint_input(name.clone(), sql, &r.options_for(name));
-        if let Some(err) = &report.error {
+        let lint = |s: &str| lint_input(name.clone(), s, &r.options_for(name));
+        let fp = fix_to_fixpoint(name, sql, lint, MAX_FIX_ITERATIONS);
+
+        // Original didn't parse: report exactly as before and move on.
+        if let Some(err) = &fp.final_report.error {
             eprintln!("error: {name}: {err}");
             had_error = true;
             continue;
         }
-        // Fixes from non-suppressed findings only; count non-suppressed unfixable.
-        let fixes: Vec<&Fix> = report
-            .findings
-            .iter()
-            .filter(|f| !f.is_suppressed())
-            .filter_map(|f| f.fix.as_ref())
-            .collect();
-        let unfixable = report
-            .findings
-            .iter()
-            .filter(|f| !f.is_suppressed() && f.fix.is_none())
-            .count();
 
-        let applied = crate::fix::apply_all(sql, &fixes);
+        let changed = fp.sql != *sql;
+
+        // A withheld note (parse-break / new Error), phrased by whether any safe
+        // fixes still landed. `reason` matches today's wording for the unchanged case.
+        let withheld_note = |changed: bool| -> Option<String> {
+            fp.withheld.as_ref().map(|w| {
+                let reason = match w {
+                    Withheld::ParseBroke(err) => {
+                        format!("applying them would break parsing ({err})")
+                    }
+                    Withheld::NewError => "applying them would introduce a new issue".to_string(),
+                };
+                if changed {
+                    format!("{name}: some further fixes withheld — {reason}; wrote the safe ones")
+                } else {
+                    format!("{name}: fixes withheld — {reason}; lint `{name}` to see the findings")
+                }
+            })
+        };
 
         match mode {
             Mode::Diff => {
-                // Re-lint the composed result. If applying the fixes would break parsing or
-                // introduce a new Error, show no diff for this file — matching what `--fix`
-                // refuses to write, so a `--diff` preview never differs from what `--fix` does.
-                let after = lint_input(name.clone(), &applied.sql, &r.options_for(name));
-                if let Some(err) = &after.error {
-                    eprintln!(
-                        "error: {name}: applying fixes produced SQL that no longer parses ({err}); no diff shown"
-                    );
-                    had_error = true;
-                    continue;
-                }
-                if introduces_new_error(&report.findings, &after.findings) {
-                    eprintln!(
-                        "{name}: fixes withheld — applying them would introduce a new issue; lint `{name}` to see the findings"
-                    );
-                    if gate(&report.findings, r.fail_on) {
-                        gated = true;
+                if let Some(note) = withheld_note(changed) {
+                    eprintln!("{note}");
+                    if !changed {
+                        // Nothing safe to preview; gate on the original state (as today).
+                        if gate(&fp.original_findings, r.fail_on) {
+                            gated = true;
+                        }
+                        continue;
                     }
-                    continue;
                 }
-                print!("{}", render_diff(name, sql, &applied.edits));
-                if gate(&report.findings, r.fail_on) {
+                if !fp.converged {
+                    eprintln!(
+                        "{name}: fixes did not converge after {} iterations; showing the last stable result",
+                        fp.iterations
+                    );
+                }
+                let diff = match &fp.edits {
+                    Some(edits) => render_diff(name, sql, edits),
+                    None => render_diff_strings(name, sql, &fp.sql),
+                };
+                print!("{diff}");
+                // Diff gates on the original findings (it changes nothing on disk).
+                if gate(&fp.original_findings, r.fail_on) {
                     gated = true;
-                    // Residual gating findings the diff can't show: those with no
-                    // automatic fix, PLUS fixable ones whose edit `apply_all` skipped
-                    // for overlapping an accepted fix. Both are absent from the diff, so
-                    // report them rather than exiting nonzero in silence — even when the
-                    // diff above is non-empty (a mixed fixable/unfixable file).
-                    let residual = unfixable + applied.skipped_overlapping;
+                    let residual = fp.unfixable + fp.skipped_overlapping;
                     if residual > 0 {
                         eprintln!(
                             "{name}: {residual} finding(s) have no automatic fix or were skipped (overlapping another fix); lint `{name}` to see them"
@@ -118,71 +123,53 @@ pub(super) fn run(r: &ResolvedRun, mode: Mode) -> ExitCode {
                 }
             }
             Mode::Apply => {
-                // Verify the composed result still parses BEFORE writing anything;
-                // this same re-lint also drives the exit gate below.
-                let after = lint_input(name.clone(), &applied.sql, &r.options_for(name));
-                if let Some(err) = &after.error {
-                    eprintln!(
-                        "error: {name}: applying fixes produced SQL that no longer parses ({err}); file left unchanged"
-                    );
-                    had_error = true;
-                    continue;
-                }
-                // No-regression backstop: never write a result whose fixes introduced a new
-                // Error the original lacked. Leave the file unchanged; the original findings
-                // still drive the gate. (stdin still emits its unchanged input.)
-                if introduces_new_error(&report.findings, &after.findings) {
-                    if name == STDIN_NAME {
-                        print!("{sql}");
-                    }
-                    eprintln!(
-                        "{name}: fixes withheld — applying them would introduce a new issue; lint `{name}` to see the findings"
-                    );
-                    if gate(&report.findings, r.fail_on) {
-                        gated = true;
-                    }
-                    continue;
-                }
-                let changed = applied.sql != *sql;
+                // `fp.sql` is guaranteed parse-valid and regression-free; safe to write.
                 if name == STDIN_NAME {
-                    print!("{}", applied.sql);
+                    print!("{}", fp.sql);
                 } else if changed {
-                    if let Err(e) = write_atomic(name, &applied.sql) {
+                    if let Err(e) = write_atomic(name, &fp.sql) {
                         eprintln!("error: {name}: {e}");
                         had_error = true;
                         continue;
                     }
                 }
+                if let Some(note) = withheld_note(changed) {
+                    eprintln!("{note}");
+                }
+                if !fp.converged {
+                    eprintln!(
+                        "{name}: fixes did not converge after {} iterations; wrote the last stable result",
+                        fp.iterations
+                    );
+                }
                 if changed {
                     let mut note = String::new();
-                    if unfixable > 0 {
-                        note.push_str(&format!("{unfixable} unfixable"));
+                    if fp.unfixable > 0 {
+                        note.push_str(&format!("{} unfixable", fp.unfixable));
                     }
-                    if applied.skipped_overlapping > 0 {
+                    if fp.skipped_overlapping > 0 {
                         if !note.is_empty() {
                             note.push_str(", ");
                         }
-                        note.push_str(&format!(
-                            "{} skipped-overlapping",
-                            applied.skipped_overlapping
-                        ));
+                        note.push_str(&format!("{} skipped-overlapping", fp.skipped_overlapping));
                     }
                     let suffix = if note.is_empty() {
                         String::new()
                     } else {
                         format!(" ({note})")
                     };
-                    eprintln!("fixed {} findings in {name}{suffix}", applied.applied);
+                    eprintln!("fixed {} findings in {name}{suffix}", fp.applied);
                 }
-                // Exit gate: the pre-write re-lint of the composed text.
-                if gate(&after.findings, r.fail_on) {
+                // Apply gates on the post-fix re-lint.
+                if gate(&fp.final_report.findings, r.fail_on) {
                     gated = true;
                     if !changed {
-                        // Gating findings remain but nothing was rewritten: don't exit
-                        // nonzero silently. (When `changed`, the "fixed …" line above
-                        // already reports the unfixable/skipped count.)
-                        let remaining =
-                            after.findings.iter().filter(|f| !f.is_suppressed()).count();
+                        let remaining = fp
+                            .final_report
+                            .findings
+                            .iter()
+                            .filter(|f| !f.is_suppressed())
+                            .count();
                         eprintln!(
                             "{name}: {remaining} finding(s) remain that --fix cannot resolve; lint `{name}` to see them"
                         );
@@ -429,9 +416,6 @@ pub(super) fn render_diff(name: &str, original: &str, edits: &[FixEdit]) -> Stri
 /// covering everything in between, surrounded by up to [`CONTEXT`] context lines.
 /// Coarser than [`render_diff`]'s coalesced per-edit hunks but correct and
 /// `git apply`-able. Returns `""` when the strings are equal.
-// Standalone this task (task 3 of the fixpoint-iteration plan wires it into `run()`),
-// so nothing outside `#[cfg(test)]` uses it yet.
-#[allow(dead_code)]
 fn render_diff_strings(name: &str, original: &str, updated: &str) -> String {
     if original == updated {
         return String::new();
@@ -506,14 +490,9 @@ fn push_diff_line(out: &mut String, prefix: char, content: &str) {
 /// Hard cap on fixpoint iterations. Real cascades converge in 2–3 passes; a value
 /// this high is only ever reached by a pathological oscillating rule, which the cap
 /// stops gracefully (last validated-good result kept).
-// Driver only: not yet wired into `run()` (task 3 of the fixpoint-iteration plan) — this
-// task adds the driver + its unit tests, so nothing outside `#[cfg(test)]` uses it yet.
-#[allow(dead_code)]
 const MAX_FIX_ITERATIONS: usize = 10;
 
 /// Why the loop stopped applying fixes before reaching a natural fixpoint.
-// Driver only; see `MAX_FIX_ITERATIONS` above.
-#[allow(dead_code)]
 enum Withheld {
     /// A candidate no longer parsed; its error message.
     ParseBroke(String),
@@ -522,8 +501,6 @@ enum Withheld {
 }
 
 /// Result of driving `apply_all` to a fixpoint over one input.
-// Driver only; see `MAX_FIX_ITERATIONS` above.
-#[allow(dead_code)]
 struct Fixpoint {
     /// Final text: parse-valid and regression-free vs the original (may equal it).
     sql: String,
@@ -553,10 +530,10 @@ struct Fixpoint {
 /// without CLI wiring and can be exercised with a simulated cascade no real rule
 /// produces yet. Every accepted intermediate is validated (parses, introduces no
 /// new Error vs `original`), so `sql` is always safe to write.
-// Driver only; see `MAX_FIX_ITERATIONS` above. `name` is plumbed through for the CLI
-// wiring (task 3) to use in its own diagnostics; the driver itself doesn't need it
-// since every `lint` call already carries the name its caller bound the closure to.
-#[allow(dead_code)]
+///
+/// `name` isn't read by the driver itself (every `lint` call already carries the
+/// name its caller bound the closure to) — it's plumbed through for the CLI
+/// wiring's own diagnostics.
 fn fix_to_fixpoint(
     _name: &str,
     original: &str,
