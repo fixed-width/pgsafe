@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New rule `drop-not-null` (Warning): flags `ALTER COLUMN … DROP NOT NULL` removing a relied-on not-null invariant (#95).
 - New rule `add-domain-constraint-without-not-valid` (Error): flags `ALTER DOMAIN … ADD CONSTRAINT` that validates dependent tables under lock; autofixes to `NOT VALID` (#95).
 - New opt-in rule `require-schema-qualified` (Warning): flags DDL target relations named without a schema qualifier — CREATE/ALTER/RENAME/DROP/TRUNCATE/CREATE INDEX targets — which resolve through `search_path` (#95).
+- New rule `prefer-identity` (Warning): prefers `GENERATED … AS IDENTITY` over `serial`; autofixes `serial` in a `CREATE TABLE` to a width-preserving identity column (#95).
 
 ### Changed
 
