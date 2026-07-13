@@ -14,7 +14,8 @@ impl Rule for DropDatabase {
         if matches!(node, NodeEnum::DropdbStmt(_)) {
             out.push(RuleHit {
                 message: "DROP DATABASE permanently and irreversibly removes the database and all its \
-                          contents; existing connections to it are terminated and their in-flight work is lost."
+                          contents. It fails while any session is still connected, unless run WITH (FORCE), \
+                          which terminates those sessions and loses their in-flight work."
                     .into(),
                 guidance: "Confirm the database is fully retired and has no active connections before \
                            dropping it; take a final backup first if the data may be needed."

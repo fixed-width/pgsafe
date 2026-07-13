@@ -158,6 +158,14 @@ fn drop_table() {
     assert!(!fires("DROP INDEX i", "drop-table"));
 }
 
+// ── drop-database ────────────────────────────────────────────────────────────
+
+#[test]
+fn drop_database() {
+    assert!(fires("DROP DATABASE d", "drop-database"));
+    assert!(!fires("DROP TABLE t", "drop-database"));
+}
+
 // ── drop-column ─────────────────────────────────────────────────────────────
 
 #[test]

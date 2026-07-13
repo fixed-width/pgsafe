@@ -60,9 +60,9 @@ export const RULES: Record<string, RuleDoc> = {
     title: "DROP DATABASE",
     severity: "warning",
     category: "Destructive",
-    summary: "Dropping a database irreversibly destroys it and terminates every connection to it.",
+    summary: "Dropping a database irreversibly destroys it and all its contents.",
     whyUnsafe:
-      "`DROP DATABASE` permanently and irreversibly removes the database and all its contents, and terminates existing connections to it — their in-flight work is lost.",
+      "`DROP DATABASE` permanently and irreversibly removes the database and all its contents. It fails while any session is connected to the database — and `WITH (FORCE)` will terminate those sessions, losing their in-flight work.",
     safeRewrite:
       "Confirm the database is fully retired and has no active connections before dropping it; take a final backup first if the data may be needed.",
     example: { unsafe: "DROP DATABASE analytics_old;" },
