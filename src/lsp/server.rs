@@ -1,6 +1,7 @@
 //! Connection handshake, document store, and the dispatch loop.
 
 use std::collections::HashMap;
+use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
 use lsp_server::{Connection, Message, Response};
@@ -118,107 +119,193 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
 pub(crate) fn run_loop(connection: &Connection) -> Result<(), LspError> {
     let mut state = State::default();
     for msg in &connection.receiver {
-        match msg {
-            Message::Request(req) => {
-                if connection.handle_shutdown(&req)? {
-                    return Ok(());
-                }
-                if req.method == "textDocument/codeAction" {
-                    let (id, params) = req
-                        .extract::<CodeActionParams>("textDocument/codeAction")
-                        .map_err(|e| format!("codeAction params: {e:?}"))?;
-                    let key = params.text_document.uri.as_str().to_string();
-                    let result = if let Some(doc) = state.docs.get(&key) {
-                        let options = match uri_to_path(&key) {
-                            Some(path) => state.configs.options_for(&path),
-                            None => crate::LintOptions::default(),
-                        };
-                        let findings = lint_sql(&doc.text, &options).unwrap_or_default();
-                        super::actions::code_actions(&doc.uri, &doc.text, &findings, params.range)
-                    } else {
-                        Vec::new()
-                    };
-                    connection.sender.send(Message::Response(Response {
-                        id,
-                        result: Some(serde_json::to_value(result)?),
-                        error: None,
-                    }))?;
-                }
-                // Other requests are ignored for MVP.
-            }
-            Message::Notification(not) => match not.method.as_str() {
-                "exit" => return Ok(()),
-                "textDocument/didOpen" => {
-                    let p: DidOpenTextDocumentParams = serde_json::from_value(not.params)?;
-                    let doc = Document {
-                        uri: p.text_document.uri,
-                        language_id: p.text_document.language_id,
-                        text: p.text_document.text,
-                    };
-                    let key = doc.uri.as_str().to_string();
-                    publish(connection, &doc, &mut state.configs)?;
-                    state.docs.insert(key, doc);
-                }
-                "textDocument/didChange" => {
-                    let p: DidChangeTextDocumentParams = serde_json::from_value(not.params)?;
-                    let key = p.text_document.uri.as_str().to_string();
-                    if let Some(doc) = state.docs.get_mut(&key) {
-                        // FULL sync: the last change contains the whole document.
-                        if let Some(change) = p.content_changes.into_iter().last() {
-                            doc.text = change.text;
-                        }
-                        let doc = state.docs.get(&key).expect("just updated");
-                        publish(connection, doc, &mut state.configs)?;
-                    }
-                }
-                "textDocument/didSave" => {
-                    let p: DidSaveTextDocumentParams = serde_json::from_value(not.params)?;
-                    let uri = p.text_document.uri;
-                    let saved_path = uri_to_path(uri.as_str());
-                    let config_dir = saved_path.as_deref().filter(|p| is_config_file(p));
-
-                    if let Some(dir) = config_dir.and_then(Path::parent) {
-                        // A `.pgsafe.toml`/`pgsafe.toml` saved: its directory (and any
-                        // subdirectory) may now resolve to different options, so drop the
-                        // stale cache entries and re-lint every open SQL doc under it —
-                        // not just the config file itself, which usually isn't a tracked
-                        // document at all.
-                        state.configs.invalidate_dir(dir);
-                        let affected: Vec<String> = state
-                            .docs
-                            .iter()
-                            .filter(|(_, doc)| {
-                                doc.language_id == "sql"
-                                    && uri_to_path(doc.uri.as_str())
-                                        .and_then(|p| p.parent().map(Path::to_path_buf))
-                                        .is_some_and(|d| d.starts_with(dir))
-                            })
-                            .map(|(key, _)| key.clone())
-                            .collect();
-                        for key in affected {
-                            if let Some(doc) = state.docs.get(&key) {
-                                publish(connection, doc, &mut state.configs)?;
-                            }
-                        }
-                    } else {
-                        let key = uri.as_str().to_string();
-                        if let Some(doc) = state.docs.get(&key) {
-                            publish(connection, doc, &mut state.configs)?;
-                        }
-                    }
-                }
-                "textDocument/didClose" => {
-                    let p: DidCloseTextDocumentParams = serde_json::from_value(not.params)?;
-                    let key = p.text_document.uri.as_str().to_string();
-                    if let Some(doc) = state.docs.remove(&key) {
-                        // Clear diagnostics for the closed document.
-                        clear(connection, &doc.uri)?;
-                    }
-                }
-                _ => {}
-            },
-            Message::Response(_) => {}
+        let flow = match msg {
+            Message::Request(req) => handle_request(connection, &mut state, req)?,
+            Message::Notification(not) => handle_notification(connection, &mut state, not)?,
+            Message::Response(_) => ControlFlow::Continue(()),
+        };
+        if flow.is_break() {
+            return Ok(());
         }
+    }
+    Ok(())
+}
+
+/// Handle one client request: `shutdown` ends the loop; `textDocument/codeAction` is
+/// answered; anything else is ignored for MVP.
+fn handle_request(
+    connection: &Connection,
+    state: &mut State,
+    req: lsp_server::Request,
+) -> Result<ControlFlow<()>, LspError> {
+    if connection.handle_shutdown(&req)? {
+        return Ok(ControlFlow::Break(()));
+    }
+    if req.method == "textDocument/codeAction" {
+        on_code_action(connection, state, req)?;
+    }
+    // Other requests are ignored for MVP.
+    Ok(ControlFlow::Continue(()))
+}
+
+/// Handle one client notification: `exit` ends the loop; the `textDocument/*` sync
+/// events update document/config state; anything else is ignored.
+fn handle_notification(
+    connection: &Connection,
+    state: &mut State,
+    not: lsp_server::Notification,
+) -> Result<ControlFlow<()>, LspError> {
+    match not.method.as_str() {
+        "exit" => return Ok(ControlFlow::Break(())),
+        "textDocument/didOpen" => on_did_open(connection, state, not.params)?,
+        "textDocument/didChange" => on_did_change(connection, state, not.params)?,
+        "textDocument/didSave" => on_did_save(connection, state, not.params)?,
+        "textDocument/didClose" => on_did_close(connection, state, not.params)?,
+        _ => {}
+    }
+    Ok(ControlFlow::Continue(()))
+}
+
+/// Handle `textDocument/codeAction`: lint the open document and respond with the
+/// quick-fix actions that apply within the requested range.
+fn on_code_action(
+    connection: &Connection,
+    state: &mut State,
+    req: lsp_server::Request,
+) -> Result<(), LspError> {
+    let (id, params) = req
+        .extract::<CodeActionParams>("textDocument/codeAction")
+        .map_err(|e| format!("codeAction params: {e:?}"))?;
+    let key = params.text_document.uri.as_str().to_string();
+    let result = if let Some(doc) = state.docs.get(&key) {
+        let options = match uri_to_path(&key) {
+            Some(path) => state.configs.options_for(&path),
+            None => crate::LintOptions::default(),
+        };
+        let findings = lint_sql(&doc.text, &options).unwrap_or_default();
+        super::actions::code_actions(&doc.uri, &doc.text, &findings, params.range)
+    } else {
+        Vec::new()
+    };
+    connection.sender.send(Message::Response(Response {
+        id,
+        result: Some(serde_json::to_value(result)?),
+        error: None,
+    }))?;
+    Ok(())
+}
+
+/// Handle `textDocument/didOpen`: start tracking the document and publish its
+/// diagnostics.
+fn on_did_open(
+    connection: &Connection,
+    state: &mut State,
+    params: serde_json::Value,
+) -> Result<(), LspError> {
+    let p: DidOpenTextDocumentParams = serde_json::from_value(params)?;
+    let doc = Document {
+        uri: p.text_document.uri,
+        language_id: p.text_document.language_id,
+        text: p.text_document.text,
+    };
+    let key = doc.uri.as_str().to_string();
+    publish(connection, &doc, &mut state.configs)?;
+    state.docs.insert(key, doc);
+    Ok(())
+}
+
+/// Handle `textDocument/didChange`: apply the full-sync edit and republish
+/// diagnostics.
+fn on_did_change(
+    connection: &Connection,
+    state: &mut State,
+    params: serde_json::Value,
+) -> Result<(), LspError> {
+    let p: DidChangeTextDocumentParams = serde_json::from_value(params)?;
+    let key = p.text_document.uri.as_str().to_string();
+    if let Some(doc) = state.docs.get_mut(&key) {
+        // FULL sync: the last change contains the whole document.
+        if let Some(change) = p.content_changes.into_iter().last() {
+            doc.text = change.text;
+        }
+        let doc = state.docs.get(&key).expect("just updated");
+        publish(connection, doc, &mut state.configs)?;
+    }
+    Ok(())
+}
+
+/// Handle `textDocument/didSave`: if a pgsafe config file saved, re-lint every open
+/// SQL document under its directory; otherwise just republish the saved document's
+/// diagnostics.
+fn on_did_save(
+    connection: &Connection,
+    state: &mut State,
+    params: serde_json::Value,
+) -> Result<(), LspError> {
+    let p: DidSaveTextDocumentParams = serde_json::from_value(params)?;
+    let uri = p.text_document.uri;
+    let saved_path = uri_to_path(uri.as_str());
+    let config_dir = saved_path.as_deref().filter(|p| is_config_file(p));
+
+    if let Some(dir) = config_dir.and_then(Path::parent) {
+        // A `.pgsafe.toml`/`pgsafe.toml` saved: its directory (and any subdirectory)
+        // may now resolve to different options, so drop the stale cache entries and
+        // re-lint every open SQL doc under it — not just the config file itself,
+        // which usually isn't a tracked document at all.
+        relint_dir_after_config_save(connection, state, dir)?;
+    } else {
+        let key = uri.as_str().to_string();
+        republish(connection, state, &key)?;
+    }
+    Ok(())
+}
+
+/// Drop `ConfigCache` entries at or under `dir` and republish diagnostics for every
+/// open SQL document under it, since a config file saved there may have changed
+/// their resolved lint options.
+fn relint_dir_after_config_save(
+    connection: &Connection,
+    state: &mut State,
+    dir: &Path,
+) -> Result<(), LspError> {
+    state.configs.invalidate_dir(dir);
+    let affected: Vec<String> = state
+        .docs
+        .iter()
+        .filter(|(_, doc)| {
+            doc.language_id == "sql"
+                && uri_to_path(doc.uri.as_str())
+                    .and_then(|p| p.parent().map(Path::to_path_buf))
+                    .is_some_and(|d| d.starts_with(dir))
+        })
+        .map(|(key, _)| key.clone())
+        .collect();
+    for key in affected {
+        republish(connection, state, &key)?;
+    }
+    Ok(())
+}
+
+/// Republish diagnostics for the tracked document `key`, if it's still open.
+fn republish(connection: &Connection, state: &mut State, key: &str) -> Result<(), LspError> {
+    if let Some(doc) = state.docs.get(key) {
+        publish(connection, doc, &mut state.configs)?;
+    }
+    Ok(())
+}
+
+/// Handle `textDocument/didClose`: stop tracking the document and clear its
+/// diagnostics.
+fn on_did_close(
+    connection: &Connection,
+    state: &mut State,
+    params: serde_json::Value,
+) -> Result<(), LspError> {
+    let p: DidCloseTextDocumentParams = serde_json::from_value(params)?;
+    let key = p.text_document.uri.as_str().to_string();
+    if let Some(doc) = state.docs.remove(&key) {
+        // Clear diagnostics for the closed document.
+        clear(connection, &doc.uri)?;
     }
     Ok(())
 }
