@@ -287,7 +287,7 @@ fn skip_leading_comments(sql: &str, mut pos: usize, comments: &[(usize, usize)])
     pos
 }
 
-/// Attach each directive to a statement by line geometry (design §3): trailing on
+/// Attach each directive to a statement by line geometry: trailing on
 /// the statement's last line, or in the contiguous comment run immediately above it.
 pub(crate) fn attach(
     directives: &[Directive],

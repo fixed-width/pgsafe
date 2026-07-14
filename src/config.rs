@@ -1,6 +1,6 @@
 //! `pgsafe.toml` (or `.pgsafe.toml`) config: discovery, parsing, strict validation, and per-file
-//! resolution into the rule settings the engine consumes. Only built with the
-//! `cli` feature. The `Config` type is a format-neutral serde target; the loader
+//! resolution into the rule settings the engine consumes. Built with the `cli` and/or `lsp`
+//! feature. The `Config` type is a format-neutral serde target; the loader
 //! dispatches on file extension so a future YAML format is one match arm away.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -9,19 +9,19 @@ use std::path::{Path, PathBuf};
 use globset::GlobBuilder;
 use serde::Deserialize;
 
-use crate::{FailOn, Format, NameKind, Severity};
+use crate::{FailOn, Format, LintOptions, NameKind, Severity};
 
 /// The candidate config filenames, in priority order (v1: TOML only).
 /// Config file names discovery looks for, in precedence order: the plain
 /// `pgsafe.toml` first (preferred — dotfiles are easy to overlook and many tools
 /// skip them), then the hidden `.pgsafe.toml`. If a directory holds both, the
 /// non-dotfile wins.
-const CANDIDATES: &[&str] = &["pgsafe.toml", ".pgsafe.toml"];
+pub(crate) const CANDIDATES: &[&str] = &["pgsafe.toml", ".pgsafe.toml"];
 
 /// The annotated example config (`pgsafe --example-config`). Every option is shown, commented
 /// out, so the file is a valid no-op as-is. Kept in sync with the schema by `example_config_*`
 /// tests below.
-pub(crate) const EXAMPLE_CONFIG: &str = include_str!("../../config-example.toml");
+pub(crate) const EXAMPLE_CONFIG: &str = include_str!("../config-example.toml");
 
 /// A config problem. Rendered by the CLI as `error: {0}` and mapped to exit 2.
 #[derive(Debug)]
@@ -110,6 +110,8 @@ struct RawConfig {
     forbidden_types: BTreeMap<String, String>,
     #[serde(default, rename = "required-columns")]
     required_columns: Vec<String>,
+    #[serde(default)]
+    paths: Vec<String>,
 }
 
 /// A validated, compiled config ready for per-file resolution.
@@ -127,6 +129,12 @@ pub(crate) struct Config {
     naming: BTreeMap<NameKind, String>,
     forbidden_types: BTreeMap<String, String>,
     required_columns: BTreeSet<String>,
+    /// Compiled `paths` globs that scope which files are linted. Empty is the unset default —
+    /// see [`Config::in_scope`], the single place that interprets it. Always parsed
+    /// and validated (`compile()` runs under `any(cli, lsp)`, so a bad glob is still
+    /// a hard error in a `cli`-only build), and read by `in_scope`, which both the
+    /// `cli` and `lsp` features call.
+    paths: Vec<globset::GlobMatcher>,
 }
 
 /// Walk up from `start` to the first directory holding a candidate config file,
@@ -241,6 +249,16 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         }
     }
 
+    let mut paths = Vec::new();
+    for p in &raw.paths {
+        let matcher = GlobBuilder::new(p)
+            .literal_separator(true)
+            .build()
+            .map_err(|e| ConfigError(format!("`paths` invalid glob `{p}`: {e}")))?
+            .compile_matcher();
+        paths.push(matcher);
+    }
+
     Ok(Config {
         fail_on: raw.fail_on,
         in_transaction: raw.in_transaction,
@@ -255,6 +273,7 @@ fn compile(raw: RawConfig, known: &[&str]) -> Result<Config, ConfigError> {
         // Stored verbatim; the `require-columns` rule folds names to lower case (matching
         // PostgreSQL's unquoted-identifier folding) and skips empties at match time.
         required_columns: raw.required_columns.into_iter().collect(),
+        paths,
     })
 }
 
@@ -295,6 +314,109 @@ impl Config {
     pub(crate) fn required_columns(&self) -> &BTreeSet<String> {
         &self.required_columns
     }
+
+    /// Whether `file_name` is in this config's `paths` scope, matched against its
+    /// path relative to `config_dir` (the same `rel_path` logic `options_from` uses
+    /// for `[[ignore]]`/`disabled_for`).
+    ///
+    /// This is the **single place** that encodes the unset-`paths` default: empty
+    /// `paths` (never set, or no `pgsafe.toml` was discovered at all — the LSP's
+    /// untitled/non-`file` documents resolve to `Config::default()`) means every file
+    /// is in scope, matching the CLI's current lint-everything-you-pass-it behavior.
+    /// Once `paths` is set, only a file whose relative path matches one of the globs
+    /// is in scope. If this default is ever flipped (lint-nothing-when-unset), this is
+    /// the only line that needs to change — every caller (the LSP's
+    /// `ConfigCache::should_lint` and the CLI's `cli::scope_to_paths`) follows it
+    /// automatically.
+    pub(crate) fn in_scope(&self, config_dir: Option<&Path>, file_name: &str) -> bool {
+        self.paths.is_empty() || {
+            let rel = rel_path(file_name, config_dir);
+            self.paths.iter().any(|m| m.is_match(&rel))
+        }
+    }
+}
+
+/// Build [`LintOptions`] for one file from a resolved config. Shared by the CLI's
+/// `ResolvedRun::options_for` and the LSP's `ConfigCache::options_for`, which each
+/// call this per file even when the `Config` itself is cached/reused — the result is
+/// per-file (`disabled_rules` depends on which `[[ignore]]` globs match this file).
+pub(crate) fn options_from(
+    config: &Config,
+    config_dir: Option<&Path>,
+    file_name: &str,
+    assume_in_transaction: bool,
+) -> LintOptions {
+    let rel = rel_path(file_name, config_dir);
+    LintOptions {
+        assume_in_transaction,
+        disabled_rules: config.disabled_for(&rel),
+        enabled_rules: config.enabled().clone(),
+        severity_overrides: config.overrides().clone(),
+        naming_patterns: config.naming().clone(),
+        forbidden_column_types: config.forbidden_types().clone(),
+        required_columns: config.required_columns().clone(),
+        ..LintOptions::default()
+    }
+}
+
+/// Discover and load the config governing `file_path` (walk-up from its directory),
+/// returning the parsed [`Config`] plus the directory it was found in (for
+/// relative-path glob matching). A missing or malformed config yields
+/// `(Config::default(), None)` — the same graceful fallback `options_for_path` has
+/// always had; callers that need per-file resolution (e.g. `lsp::server::ConfigCache`,
+/// which caches this expensive part by directory but must recompute the per-file
+/// `disabled_rules` on every lookup) call `options_from` themselves against the
+/// result instead of going through `options_for_path`.
+pub(crate) fn resolve_config(file_path: &Path) -> (Config, Option<PathBuf>) {
+    match file_path.parent().and_then(discover) {
+        Some(cfg_path) => {
+            let known = crate::known_rule_ids();
+            match load(&cfg_path, &known) {
+                Ok(cfg) => (cfg, cfg_path.parent().map(Path::to_path_buf)),
+                Err(_) => (Config::default(), None),
+            }
+        }
+        None => (Config::default(), None),
+    }
+}
+
+/// Resolve `pgsafe.toml` (walk-up from `file_path`'s directory) and build the
+/// [`LintOptions`] for `file_path`. A missing or malformed config yields defaults —
+/// the LSP degrades gracefully rather than failing the session.
+// No production caller: `lsp::server::ConfigCache` calls `resolve_config` +
+// `options_from` directly (it caches the `Config` by directory and must recompute
+// `disabled_rules` per file, so going through this single-shot helper would defeat the
+// cache). Kept for the tests below, which exercise the discover-then-resolve path as
+// one unit.
+#[allow(dead_code)]
+pub(crate) fn options_for_path(file_path: &Path, assume_in_transaction: bool) -> LintOptions {
+    let (config, config_dir) = resolve_config(file_path);
+    let name = file_path.to_string_lossy();
+    options_from(&config, config_dir.as_deref(), &name, assume_in_transaction)
+}
+
+/// A linted file's path made relative to the config dir (for glob matching).
+/// Both paths are absolutized against the current working directory first.
+fn rel_path(name: &str, config_dir: Option<&Path>) -> String {
+    let Some(dir) = config_dir else {
+        return name.to_string();
+    };
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let abs_name = if Path::new(name).is_absolute() {
+        PathBuf::from(name)
+    } else {
+        cwd.join(name)
+    };
+    let abs_dir = if dir.is_absolute() {
+        dir.to_path_buf()
+    } else {
+        cwd.join(dir)
+    };
+    abs_name
+        .strip_prefix(&abs_dir)
+        .unwrap_or(&abs_name)
+        .to_string_lossy()
+        .into_owned()
 }
 
 #[cfg(test)]
@@ -579,6 +701,31 @@ mod tests {
     }
 
     #[test]
+    fn in_scope_empty_paths_matches_everything() {
+        // Unset `paths` (the default) is the single place that encodes "lint all",
+        // matching today's CLI behavior. No config dir at all (untitled/non-file
+        // docs in the LSP) must also be in scope.
+        let cfg = from_toml_str("", KNOWN).unwrap();
+        assert!(cfg.in_scope(None, "anything.sql"));
+        assert!(cfg.in_scope(Some(Path::new("/proj")), "/proj/migrations/0001.sql"));
+    }
+
+    #[test]
+    fn in_scope_with_globs_matches_relative_to_config_dir() {
+        let cfg = from_toml_str("paths = [\"migrations/**\"]\n", KNOWN).unwrap();
+        let dir = Path::new("/proj");
+        assert!(cfg.in_scope(Some(dir), "/proj/migrations/0001.sql"));
+        assert!(!cfg.in_scope(Some(dir), "/proj/queries/q.sql"));
+    }
+
+    #[test]
+    fn invalid_paths_glob_is_rejected() {
+        // "a[" has an unterminated character class — definitely rejected by globset.
+        let err = from_toml_str("paths = [\"a[\"]\n", KNOWN).unwrap_err();
+        assert!(err.0.contains("paths") && err.0.contains("glob"));
+    }
+
+    #[test]
     fn discover_prefers_the_non_dotfile_when_both_exist() {
         // A directory holding both names is ambiguous; the visible `pgsafe.toml` wins.
         let root = tempfile::tempdir().unwrap();
@@ -589,5 +736,29 @@ mod tests {
             discover(root.path()).as_deref(),
             Some(root.path().join("pgsafe.toml").as_path())
         );
+    }
+
+    #[test]
+    fn options_for_path_reads_walk_up_config() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        // A config that disables one default rule.
+        let mut f = std::fs::File::create(dir.path().join(".pgsafe.toml")).unwrap();
+        writeln!(f, "[rules]\nadd-index-non-concurrent = false").unwrap();
+        let sql_path = dir.path().join("sub").join("0001_add_index.sql");
+        std::fs::create_dir_all(sql_path.parent().unwrap()).unwrap();
+
+        let opts = super::options_for_path(&sql_path, false);
+        assert!(opts.disabled_rules.contains("add-index-non-concurrent"));
+        assert!(!opts.assume_in_transaction);
+    }
+
+    #[test]
+    fn options_for_path_missing_config_is_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let sql_path = dir.path().join("0001.sql");
+        let opts = super::options_for_path(&sql_path, true);
+        assert!(opts.disabled_rules.is_empty());
+        assert!(opts.assume_in_transaction);
     }
 }

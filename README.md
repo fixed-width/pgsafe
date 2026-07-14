@@ -83,6 +83,52 @@ stdin don't map back to files GitHub can annotate as code-scanning alerts.
 See [pgsafe.fixedwidth.tech/docs](https://pgsafe.fixedwidth.tech/docs/) for configuration,
 output formats, and the full [rules reference](https://pgsafe.fixedwidth.tech/rules/).
 
+## Editor integration (LSP)
+
+`pgsafe lsp` starts a Language Server over stdio, giving any LSP-capable editor live
+diagnostics on `.sql` files plus quickfix actions for findings that carry a safe rewrite.
+It reads the same `pgsafe.toml` as the CLI, resolved per file and refreshed when the
+config changes. If that config sets a top-level `paths` key, the server only lints files
+matching those globs (relative to the config file) and offers no quickfixes for the rest —
+useful for scoping to a `migrations/` directory and skipping schema dumps or ad-hoc query
+files. With no `paths` key, every `.sql` file is linted.
+
+The CLI honors the same `paths` key: a file you pass that doesn't match is skipped, and
+piped stdin is never filtered. One `paths` setting scopes both surfaces.
+
+The prebuilt release binaries include the language server. Installing from source, enable
+the `lsp` Cargo feature (off by default):
+
+```sh
+cargo install pgsafe --features lsp
+```
+
+**Neovim** (built-in `vim.lsp`, Neovim 0.11+):
+
+```lua
+vim.lsp.config.pgsafe = {
+  cmd = { "pgsafe", "lsp" },
+  filetypes = { "sql" },
+  root_markers = { "pgsafe.toml", ".pgsafe.toml", ".git" },
+}
+vim.lsp.enable("pgsafe")
+```
+
+**Helix** (`languages.toml`):
+
+```toml
+[language-server.pgsafe]
+command = "pgsafe"
+args = ["lsp"]
+
+[[language]]
+name = "sql"
+language-servers = ["pgsafe"]
+```
+
+**Zed and other editors**: register `pgsafe lsp` as a custom stdio language server for
+the `sql` language; see your editor's docs for where custom servers are configured.
+
 ## Changelog
 
 Notable changes for each release are in [CHANGELOG.md](CHANGELOG.md).

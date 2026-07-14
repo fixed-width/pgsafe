@@ -63,6 +63,9 @@ jobs:
         uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1
         with:
           bin: pgsafe
+          # Ship the language server in released binaries so `pgsafe lsp` works out of the
+          # box; a from-source `cargo install pgsafe` still needs `--features lsp`.
+          features: lsp
           target: ${{ matrix.target }}
           archive: pgsafe-$target
           checksum: sha256

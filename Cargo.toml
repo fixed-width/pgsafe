@@ -25,10 +25,13 @@ toml = { version = "0.8", optional = true }
 globset = { version = "0.4", optional = true }
 thiserror = "2"
 anstyle = "1"
+lsp-server = { version = "0.9", optional = true }
+lsp-types = { version = "0.97", optional = true }
 
 [features]
 default = ["cli"]
 cli = ["dep:clap", "dep:toml", "dep:globset"]
+lsp = ["dep:clap", "dep:lsp-server", "dep:lsp-types", "dep:toml", "dep:globset"]
 
 [[bin]]
 name = "pgsafe"

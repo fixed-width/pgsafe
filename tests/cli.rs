@@ -1,6 +1,72 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 
+// ── `lsp` subcommand vs. positional-path coexistence ────────────────────────
+//
+// `CommonArgs` has a positional `paths: Vec<String>`. Adding an optional
+// `Command` subcommand alongside it risks clap treating `lsp` as just another
+// positional path, or (worse) treating an ordinary filename as an attempted
+// subcommand. These tests pin the coexistence.
+
+#[cfg(feature = "lsp")]
+#[test]
+fn lsp_subcommand_is_recognized() {
+    // `--help` for the subcommand exits 0 and mentions the language server.
+    let mut cmd = Command::cargo_bin("pgsafe").unwrap();
+    cmd.args(["lsp", "--help"]);
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::contains("language server"));
+}
+
+#[cfg(feature = "lsp")]
+#[test]
+fn lsp_subcommand_serves_over_real_stdio_and_exits_cleanly() {
+    // Regression test for a real deadlock: `server::serve()` originally kept its
+    // `Connection` (and thus its message `Sender`) alive across `io_threads.join()`,
+    // so the background writer thread's channel never saw its last sender drop and
+    // `join()` blocked forever. The in-memory `Connection::memory()` harness used by
+    // tests/lsp_server.rs never exercises this real-stdio path, so only spawning the
+    // actual binary with piped stdin/stdout — as this test does — can catch it. A
+    // bounded `.timeout()` turns a regression back into a failing test instead of a
+    // hung `cargo test`.
+    fn lsp_msg(body: &str) -> String {
+        format!("Content-Length: {}\r\n\r\n{body}", body.len())
+    }
+    let payload = format!(
+        "{}{}{}{}",
+        lsp_msg(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}"#),
+        lsp_msg(r#"{"jsonrpc":"2.0","method":"initialized","params":{}}"#),
+        lsp_msg(r#"{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}"#),
+        lsp_msg(r#"{"jsonrpc":"2.0","method":"exit","params":null}"#),
+    );
+
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg("lsp")
+        .timeout(std::time::Duration::from_secs(10))
+        .write_stdin(payload)
+        .assert()
+        .success();
+}
+
+#[test]
+fn positional_path_still_lints_after_subcommand_added() {
+    // A plain filename must still be treated as a lint target, not an unknown
+    // subcommand, whether or not this build has the `lsp` subcommand at all.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("subcommand_coexistence.sql");
+    std::fs::write(&path, "CREATE INDEX i ON t (x);").unwrap();
+
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .arg(path.to_str().unwrap())
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
+}
+
 // ── existing tests ───────────────────────────────────────────────────────────
 
 #[test]
@@ -485,6 +551,100 @@ fn naming_convention_via_config_fires() {
         .failure()
         .code(1)
         .stdout(predicate::str::contains("naming-convention"));
+}
+
+// ── `paths` scoping (CLI honors the same globs as the LSP) ──────────────────
+//
+// The CLI now consults the same `Config::in_scope` the LSP uses: a file input that
+// doesn't match the config's `paths` globs is silently dropped before linting.
+// Stdin is exempt (no path identity), and the filter is a no-op when `paths`
+// is unset — existing invocations without `paths` must lint exactly as before.
+
+#[test]
+fn paths_scoping_lints_in_scope_file_and_skips_out_of_scope_file() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "paths = [\"migrations/**\"]\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("migrations")).unwrap();
+    std::fs::create_dir_all(dir.path().join("queries")).unwrap();
+    std::fs::write(
+        dir.path().join("migrations/0001_add_index.sql"),
+        "CREATE INDEX idx ON t (col);\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("queries/report.sql"),
+        "CREATE INDEX idx ON t (col);\n",
+    )
+    .unwrap();
+
+    // In scope (matches `paths`): linted normally, findings gate the run.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path())
+        .arg("migrations/0001_add_index.sql")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
+
+    // Out of scope: silently dropped before linting, exits clean, and prints no
+    // note (silent by default — an out-of-scope file produces no output at all).
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path())
+        .arg("queries/report.sql")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("add-index-non-concurrent").not())
+        .stderr(predicate::str::contains("skipped").not());
+}
+
+#[test]
+fn paths_scoping_never_filters_stdin() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "paths = [\"migrations/**\"]\n",
+    )
+    .unwrap();
+
+    // Piped SQL has no path identity, so it's linted regardless of `paths`.
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path())
+        .write_stdin("CREATE INDEX idx ON t (col);\n")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
+}
+
+#[test]
+fn paths_scoping_is_a_noop_when_unset() {
+    // Control: with no `paths` key (here, no config at all via --no-config), a file
+    // shaped like the "out of scope" fixture above is still linted — proving the
+    // filter changes nothing for the common case of a project that never sets `paths`.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("queries")).unwrap();
+    std::fs::write(
+        dir.path().join("queries/report.sql"),
+        "CREATE INDEX idx ON t (col);\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path())
+        .arg("--no-config")
+        .arg("queries/report.sql")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
 }
 
 // ── color / summary ──────────────────────────────────────────────────────────

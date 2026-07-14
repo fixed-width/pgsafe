@@ -8,11 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use crate::{
-    gate, lint_input, render_errors, render_github, render_human_styled, render_json, render_sarif,
-    render_summary, ColorWhen, FailOn, FileReport, Format, LintOptions, Styling,
+    config, gate, lint_input, render_errors, render_github, render_human_styled, render_json,
+    render_sarif, render_summary, ColorWhen, FailOn, FileReport, Format, LintOptions, Styling,
 };
 
-mod config;
 mod fix;
 mod gitdiff;
 
@@ -68,6 +67,14 @@ pub struct CommonArgs {
 }
 
 /// The `pgsafe` binary's top-level parser.
+///
+/// `CommonArgs` has a positional `paths: Vec<String>`; `command` adds an optional
+/// subcommand alongside it. clap resolves the ambiguity itself: a leading token that
+/// matches a known subcommand name (e.g. `lsp`) dispatches to `Command`, and anything
+/// else — including a path that happens to look like one, since `Vec<String>` never
+/// requires a value — falls through to `CommonArgs::paths` as before. Verified for
+/// `pgsafe <path>`, bare `pgsafe` (stdin), `pgsafe lsp`/`pgsafe lsp --help`, and the
+/// existing flag suite (`--git-diff`, `--list-rules`, …); see `tests/cli.rs`.
 #[non_exhaustive]
 #[derive(clap::Parser)]
 #[command(
@@ -76,9 +83,46 @@ pub struct CommonArgs {
     about = "Lint PostgreSQL DDL migrations for unsafe operations"
 )]
 pub struct Cli {
-    /// The shared linting flags.
+    /// The shared linting flags (used when no subcommand is given).
     #[command(flatten)]
     pub args: CommonArgs,
+
+    /// The subcommand to run, if any (absence runs the default lint over `args`).
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// Subcommands beyond the default lint run.
+#[non_exhaustive]
+#[derive(clap::Subcommand)]
+pub enum Command {
+    /// Run the language server over stdio (for editor integration).
+    #[cfg(feature = "lsp")]
+    Lsp,
+}
+
+/// Entry the `pgsafe` binary calls with the fully-parsed CLI. Routes to a
+/// subcommand if present, else runs the default lint over `args`.
+#[must_use]
+pub fn main_entry(cli: Cli) -> ExitCode {
+    match cli.command {
+        #[cfg(feature = "lsp")]
+        Some(Command::Lsp) => match crate::lsp::run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(2)
+            }
+        },
+        // A wildcard, not `None`: in a `cli`-only build the `Lsp` variant is `#[cfg]`'d
+        // out, so `Command` is uninhabited and `Some(_)` can never be constructed — but
+        // recognizing that as exhaustive (so a bare `None` arm suffices) needs
+        // `min_exhaustive_patterns`, stabilized in Rust 1.82. This crate's MSRV is 1.80,
+        // so match `_` here: it's exhaustive on 1.80/1.81 in both the `lsp` and
+        // `cli`-only builds, and still runs the default lint for `None` (the only
+        // reachable case when `lsp` is off, and the only *other* case when it's on).
+        _ => run(cli.args),
+    }
 }
 
 /// Everything the CLI front-end resolves from the args + config: the selected inputs,
@@ -103,17 +147,12 @@ impl ResolvedRun {
     /// (path-relative) + the global `severity_overrides` and `enabled_rules`.
     #[must_use]
     pub fn options_for(&self, name: &str) -> LintOptions {
-        let rel = rel_path(name, self.config_dir.as_deref());
-        LintOptions {
-            assume_in_transaction: self.assume_in_transaction,
-            disabled_rules: self.config.disabled_for(&rel),
-            enabled_rules: self.config.enabled().clone(),
-            severity_overrides: self.config.overrides().clone(),
-            naming_patterns: self.config.naming().clone(),
-            forbidden_column_types: self.config.forbidden_types().clone(),
-            required_columns: self.config.required_columns().clone(),
-            ..LintOptions::default()
-        }
+        config::options_from(
+            &self.config,
+            self.config_dir.as_deref(),
+            name,
+            self.assume_in_transaction,
+        )
     }
 }
 
@@ -127,6 +166,7 @@ impl ResolvedRun {
 pub fn resolve(args: &CommonArgs) -> Result<ResolvedRun, String> {
     let (config, config_dir) = load_config(args)?;
     let inputs = select_inputs(args, &config)?;
+    let inputs = scope_to_paths(inputs, &config, config_dir.as_deref());
     let fail_on = args.fail_on.or(config.fail_on).unwrap_or(FailOn::Warning);
     let format = args
         .format
@@ -270,32 +310,6 @@ fn load_config(args: &CommonArgs) -> Result<(config::Config, Option<PathBuf>), S
     }
 }
 
-/// A linted file's path made relative to the config dir (for glob matching).
-/// Both the file path and the config dir are absolutized against the current
-/// working directory first, so an ignore glob written relative to the config
-/// dir still matches when pgsafe is invoked from a subdirectory.
-fn rel_path(name: &str, config_dir: Option<&Path>) -> String {
-    let Some(dir) = config_dir else {
-        return name.to_string();
-    };
-    let cwd = std::env::current_dir().unwrap_or_default();
-    let abs_name = if Path::new(name).is_absolute() {
-        PathBuf::from(name)
-    } else {
-        cwd.join(name)
-    };
-    let abs_dir = if dir.is_absolute() {
-        dir.to_path_buf()
-    } else {
-        cwd.join(dir)
-    };
-    abs_name
-        .strip_prefix(&abs_dir)
-        .unwrap_or(&abs_name)
-        .to_string_lossy()
-        .into_owned()
-}
-
 /// Select + read the inputs per `--git-diff` / `--since` / positional paths.
 fn select_inputs(
     args: &CommonArgs,
@@ -329,6 +343,22 @@ fn select_inputs(
             }
         }
     }
+}
+
+/// Drop file inputs the config's `paths` globs don't govern. No-op when `paths`
+/// is unset (`Config::in_scope` returns true for everything), so a config without
+/// `paths` selects exactly as before. Stdin (`"<stdin>"`) has no path identity and
+/// is always kept — piped SQL is never filtered. Silent: scoped-out files are
+/// dropped without a note (a `--verbose` flag can surface them later if wanted).
+fn scope_to_paths(
+    inputs: Vec<(String, String)>,
+    config: &config::Config,
+    config_dir: Option<&Path>,
+) -> Vec<(String, String)> {
+    inputs
+        .into_iter()
+        .filter(|(name, _)| name == "<stdin>" || config.in_scope(config_dir, name))
+        .collect()
 }
 
 fn read_inputs(paths: &[String]) -> Result<Vec<(String, String)>, String> {
