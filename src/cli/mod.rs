@@ -349,6 +349,14 @@ fn select_inputs(
 /// `paths` selects exactly as before. Stdin (`"<stdin>"`) has no path identity and
 /// is always kept — piped SQL is never filtered. Silent: scoped-out files are
 /// dropped without a note (a `--verbose` flag can surface them later if wanted).
+///
+/// The stdin exemption keys on the `"<stdin>"` display name, so a real on-disk file
+/// literally named `<stdin>` (legal on Unix; illegal on Windows, where `<>` are
+/// reserved) is exempted too and linted regardless of `paths`. This is an accepted,
+/// fails-safe quirk: the collision can only *over*-lint such a file (surface findings
+/// the user could suppress), never skip a genuine migration hazard. Keeping the scope
+/// decision at this single choke-point is worth more than threading a structural
+/// stdin-vs-file origin flag to close a nil-probability edge.
 fn scope_to_paths(
     inputs: Vec<(String, String)>,
     config: &config::Config,

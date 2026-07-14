@@ -647,6 +647,34 @@ fn paths_scoping_is_a_noop_when_unset() {
         .stdout(predicate::str::contains("add-index-non-concurrent"));
 }
 
+#[test]
+#[cfg(not(windows))] // `<` `>` are reserved in Windows filenames; the fixture can't exist there.
+fn paths_scoping_exempts_a_real_file_named_stdin() {
+    // Documented fails-safe quirk: `scope_to_paths` exempts stdin by its "<stdin>"
+    // display name, so a real on-disk file literally named `<stdin>` is exempt from
+    // `paths` scoping too and linted even when out of scope. (A normal filename at this
+    // location is dropped — see `paths_scoping_..._skips_out_of_scope_file`.) The
+    // collision can only over-lint (surface suppressible findings), never skip a hazard;
+    // pinned here so the behavior can't silently change. `<>` are legal in Unix
+    // filenames; this path is unreachable on Windows, where they're reserved.
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "paths = [\"migrations/**\"]\n",
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("<stdin>"), "CREATE INDEX idx ON t (col);\n").unwrap();
+
+    Command::cargo_bin("pgsafe")
+        .unwrap()
+        .current_dir(dir.path())
+        .arg("<stdin>")
+        .assert()
+        .failure()
+        .code(1)
+        .stdout(predicate::str::contains("add-index-non-concurrent"));
+}
+
 // ── color / summary ──────────────────────────────────────────────────────────
 
 #[test]
