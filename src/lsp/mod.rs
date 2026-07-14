@@ -11,6 +11,7 @@
 
 mod actions;
 mod diagnostics;
+mod fixall;
 mod hover;
 mod position;
 pub(crate) mod server;

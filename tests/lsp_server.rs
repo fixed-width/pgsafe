@@ -188,6 +188,146 @@ fn code_action_returns_quickfix() {
     handle.join().unwrap();
 }
 
+/// Drive one `textDocument/codeAction` request with an explicit `context.only`
+/// filter over a freshly-opened unsafe migration, returning the response's JSON
+/// result array. Keeps the two `source.fixAll` routing tests below focused on the
+/// filtering behavior rather than the handshake boilerplate.
+fn code_action_kinds_for_only(only: &[&str]) -> Vec<serde_json::Value> {
+    use lsp_types::{
+        CodeActionContext, CodeActionKind, CodeActionParams, PartialResultParams, Position, Range,
+        TextDocumentIdentifier, WorkDoneProgressParams,
+    };
+
+    let (client, handle) = start();
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(1),
+            method: "initialize".to_string(),
+            params: serde_json::to_value(InitializeParams::default()).unwrap(),
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(
+        &client,
+        "initialized",
+        serde_json::to_value(InitializedParams {}).unwrap(),
+    );
+
+    let doc_uri = uri("file:///tmp/0001.sql");
+    notify(
+        &client,
+        "textDocument/didOpen",
+        serde_json::to_value(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: doc_uri.clone(),
+                language_id: "sql".to_string(),
+                version: 1,
+                text: "CREATE INDEX idx ON t (col);".to_string(),
+            },
+        })
+        .unwrap(),
+    );
+    let _ = client.receiver.recv().unwrap(); // publishDiagnostics
+
+    let ca = CodeActionParams {
+        text_document: TextDocumentIdentifier { uri: doc_uri },
+        range: Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 27,
+            },
+        },
+        context: CodeActionContext {
+            only: Some(
+                only.iter()
+                    .map(|k| CodeActionKind::from(k.to_string()))
+                    .collect(),
+            ),
+            ..CodeActionContext::default()
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+    };
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2),
+            method: "textDocument/codeAction".to_string(),
+            params: serde_json::to_value(ca).unwrap(),
+        }))
+        .unwrap();
+    let resp = loop {
+        match client.receiver.recv().unwrap() {
+            Message::Response(r) if r.id == RequestId::from(2) => break r,
+            _ => continue,
+        }
+    };
+    let value = match resp.response_kind {
+        lsp_server::ResponseKind::Ok { result } => result,
+        other => panic!("expected an Ok code-action response, got {other:?}"),
+    };
+    let actions = value.as_array().expect("array of actions").clone();
+
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(3),
+            method: "shutdown".to_string(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(&client, "exit", serde_json::Value::Null);
+    handle.join().unwrap();
+    actions
+}
+
+#[test]
+fn source_fix_all_returns_a_whole_document_edit() {
+    let actions = code_action_kinds_for_only(&["source.fixAll"]);
+    // Only source.fixAll was requested → exactly the fix-all action, no quickfixes.
+    assert!(
+        actions.iter().all(|a| a["kind"] == "source.fixAll"),
+        "expected only source.fixAll actions, got {actions:?}"
+    );
+    let fix_all = actions
+        .iter()
+        .find(|a| a["kind"] == "source.fixAll")
+        .expect("a source.fixAll action");
+    // Its edit is a single whole-document replacement carrying the fixed SQL.
+    let edits = fix_all["edit"]["changes"]
+        .as_object()
+        .expect("changes map")
+        .values()
+        .next()
+        .and_then(|v| v.as_array())
+        .expect("edits array");
+    assert_eq!(edits.len(), 1, "fix-all is one whole-document edit");
+    let new_text = edits[0]["newText"].as_str().unwrap();
+    assert!(
+        new_text.contains("CONCURRENTLY"),
+        "fixed text should carry the applied fix, got {new_text:?}"
+    );
+}
+
+#[test]
+fn quickfix_only_excludes_source_fix_all() {
+    let actions = code_action_kinds_for_only(&["quickfix"]);
+    assert!(
+        !actions.is_empty(),
+        "expected at least one quickfix for the unsafe statement"
+    );
+    assert!(
+        actions.iter().all(|a| a["kind"] == "quickfix"),
+        "quickfix-only request must not return source.fixAll, got {actions:?}"
+    );
+}
+
 #[test]
 fn hover_returns_finding_details() {
     use lsp_types::{
