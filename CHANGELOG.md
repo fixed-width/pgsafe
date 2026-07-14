@@ -15,9 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ["migrations/**/*.sql"]`) so schema dumps and ad-hoc queries aren't flagged as
   migration hazards; unset, it lints every `.sql` file as before.
 - The CLI now honors `paths` too: selected file inputs that don't match the config's
-  `paths` globs are dropped before linting, with a note on stderr listing what was
-  skipped. Stdin is exempt (piped SQL is always linted), and the filter is a no-op
-  when `paths` is unset — one policy now scopes both the CLI and the LSP.
+  `paths` globs are silently dropped before linting. Stdin is exempt (piped SQL is
+  always linted), and the filter is a no-op when `paths` is unset — one policy now
+  scopes both the CLI and the LSP.
+
+### Changed
+
+- Minimum supported Rust version is now **1.88** (was 1.80). A crate in the build
+  graph requires it, and the previously declared 1.80 no longer built; CI now
+  compiles on the declared `rust-version` so the MSRV can't silently drift again.
 
 ### Fixed
 
