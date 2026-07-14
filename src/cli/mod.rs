@@ -68,19 +68,18 @@ pub struct CommonArgs {
 
 /// The `pgsafe` binary's top-level parser.
 ///
-/// `CommonArgs` has a positional `paths: Vec<String>`; `command` adds an optional
-/// subcommand alongside it. clap resolves the ambiguity itself: a leading token that
-/// matches a known subcommand name (e.g. `lsp`) dispatches to `Command`, and anything
-/// else — including a path that happens to look like one, since `Vec<String>` never
-/// requires a value — falls through to `CommonArgs::paths` as before. Verified for
-/// `pgsafe <path>`, bare `pgsafe` (stdin), `pgsafe lsp`/`pgsafe lsp --help`, and the
-/// existing flag suite (`--git-diff`, `--list-rules`, …); see `tests/cli.rs`.
+/// The subcommand is optional: with none, the flattened [`CommonArgs`] run the
+/// default lint; a leading `lsp` token dispatches to the language server. A
+/// positional path is never taken for a subcommand.
 #[non_exhaustive]
 #[derive(clap::Parser)]
 #[command(
     name = "pgsafe",
     version,
-    about = "Lint PostgreSQL DDL migrations for unsafe operations"
+    about = "Lint PostgreSQL DDL migrations for unsafe operations",
+    // The struct doc comment documents internals for `cargo doc`; keep it out of the
+    // user-facing `--help`, which shows only `about`.
+    long_about = None
 )]
 pub struct Cli {
     /// The shared linting flags (used when no subcommand is given).
