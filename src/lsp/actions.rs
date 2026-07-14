@@ -58,7 +58,12 @@ pub(crate) fn code_actions(
     actions
 }
 
-/// Half-open range intersection in LSP position space.
+/// Range intersection in LSP position space. Ranges that merely *touch* — one's end
+/// equal to the other's start — count as intersecting, because `before` uses strict
+/// `<`. This is deliberate: a cursor placed exactly at a statement boundary still gets
+/// that statement's quickfix (matching VS Code's `Range.intersection`, which returns a
+/// zero-length intersection rather than nothing when ranges touch). It can only add a
+/// convenience action at a boundary, never drop a legitimate one.
 fn ranges_intersect(a: Range, b: Range) -> bool {
     !(before(a.end, b.start) || before(b.end, a.start))
 }
@@ -125,5 +130,28 @@ mod tests {
             },
         };
         assert!(code_actions(&uri(), sql, &findings, far).is_empty());
+    }
+
+    #[test]
+    fn touching_ranges_intersect_but_gapped_ranges_do_not() {
+        use super::ranges_intersect;
+        let r = |sl, sc, el, ec| Range {
+            start: Position {
+                line: sl,
+                character: sc,
+            },
+            end: Position {
+                line: el,
+                character: ec,
+            },
+        };
+        // Touching at a single point (a.end == b.start) counts as intersecting, in
+        // either order — a cursor exactly at a statement boundary still gets its fix.
+        assert!(ranges_intersect(r(0, 0, 0, 10), r(0, 10, 0, 20)));
+        assert!(ranges_intersect(r(0, 10, 0, 20), r(0, 0, 0, 10)));
+        // A genuine gap between them does not intersect.
+        assert!(!ranges_intersect(r(0, 0, 0, 5), r(0, 6, 0, 9)));
+        // Overlap intersects.
+        assert!(ranges_intersect(r(0, 0, 0, 10), r(0, 5, 0, 15)));
     }
 }

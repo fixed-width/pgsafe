@@ -111,4 +111,26 @@ mod tests {
         assert_eq!((r.start.line, r.start.character), (0, 0));
         assert_eq!((r.end.line, r.end.character), (0, 6));
     }
+
+    #[test]
+    fn byte_inside_a_multibyte_char_floors_to_its_start() {
+        // "café": é occupies bytes 3..5, so byte 4 is not a char boundary.
+        let t = "café";
+        assert!(!t.is_char_boundary(4));
+        // A byte mid-char floors to the char's start (byte 3): same position, no panic.
+        assert_eq!(pos(t, 4), pos(t, 3));
+        assert_eq!(pos(t, 4), (0, 3)); // c, a, f = 3 UTF-16 units
+    }
+
+    #[test]
+    fn byte_at_crlf_stays_on_the_first_line() {
+        // "ab\r\ncd": bytes a0 b1 \r2 \n3 c4 d5. A byte at the \r or \n resolves to
+        // line 0, counting the \r as a column — documents the current CRLF handling
+        // (unreachable from pgsafe's token-boundary offsets, but pinned so it can't
+        // silently change).
+        let t = "ab\r\ncd";
+        assert_eq!(pos(t, 2), (0, 2)); // the \r
+        assert_eq!(pos(t, 3), (0, 3)); // the \n — still line 0, \r counted
+        assert_eq!(pos(t, 4), (1, 0)); // 'c' begins line 1
+    }
 }
