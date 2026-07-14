@@ -128,7 +128,10 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         position_encoding: Some(PositionEncodingKind::UTF16),
         text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
-            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            code_action_kinds: Some(vec![
+                CodeActionKind::QUICKFIX,
+                CodeActionKind::SOURCE_FIX_ALL,
+            ]),
             ..CodeActionOptions::default()
         })),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -189,7 +192,8 @@ fn handle_notification(
 }
 
 /// Handle `textDocument/codeAction`: lint the open document and respond with the
-/// quick-fix actions that apply within the requested range.
+/// applicable actions the client asked for — range-scoped `quickfix`es and/or the
+/// whole-document `source.fixAll`, filtered by the request's `context.only`.
 fn on_code_action(
     connection: &Connection,
     state: &mut State,
@@ -199,13 +203,26 @@ fn on_code_action(
         .extract::<CodeActionParams>("textDocument/codeAction")
         .map_err(|e| format!("codeAction params: {e:?}"))?;
     let key = params.text_document.uri.as_str().to_string();
+    let only = params.context.only.as_deref();
     let result = if let Some(doc) = state.docs.get(&key) {
         match resolve_lint_options(doc, &mut state.configs) {
             Some(options) => {
-                let findings = lint_sql(&doc.text, &options).unwrap_or_default();
-                super::actions::code_actions(&doc.uri, &doc.text, &findings, params.range)
+                let mut actions = Vec::new();
+                if kind_requested(&CodeActionKind::QUICKFIX, only) {
+                    let findings = lint_sql(&doc.text, &options).unwrap_or_default();
+                    actions.extend(super::actions::code_actions(
+                        &doc.uri,
+                        &doc.text,
+                        &findings,
+                        params.range,
+                    ));
+                }
+                if kind_requested(&CodeActionKind::SOURCE_FIX_ALL, only) {
+                    actions.extend(super::fixall::fix_all_action(&doc.uri, &doc.text, &options));
+                }
+                actions
             }
-            None => Vec::new(), // out of `paths` scope: no quickfixes
+            None => Vec::new(), // out of `paths` scope: no actions
         }
     } else {
         Vec::new()
@@ -214,6 +231,23 @@ fn on_code_action(
         .sender
         .send(Message::Response(Response::new_ok(id, result)))?;
     Ok(())
+}
+
+/// Whether the client asked for a code action of `kind`. `only == None` (no filter on
+/// the request) means "any kind". Otherwise a requested kind matches when it equals
+/// `kind` or is a parent of it: LSP kinds are dotted hierarchies, so a `source` request
+/// covers `source.fixAll` — which is what editors send for on-save `codeActionsOnSave`.
+fn kind_requested(kind: &CodeActionKind, only: Option<&[CodeActionKind]>) -> bool {
+    match only {
+        None => true,
+        Some(requested) => requested.iter().any(|r| covers(r.as_str(), kind.as_str())),
+    }
+}
+
+/// Whether requested kind `r` covers actual kind `k`: equal, or `r` is a dotted-segment
+/// prefix of `k` (`"source"` covers `"source.fixAll"`, but `"sourc"` does not).
+fn covers(r: &str, k: &str) -> bool {
+    k == r || k.strip_prefix(r).is_some_and(|rest| rest.starts_with('.'))
 }
 
 /// Handle `textDocument/hover`: lint the open document and respond with the finding(s)
@@ -623,12 +657,61 @@ mod tests {
 
     #[test]
     fn advertises_hover_and_code_action_providers() {
+        use lsp_types::{CodeActionKind, CodeActionProviderCapability};
         let caps = server_capabilities();
         assert!(
             caps.hover_provider.is_some(),
             "server must advertise hover so clients send hover requests"
         );
-        assert!(caps.code_action_provider.is_some());
+        let kinds = match caps.code_action_provider {
+            Some(CodeActionProviderCapability::Options(o)) => {
+                o.code_action_kinds.unwrap_or_default()
+            }
+            other => panic!("expected code-action options, got {other:?}"),
+        };
+        assert!(
+            kinds.contains(&CodeActionKind::QUICKFIX),
+            "must advertise quickfix"
+        );
+        assert!(
+            kinds.contains(&CodeActionKind::SOURCE_FIX_ALL),
+            "must advertise source.fixAll so editors run it on save"
+        );
+    }
+
+    #[test]
+    fn code_action_kind_filtering() {
+        use super::kind_requested;
+        use lsp_types::CodeActionKind;
+        let qf = CodeActionKind::QUICKFIX;
+        let fa = CodeActionKind::SOURCE_FIX_ALL;
+        let k = |s: &str| CodeActionKind::from(s.to_string());
+        let fa_only = [fa.clone()];
+        let qf_only = [qf.clone()];
+        let source = [k("source")];
+        let partial = [k("sourc")];
+        let source_fix = [k("source.fix")];
+        let empty: [CodeActionKind; 0] = [];
+
+        // No filter → every kind is requested.
+        assert!(kind_requested(&qf, None));
+        assert!(kind_requested(&fa, None));
+        // Exact-kind requests select just that kind.
+        assert!(kind_requested(&fa, Some(&fa_only)));
+        assert!(!kind_requested(&qf, Some(&fa_only)));
+        assert!(kind_requested(&qf, Some(&qf_only)));
+        assert!(!kind_requested(&fa, Some(&qf_only)));
+        // A parent `source` request covers `source.fixAll` (the on-save umbrella) but
+        // not `quickfix`.
+        assert!(kind_requested(&fa, Some(&source)));
+        assert!(!kind_requested(&qf, Some(&source)));
+        // A partial segment is not a parent: neither `sourc` nor `source.fix` covers
+        // `source.fixAll`.
+        assert!(!kind_requested(&fa, Some(&partial)));
+        assert!(!kind_requested(&fa, Some(&source_fix)));
+        // An explicit empty filter selects nothing.
+        assert!(!kind_requested(&fa, Some(&empty)));
+        assert!(!kind_requested(&qf, Some(&empty)));
     }
 
     #[test]

@@ -10,8 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `pgsafe lsp`: a stdio Language Server providing live editor diagnostics,
-  quickfix code actions, and hover cards (a finding's message, guidance, and rule id)
-  for SQL migration files (build with `--features lsp`). A new
+  quickfix and `source.fixAll` code actions (the latter applies every autofix at once,
+  with the same fixpoint semantics as `pgsafe --fix` — ideal for fix-on-save), and hover
+  cards (a finding's message, guidance, and rule id) for SQL migration files (build with
+  `--features lsp`). A new
   global `paths` config key scopes it to specific globs (e.g. `paths =
   ["migrations/**/*.sql"]`) so schema dumps and ad-hoc queries aren't flagged as
   migration hazards; unset, it lints every `.sql` file as before.
