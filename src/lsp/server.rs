@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 
-use lsp_server::{Connection, Message, Notification, Request, Response};
+use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use lsp_types::{
     CodeActionKind, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
@@ -12,6 +12,7 @@ use lsp_types::{
     PublishDiagnosticsParams, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
     Uri,
 };
+use serde::de::DeserializeOwned;
 
 use super::diagnostics::diagnostics_for;
 use super::LspError;
@@ -191,6 +192,33 @@ fn handle_notification(
     Ok(ControlFlow::Continue(()))
 }
 
+/// Reply to a request whose params we couldn't deserialize with a JSON-RPC
+/// `InvalidParams` error, keeping the session alive. A malformed payload is the
+/// client's mistake, not ours — a single bad request must never tear the server down.
+/// Only a genuine transport-send failure (the connection is gone) still propagates.
+fn reply_invalid_params(
+    connection: &Connection,
+    id: RequestId,
+    message: String,
+) -> Result<(), LspError> {
+    let resp = Response::new_err(id, ErrorCode::InvalidParams as i32, message);
+    connection.sender.send(Message::Response(resp))?;
+    Ok(())
+}
+
+/// Deserialize a notification's params, or log and skip. JSON-RPC has no response for
+/// notifications, so a malformed one is simply dropped (not fatal, not answered) — the
+/// counterpart to [`reply_invalid_params`] for the notification path.
+fn parse_or_skip<T: DeserializeOwned>(method: &str, params: serde_json::Value) -> Option<T> {
+    match serde_json::from_value(params) {
+        Ok(parsed) => Some(parsed),
+        Err(e) => {
+            eprintln!("pgsafe lsp: ignoring malformed {method} notification: {e}");
+            None
+        }
+    }
+}
+
 /// Handle `textDocument/codeAction`: lint the open document and respond with the
 /// applicable actions the client asked for — range-scoped `quickfix`es and/or the
 /// whole-document `source.fixAll`, filtered by the request's `context.only`.
@@ -199,9 +227,11 @@ fn on_code_action(
     state: &mut State,
     req: Request,
 ) -> Result<(), LspError> {
-    let (id, params) = req
-        .extract::<CodeActionParams>("textDocument/codeAction")
-        .map_err(|e| format!("codeAction params: {e:?}"))?;
+    let id = req.id.clone();
+    let params = match req.extract::<CodeActionParams>("textDocument/codeAction") {
+        Ok((_, params)) => params,
+        Err(e) => return reply_invalid_params(connection, id, format!("codeAction params: {e:?}")),
+    };
     let key = params.text_document.uri.as_str().to_string();
     let only = params.context.only.as_deref();
     let result = if let Some(doc) = state.docs.get(&key) {
@@ -254,9 +284,11 @@ fn covers(r: &str, k: &str) -> bool {
 /// under the cursor, or a JSON `null` (no hover) when the position is off any finding,
 /// the document is untracked/non-SQL/unparseable, or it's out of `paths` scope.
 fn on_hover(connection: &Connection, state: &mut State, req: Request) -> Result<(), LspError> {
-    let (id, params) = req
-        .extract::<HoverParams>("textDocument/hover")
-        .map_err(|e| format!("hover params: {e:?}"))?;
+    let id = req.id.clone();
+    let params = match req.extract::<HoverParams>("textDocument/hover") {
+        Ok((_, params)) => params,
+        Err(e) => return reply_invalid_params(connection, id, format!("hover params: {e:?}")),
+    };
     let tdp = params.text_document_position_params;
     let key = tdp.text_document.uri.as_str().to_string();
     let position = tdp.position;
@@ -284,7 +316,9 @@ fn on_did_open(
     state: &mut State,
     params: serde_json::Value,
 ) -> Result<(), LspError> {
-    let p: DidOpenTextDocumentParams = serde_json::from_value(params)?;
+    let Some(p) = parse_or_skip::<DidOpenTextDocumentParams>("didOpen", params) else {
+        return Ok(());
+    };
     let doc = Document {
         uri: p.text_document.uri,
         language_id: p.text_document.language_id,
@@ -303,7 +337,9 @@ fn on_did_change(
     state: &mut State,
     params: serde_json::Value,
 ) -> Result<(), LspError> {
-    let p: DidChangeTextDocumentParams = serde_json::from_value(params)?;
+    let Some(p) = parse_or_skip::<DidChangeTextDocumentParams>("didChange", params) else {
+        return Ok(());
+    };
     let key = p.text_document.uri.as_str().to_string();
     if let Some(doc) = state.docs.get_mut(&key) {
         // FULL sync: the last change contains the whole document.
@@ -324,7 +360,9 @@ fn on_did_save(
     state: &mut State,
     params: serde_json::Value,
 ) -> Result<(), LspError> {
-    let p: DidSaveTextDocumentParams = serde_json::from_value(params)?;
+    let Some(p) = parse_or_skip::<DidSaveTextDocumentParams>("didSave", params) else {
+        return Ok(());
+    };
     let uri = p.text_document.uri;
     let saved_path = uri_to_path(uri.as_str());
     let config_dir = saved_path.as_deref().filter(|p| is_config_file(p));
@@ -383,7 +421,9 @@ fn on_did_close(
     state: &mut State,
     params: serde_json::Value,
 ) -> Result<(), LspError> {
-    let p: DidCloseTextDocumentParams = serde_json::from_value(params)?;
+    let Some(p) = parse_or_skip::<DidCloseTextDocumentParams>("didClose", params) else {
+        return Ok(());
+    };
     let key = p.text_document.uri.as_str().to_string();
     if let Some(doc) = state.docs.remove(&key) {
         // Clear diagnostics for the closed document.

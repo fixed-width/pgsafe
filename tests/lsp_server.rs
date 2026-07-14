@@ -746,3 +746,110 @@ fn did_save_of_config_file_invalidates_cache_and_relints() {
     notify(&client, "exit", serde_json::Value::Null);
     handle.join().unwrap();
 }
+
+#[test]
+fn malformed_request_gets_error_response_and_server_survives() {
+    // A request whose params don't deserialize must draw a JSON-RPC error response, not
+    // tear the server down: the session has to survive one bad message.
+    let (client, handle) = start();
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(1),
+            method: "initialize".to_string(),
+            params: serde_json::to_value(InitializeParams::default()).unwrap(),
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(
+        &client,
+        "initialized",
+        serde_json::to_value(InitializedParams {}).unwrap(),
+    );
+
+    // codeAction with params that are not a CodeActionParams object.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2),
+            method: "textDocument/codeAction".to_string(),
+            params: serde_json::json!("not a CodeActionParams object"),
+        }))
+        .unwrap();
+    let resp = loop {
+        match client.receiver.recv().unwrap() {
+            Message::Response(r) if r.id == RequestId::from(2) => break r,
+            _ => continue,
+        }
+    };
+    match resp.response_kind {
+        lsp_server::ResponseKind::Err { error } => assert_eq!(
+            error.code, -32602,
+            "malformed params should yield InvalidParams (-32602), got {error:?}"
+        ),
+        other => panic!("expected an error response, got {other:?}"),
+    }
+
+    // The server survived: a normal shutdown still round-trips and the thread joins clean.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(3),
+            method: "shutdown".to_string(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(&client, "exit", serde_json::Value::Null);
+    handle.join().unwrap();
+}
+
+#[test]
+fn malformed_notification_is_ignored_and_server_survives() {
+    // A notification whose params don't deserialize must be ignored (JSON-RPC has no
+    // response for notifications), never fatal.
+    let (client, handle) = start();
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(1),
+            method: "initialize".to_string(),
+            params: serde_json::to_value(InitializeParams::default()).unwrap(),
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(
+        &client,
+        "initialized",
+        serde_json::to_value(InitializedParams {}).unwrap(),
+    );
+
+    // A didOpen with garbage params — must be dropped, not tear the server down.
+    notify(
+        &client,
+        "textDocument/didOpen",
+        serde_json::json!("garbage"),
+    );
+
+    // Liveness proof: shutdown still round-trips and the thread joins clean.
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2),
+            method: "shutdown".to_string(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    let resp = loop {
+        match client.receiver.recv().unwrap() {
+            Message::Response(r) if r.id == RequestId::from(2) => break r,
+            _ => continue,
+        }
+    };
+    assert!(matches!(
+        resp.response_kind,
+        lsp_server::ResponseKind::Ok { .. }
+    ));
+    notify(&client, "exit", serde_json::Value::Null);
+    handle.join().unwrap();
+}
