@@ -230,7 +230,7 @@ fn on_code_action(
     let id = req.id.clone();
     let params = match req.extract::<CodeActionParams>("textDocument/codeAction") {
         Ok((_, params)) => params,
-        Err(e) => return reply_invalid_params(connection, id, format!("codeAction params: {e:?}")),
+        Err(e) => return reply_invalid_params(connection, id, format!("codeAction params: {e}")),
     };
     let key = params.text_document.uri.as_str().to_string();
     let only = params.context.only.as_deref();
@@ -287,7 +287,7 @@ fn on_hover(connection: &Connection, state: &mut State, req: Request) -> Result<
     let id = req.id.clone();
     let params = match req.extract::<HoverParams>("textDocument/hover") {
         Ok((_, params)) => params,
-        Err(e) => return reply_invalid_params(connection, id, format!("hover params: {e:?}")),
+        Err(e) => return reply_invalid_params(connection, id, format!("hover params: {e}")),
     };
     let tdp = params.text_document_position_params;
     let key = tdp.text_document.uri.as_str().to_string();
