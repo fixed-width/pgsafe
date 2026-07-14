@@ -8,8 +8,9 @@ use lsp_server::{Connection, Message, Notification, Request, Response};
 use lsp_types::{
     CodeActionKind, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, PositionEncodingKind, PublishDiagnosticsParams, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, Uri,
+    DidSaveTextDocumentParams, HoverParams, HoverProviderCapability, PositionEncodingKind,
+    PublishDiagnosticsParams, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind,
+    Uri,
 };
 
 use super::diagnostics::diagnostics_for;
@@ -130,6 +131,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
             ..CodeActionOptions::default()
         })),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
         ..ServerCapabilities::default()
     }
 }
@@ -150,8 +152,8 @@ pub(crate) fn run_loop(connection: &Connection) -> Result<(), LspError> {
     Ok(())
 }
 
-/// Handle one client request: `shutdown` ends the loop; `textDocument/codeAction` is
-/// answered; anything else is ignored for MVP.
+/// Handle one client request: `shutdown` ends the loop; `textDocument/codeAction` and
+/// `textDocument/hover` are answered; anything else is ignored for MVP.
 fn handle_request(
     connection: &Connection,
     state: &mut State,
@@ -160,10 +162,11 @@ fn handle_request(
     if connection.handle_shutdown(&req)? {
         return Ok(ControlFlow::Break(()));
     }
-    if req.method == "textDocument/codeAction" {
-        on_code_action(connection, state, req)?;
+    match req.method.as_str() {
+        "textDocument/codeAction" => on_code_action(connection, state, req)?,
+        "textDocument/hover" => on_hover(connection, state, req)?,
+        _ => {} // Other requests are ignored for MVP.
     }
-    // Other requests are ignored for MVP.
     Ok(ControlFlow::Continue(()))
 }
 
@@ -206,6 +209,33 @@ fn on_code_action(
         }
     } else {
         Vec::new()
+    };
+    connection
+        .sender
+        .send(Message::Response(Response::new_ok(id, result)))?;
+    Ok(())
+}
+
+/// Handle `textDocument/hover`: lint the open document and respond with the finding(s)
+/// under the cursor, or a JSON `null` (no hover) when the position is off any finding,
+/// the document is untracked/non-SQL/unparseable, or it's out of `paths` scope.
+fn on_hover(connection: &Connection, state: &mut State, req: Request) -> Result<(), LspError> {
+    let (id, params) = req
+        .extract::<HoverParams>("textDocument/hover")
+        .map_err(|e| format!("hover params: {e:?}"))?;
+    let tdp = params.text_document_position_params;
+    let key = tdp.text_document.uri.as_str().to_string();
+    let position = tdp.position;
+    let result = if let Some(doc) = state.docs.get(&key) {
+        match resolve_lint_options(doc, &mut state.configs) {
+            Some(options) => {
+                let findings = lint_sql(&doc.text, &options).unwrap_or_default();
+                super::hover::hover(&doc.text, &findings, position)
+            }
+            None => None, // out of `paths` scope: no hover
+        }
+    } else {
+        None
     };
     connection
         .sender
@@ -328,37 +358,36 @@ fn on_did_close(
     Ok(())
 }
 
-/// Lint a document and publish its diagnostics (empty on parse error / non-SQL).
-/// Takes the config cache separately (not via `&State`) so callers can hold an
-/// immutable borrow of `state.docs` (for `doc`) alongside this mutable one — the two
-/// borrows are of disjoint `State` fields, so the split is enough to satisfy the
+/// Lint a document and publish its diagnostics (empty on parse error, non-SQL, or
+/// out-of-scope). Takes the config cache separately (not via `&State`) so callers can
+/// hold an immutable borrow of `state.docs` (for `doc`) alongside this mutable one — the
+/// two borrows are of disjoint `State` fields, so the split is enough to satisfy the
 /// borrow checker without cloning the document.
 fn publish(
     connection: &Connection,
     doc: &Document,
     configs: &mut ConfigCache,
 ) -> Result<(), LspError> {
-    let diagnostics = if doc.language_id == "sql" {
-        match resolve_lint_options(doc, configs) {
-            Some(options) => match lint_sql(&doc.text, &options) {
-                Ok(findings) => diagnostics_for(&doc.text, &findings),
-                Err(_) => Vec::new(), // mid-edit / unparseable: clear, don't spam
-            },
-            None => Vec::new(), // out of `paths` scope: clear any stale diagnostics
-        }
-    } else {
-        Vec::new()
+    let diagnostics = match resolve_lint_options(doc, configs) {
+        Some(options) => match lint_sql(&doc.text, &options) {
+            Ok(findings) => diagnostics_for(&doc.text, &findings),
+            Err(_) => Vec::new(), // mid-edit / unparseable: clear, don't spam
+        },
+        None => Vec::new(), // non-SQL or out of `paths` scope: clear any stale diagnostics
     };
     send_diagnostics(connection, &doc.uri, diagnostics)
 }
 
-/// Resolve the [`crate::LintOptions`] to lint `doc` with, or `None` if it's out of
-/// the resolved config's `paths` scope and must not be
-/// linted at all — the shared gate `publish` and `on_code_action` both consult. A
-/// document with no file path (untitled buffer) or a non-`file` URI always lints
-/// with defaults: no config is discoverable for it, so `Config::in_scope`'s
-/// empty-`paths` default (in scope) would apply anyway.
+/// Resolve the [`crate::LintOptions`] to lint `doc` with, or `None` if it must not be
+/// linted at all — the single gate `publish`, `on_code_action`, and `on_hover` all
+/// consult. Returns `None` when the document isn't SQL (`language_id != "sql"`) or is
+/// out of the resolved config's `paths` scope. A document with no file path (untitled
+/// buffer) or a non-`file` URI lints with defaults: no config is discoverable for it, so
+/// `Config::in_scope`'s empty-`paths` default (in scope) would apply anyway.
 fn resolve_lint_options(doc: &Document, configs: &mut ConfigCache) -> Option<crate::LintOptions> {
+    if doc.language_id != "sql" {
+        return None;
+    }
     match uri_to_path(doc.uri.as_str()) {
         Some(path) if configs.should_lint(&path) => Some(configs.options_for(&path)),
         Some(_) => None,
@@ -589,8 +618,18 @@ mod cache_tests {
 
 #[cfg(test)]
 mod tests {
-    use super::uri_to_path;
+    use super::{server_capabilities, uri_to_path};
     use std::path::PathBuf;
+
+    #[test]
+    fn advertises_hover_and_code_action_providers() {
+        let caps = server_capabilities();
+        assert!(
+            caps.hover_provider.is_some(),
+            "server must advertise hover so clients send hover requests"
+        );
+        assert!(caps.code_action_provider.is_some());
+    }
 
     #[test]
     fn plain_file_uri() {

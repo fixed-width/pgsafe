@@ -188,6 +188,201 @@ fn code_action_returns_quickfix() {
     handle.join().unwrap();
 }
 
+#[test]
+fn hover_returns_finding_details() {
+    use lsp_types::{
+        Hover, HoverContents, HoverParams, Position, TextDocumentIdentifier,
+        TextDocumentPositionParams, WorkDoneProgressParams,
+    };
+
+    let (client, handle) = start();
+
+    // initialize
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(1),
+            method: "initialize".to_string(),
+            params: serde_json::to_value(InitializeParams::default()).unwrap(),
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(
+        &client,
+        "initialized",
+        serde_json::to_value(InitializedParams {}).unwrap(),
+    );
+
+    let doc_uri = uri("file:///tmp/0001.sql");
+    notify(
+        &client,
+        "textDocument/didOpen",
+        serde_json::to_value(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: doc_uri.clone(),
+                language_id: "sql".to_string(),
+                version: 1,
+                text: "CREATE INDEX idx ON t (col);".to_string(),
+            },
+        })
+        .unwrap(),
+    );
+    let _ = client.receiver.recv().unwrap(); // publishDiagnostics
+
+    // Hover inside the flagged statement.
+    let hp = HoverParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: doc_uri.clone(),
+            },
+            position: Position {
+                line: 0,
+                character: 3,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+    };
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2),
+            method: "textDocument/hover".to_string(),
+            params: serde_json::to_value(hp).unwrap(),
+        }))
+        .unwrap();
+
+    let resp = loop {
+        match client.receiver.recv().unwrap() {
+            Message::Response(r) if r.id == RequestId::from(2) => break r,
+            _ => continue,
+        }
+    };
+    let value = match resp.response_kind {
+        lsp_server::ResponseKind::Ok { result } => result,
+        other => panic!("expected an Ok hover response, got {other:?}"),
+    };
+    let hover: Hover = serde_json::from_value(value).expect("a Hover result");
+    let text = match hover.contents {
+        HoverContents::Markup(m) => m.value,
+        other => panic!("expected markup contents, got {other:?}"),
+    };
+    assert!(
+        text.contains("add-index-non-concurrent"),
+        "hover should name the rule, got: {text}"
+    );
+    assert!(
+        hover.range.is_some(),
+        "hover should carry the statement range"
+    );
+
+    // shutdown/exit
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(3),
+            method: "shutdown".to_string(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(&client, "exit", serde_json::Value::Null);
+    handle.join().unwrap();
+}
+
+#[test]
+fn hover_off_any_finding_returns_null() {
+    use lsp_types::{
+        HoverParams, Position, TextDocumentIdentifier, TextDocumentPositionParams,
+        WorkDoneProgressParams,
+    };
+
+    let (client, handle) = start();
+
+    // initialize
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(1),
+            method: "initialize".to_string(),
+            params: serde_json::to_value(InitializeParams::default()).unwrap(),
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(
+        &client,
+        "initialized",
+        serde_json::to_value(InitializedParams {}).unwrap(),
+    );
+
+    // The doc HAS a finding (on line 0); we hover far past it to prove position
+    // gating — a null result here is because the cursor is off the finding, not
+    // because the document is clean.
+    let doc_uri = uri("file:///tmp/0001.sql");
+    notify(
+        &client,
+        "textDocument/didOpen",
+        serde_json::to_value(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: doc_uri.clone(),
+                language_id: "sql".to_string(),
+                version: 1,
+                text: "CREATE INDEX idx ON t (col);".to_string(),
+            },
+        })
+        .unwrap(),
+    );
+    let _ = client.receiver.recv().unwrap(); // publishDiagnostics
+
+    let hp = HoverParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: doc_uri.clone(),
+            },
+            position: Position {
+                line: 5,
+                character: 0,
+            },
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+    };
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(2),
+            method: "textDocument/hover".to_string(),
+            params: serde_json::to_value(hp).unwrap(),
+        }))
+        .unwrap();
+
+    let resp = loop {
+        match client.receiver.recv().unwrap() {
+            Message::Response(r) if r.id == RequestId::from(2) => break r,
+            _ => continue,
+        }
+    };
+    let value = match resp.response_kind {
+        lsp_server::ResponseKind::Ok { result } => result,
+        other => panic!("expected an Ok hover response, got {other:?}"),
+    };
+    assert!(
+        value.is_null(),
+        "hovering off any finding should return JSON null, got {value:?}"
+    );
+
+    // shutdown/exit
+    client
+        .sender
+        .send(Message::Request(Request {
+            id: RequestId::from(3),
+            method: "shutdown".to_string(),
+            params: serde_json::Value::Null,
+        }))
+        .unwrap();
+    let _ = client.receiver.recv().unwrap();
+    notify(&client, "exit", serde_json::Value::Null);
+    handle.join().unwrap();
+}
+
 /// End-to-end proof of `paths`-scoped linting: a
 /// `pgsafe.toml` with `paths = ["migrations/**"]` scopes the server to the
 /// migrations directory. A doc opened under `migrations/` gets diagnostics for
