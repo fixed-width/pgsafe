@@ -329,6 +329,21 @@ fn quickfix_only_excludes_source_fix_all() {
 }
 
 #[test]
+fn parent_source_kind_covers_fix_all() {
+    // A `source` umbrella request (a dotted parent of `source.fixAll`) must surface the
+    // fix-all action but not range quickfixes — the on-save `source` code-action pass.
+    let actions = code_action_kinds_for_only(&["source"]);
+    assert!(
+        actions.iter().any(|a| a["kind"] == "source.fixAll"),
+        "a `source` request should cover source.fixAll, got {actions:?}"
+    );
+    assert!(
+        actions.iter().all(|a| a["kind"] != "quickfix"),
+        "a `source` request must not return range quickfixes, got {actions:?}"
+    );
+}
+
+#[test]
 fn hover_returns_finding_details() {
     use lsp_types::{
         Hover, HoverContents, HoverParams, Position, TextDocumentIdentifier,

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use lsp_types::{CodeAction, CodeActionKind, CodeActionOrCommand, TextEdit, Uri, WorkspaceEdit};
 
 use super::position::LineIndex;
-use crate::fix::{fix_to_fixpoint, MAX_FIX_ITERATIONS};
+use crate::fix::{fix_to_fixpoint, Termination, Withheld, MAX_FIX_ITERATIONS};
 use crate::{lint_input, LintOptions};
 
 /// Build the `source.fixAll` action for `sql`: drive the same fixpoint engine
@@ -27,10 +27,28 @@ pub(crate) fn fix_all_action(
         |candidate| lint_input(uri.as_str(), candidate, options),
         MAX_FIX_ITERATIONS,
     );
+    // A fix produced SQL that no longer parses on some pass — pgsafe's own fault, which
+    // the CLI treats as a hard error (exit 2, file untouched). Withhold the whole action
+    // rather than silently offer the last-good partial, so both front-ends refuse a
+    // self-corrupting fix. Unreachable with today's single-pass rules; guards future
+    // cascades. (stderr is free — the LSP protocol owns stdout — so this is visible in
+    // the editor's language-server log without corrupting the transport.)
+    if let Termination::Withheld(Withheld::ParseBroke(err)) = &fixed.termination {
+        eprintln!("pgsafe lsp: withholding fix-all — a fix produced unparseable SQL: {err}");
+        return None;
+    }
     // `fixed.sql` only advances past `sql` when at least one pass was accepted, and
     // every accepted state is validated (parses, introduces no new Error). So an
     // unchanged result means nothing was safely auto-fixable.
     if fixed.sql == sql {
+        return None;
+    }
+    // Belt-and-suspenders at the whole-document replacement — the one edit shape that can
+    // wipe the buffer. Never replace a non-empty document with empty text (`sql` is
+    // non-empty here, since it differs from the now-empty `fixed.sql`). No current fix
+    // deletes a span this large — every fix is additive or a token swap — but the engine
+    // doesn't enforce non-destructiveness, so guard the highest-stakes edit here.
+    if fixed.sql.is_empty() {
         return None;
     }
     let whole = LineIndex::new(sql).range(0, sql.len());

@@ -680,6 +680,41 @@ mod tests {
     }
 
     #[test]
+    fn code_action_kind_filtering() {
+        use super::kind_requested;
+        use lsp_types::CodeActionKind;
+        let qf = CodeActionKind::QUICKFIX;
+        let fa = CodeActionKind::SOURCE_FIX_ALL;
+        let k = |s: &str| CodeActionKind::from(s.to_string());
+        let fa_only = [fa.clone()];
+        let qf_only = [qf.clone()];
+        let source = [k("source")];
+        let partial = [k("sourc")];
+        let source_fix = [k("source.fix")];
+        let empty: [CodeActionKind; 0] = [];
+
+        // No filter → every kind is requested.
+        assert!(kind_requested(&qf, None));
+        assert!(kind_requested(&fa, None));
+        // Exact-kind requests select just that kind.
+        assert!(kind_requested(&fa, Some(&fa_only)));
+        assert!(!kind_requested(&qf, Some(&fa_only)));
+        assert!(kind_requested(&qf, Some(&qf_only)));
+        assert!(!kind_requested(&fa, Some(&qf_only)));
+        // A parent `source` request covers `source.fixAll` (the on-save umbrella) but
+        // not `quickfix`.
+        assert!(kind_requested(&fa, Some(&source)));
+        assert!(!kind_requested(&qf, Some(&source)));
+        // A partial segment is not a parent: neither `sourc` nor `source.fix` covers
+        // `source.fixAll`.
+        assert!(!kind_requested(&fa, Some(&partial)));
+        assert!(!kind_requested(&fa, Some(&source_fix)));
+        // An explicit empty filter selects nothing.
+        assert!(!kind_requested(&fa, Some(&empty)));
+        assert!(!kind_requested(&qf, Some(&empty)));
+    }
+
+    #[test]
     fn plain_file_uri() {
         assert_eq!(
             uri_to_path("file:///tmp/a.sql"),
