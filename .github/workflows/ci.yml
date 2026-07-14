@@ -44,3 +44,35 @@ jobs:
 
       - name: test (lsp feature)
         run: cargo test --features lsp --locked
+
+  # Builds on the exact toolchain declared as `rust-version` in Cargo.toml, so the
+  # advertised MSRV can never silently drift above what actually compiles (the way
+  # dependency bumps have pushed the real floor up before). Reads the value from
+  # Cargo.toml rather than hardcoding it, so bumping the MSRV updates this job too.
+  msrv:
+    name: msrv (build on declared rust-version)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+
+      # pg_query compiles vendored libpg_query (C) via bindgen, which needs libclang.
+      - name: Install libclang
+        run: sudo apt-get update && sudo apt-get install -y libclang-dev
+
+      - name: Read MSRV from Cargo.toml
+        id: msrv
+        run: |
+          version="$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: check (default features)
+        run: cargo check --locked
+
+      - name: check (lsp feature)
+        run: cargo check --locked --features lsp
