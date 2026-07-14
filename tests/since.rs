@@ -79,6 +79,48 @@ fn config_since_is_honored_and_cli_overrides_it() {
 }
 
 #[test]
+fn since_composes_with_paths_scoping() {
+    // `--since` selects files after the cutoff; the config's `paths` globs then scope
+    // them. A post-cutoff file outside `paths` is still dropped — proving the scope
+    // filter runs uniformly after selection, not only over bare positional inputs.
+    let dir = tempdir().unwrap();
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "paths = [\"migrations/**\"]\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.path().join("migrations")).unwrap();
+    fs::create_dir_all(dir.path().join("queries")).unwrap();
+    // Both sort after the cutoff and both would flag add-index; only the in-scope one lints.
+    fs::write(
+        dir.path().join("migrations/0003_new.sql"),
+        "CREATE INDEX i ON t (x);\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("queries/0003_report.sql"),
+        "CREATE INDEX j ON t (y);\n",
+    )
+    .unwrap();
+    run_in(
+        dir.path(),
+        &[
+            "--since",
+            "0002_cut.sql",
+            "migrations/0003_new.sql",
+            "queries/0003_report.sql",
+        ],
+    )
+    .failure()
+    .code(1)
+    .stdout(
+        predicate::str::contains("migrations/0003_new.sql")
+            .and(predicate::str::contains("add-index-non-concurrent"))
+            .and(predicate::str::contains("queries/0003_report.sql").not()),
+    );
+}
+
+#[test]
 fn since_and_git_diff_are_mutually_exclusive() {
     let dir = tempdir().unwrap();
     fs::write(dir.path().join("m.sql"), "DROP TABLE a;\n").unwrap();

@@ -113,6 +113,42 @@ fn composes_with_config_ignore() {
 }
 
 #[test]
+fn git_diff_composes_with_paths_scoping() {
+    // `--git-diff` selects changed files; the config's `paths` globs then scope them.
+    // A changed file outside `paths` is dropped even though git flagged it as changed —
+    // the same post-selection `scope_to_paths` filter the positional/since paths use.
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q"]);
+    git(dir.path(), &["config", "user.email", "t@example.com"]);
+    git(dir.path(), &["config", "user.name", "Test"]);
+    fs::write(
+        dir.path().join(".pgsafe.toml"),
+        "paths = [\"migrations/**\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.path().join("0001_base.sql"),
+        "CREATE TABLE t (id bigint);\n",
+    )
+    .unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    fs::create_dir_all(dir.path().join("migrations")).unwrap();
+    fs::create_dir_all(dir.path().join("queries")).unwrap();
+    // Both are new (changed vs HEAD) and both would flag drop-table; only the in-scope one lints.
+    fs::write(dir.path().join("migrations/0002.sql"), "DROP TABLE a;\n").unwrap();
+    fs::write(dir.path().join("queries/0002.sql"), "DROP TABLE b;\n").unwrap();
+    pgsafe(dir.path(), &["--git-diff", "HEAD"])
+        .failure()
+        .code(1)
+        .stdout(
+            predicate::str::contains("migrations/0002.sql")
+                .and(predicate::str::contains("drop-table"))
+                .and(predicate::str::contains("queries/0002.sql").not()),
+        );
+}
+
+#[test]
 fn bad_ref_exits_two_with_a_fetch_hint() {
     let dir = repo_with_base("0001_base.sql", "CREATE TABLE t (id bigint);\n");
     pgsafe(dir.path(), &["--git-diff", "no-such-ref"])
